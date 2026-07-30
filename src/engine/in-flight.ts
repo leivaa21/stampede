@@ -24,11 +24,21 @@ export class InFlight {
     return this.#maxObserved;
   }
 
-  /** @param settled must never reject — the dispatcher folds both outcomes into it first. */
+  /**
+   * @param settled the dispatcher folds both transport outcomes into this first.
+   *
+   * The terminal `catch` is defence in depth rather than ceremony: anything throwing *inside* those
+   * handlers — a clock anomaly reaching `Histogram.record`, a checks hook in a later PR — would
+   * otherwise become an unhandled rejection with no listener and take the process down mid-run. A
+   * load tester that dies mid-run publishes nothing, which is the same argument this repo uses to
+   * refuse-and-count everywhere else rather than throw.
+   */
   track(settled: Promise<void>): void {
-    const tracked = settled.finally(() => {
-      this.#pending.delete(tracked);
-    });
+    const tracked = settled
+      .catch(() => undefined)
+      .finally(() => {
+        this.#pending.delete(tracked);
+      });
     this.#pending.add(tracked);
     this.#maxObserved = Math.max(this.#maxObserved, this.#pending.size);
   }

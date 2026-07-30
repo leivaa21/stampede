@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { MetricsRegistry } from "../metrics/index.ts";
 import {
   EVERY_TENTH_OF_A_SECOND,
-  expectLatencyMs,
+  expectMs,
+  expectRecordedUs,
   runToCompletion,
   scenario,
   summaryOf,
@@ -73,10 +74,10 @@ describe("runDispatch keeps the schedule", () => {
     );
     const reads = summaryOf(outcome, "reads");
 
-    expect(reads.latency?.count).toBe(10);
-    expectLatencyMs(reads.latency?.p50, 50);
+    expect(reads.latencyMs?.count).toBe(10);
+    expectMs(reads.latencyMs?.p50Ms, 50);
     // The generator kept up, so the two numbers agree and the lag is nil — D1-01's healthy case.
-    expectLatencyMs(reads.scheduledLatency?.p50, 50);
+    expectMs(reads.scheduledLatencyMs?.p50Ms, 50);
     expect(reads.scheduleLagMs?.maxMs).toBe(0);
   });
 
@@ -100,7 +101,7 @@ describe("runDispatch keeps the schedule", () => {
     expect(transport.sentAtMs()).toEqual(EVERY_TENTH_OF_A_SECOND);
     expect(reads.scheduleLagMs?.maxMs).toBe(0);
     expect(outcome.summary.maxObservedInFlight).toBe(5);
-    expectLatencyMs(reads.latency?.p50, 450);
+    expectMs(reads.latencyMs?.p50Ms, 450);
     expect(reads.responseCount).toBe(10);
   });
 });
@@ -133,8 +134,8 @@ describe("runDispatch across several scenarios", () => {
     const writes = summaryOf(outcome, "writes");
     expect(reads.responseCount).toBe(10);
     expect(writes.responseCount).toBe(5);
-    expectLatencyMs(reads.latency?.p99, 10);
-    expectLatencyMs(writes.latency?.p99, 200);
+    expectMs(reads.latencyMs?.p99Ms, 10);
+    expectMs(writes.latencyMs?.p99Ms, 200);
   });
 
   it("reports a scenario that scheduled nothing without inventing anything for it", async () => {
@@ -157,8 +158,8 @@ describe("runDispatch across several scenarios", () => {
     expect(idle.scheduledCount).toBe(0);
     expect(idle.dispatchedCount).toBe(0);
     // Not a zero: a p99 of 0 ms for a scenario that never ran is the flattering lie D1-02 rules out.
-    expect(idle.latency).toBeUndefined();
-    expect(idle.scheduledLatency).toBeUndefined();
+    expect(idle.latencyMs).toBeUndefined();
+    expect(idle.scheduledLatencyMs).toBeUndefined();
   });
 });
 
@@ -193,7 +194,7 @@ describe("runDispatch and the metrics registry", () => {
     const restored = MetricsRegistry.fromSnapshot(structuredClone(outcome.metrics.toSnapshot(1)));
 
     expect(restored.toSnapshot(1)).toEqual(outcome.metrics.toSnapshot(1));
-    expectLatencyMs(restored.scenario("reads").findHistogram(EngineMetric.latency)?.max, 25);
+    expectRecordedUs(restored.scenario("reads").findHistogram(EngineMetric.latency)?.max, 25);
   });
 });
 

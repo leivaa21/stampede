@@ -62,7 +62,15 @@ const arrivalsIn = (total: number): number =>
   Math.floor(total + Math.abs(total) * Number.EPSILON * FLOOR_TOLERANCE_ULPS);
 
 export interface ConstantRateOptions {
-  /** Requests per second. `0` is legal and schedules nothing: an idle gap between two stages. */
+  /**
+   * Requests per second. `0` is legal and schedules nothing: an idle gap **between** two stages.
+   *
+   * As the *last* stage it does nothing at all — a run ends when its schedule is exhausted, not
+   * when the profile's declared span is up, so a trailing idle stage contributes its duration to
+   * `requestedRatePerSecond` and no waiting. "Burst, then hold the run open for the stragglers" is
+   * a natural reading and the wrong one; `drainTimeoutMs` is how you wait for outstanding
+   * responses.
+   */
   readonly ratePerSecond: number;
   readonly durationMs: number;
 }
@@ -110,7 +118,10 @@ export interface RampOptions {
  *
  * Written as `2k / (b + √(b² + 4ak))` rather than the textbook `(−b + √(b² + 4ak)) / 2a`. The two
  * are equal in exact arithmetic; the textbook form subtracts two nearly-equal numbers on a shallow
- * ramp (small `a`, large `b`) and throws away most of its significant digits doing it.
+ * ramp (small `a`, large `b`) and loses precision doing it. For the ramps anyone actually writes
+ * that costs a few digits out of 16 — not enough to move a dispatch instant, so no test can tell
+ * the two apart. The stable form is used because it is free, not because the naive one is known to
+ * break here.
  */
 const arrivalInstantSec = (index: number, startRate: number, acceleration: number): number => {
   if (index === 0) {
