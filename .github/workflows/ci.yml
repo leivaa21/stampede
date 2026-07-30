@@ -5,11 +5,20 @@ on:
     branches: [main]
   pull_request:
 
+# This repo is public, so forked PRs run this workflow. State the token scope here rather than
+# inheriting it from a repo setting: a compromised dev dependency runs during `pnpm install`, and
+# nothing in CI needs write access to anything.
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Don't leave the token in .git/config for every later step to read.
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v4
 

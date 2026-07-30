@@ -1,10 +1,16 @@
 allowBuilds:
   esbuild: true
 
-# Keep `pnpm audit` at zero (workspace policy: even dev-only advisories). Drop each override
-# once the upstream toolchain resolves the patched version on its own.
+# Keep `pnpm audit` at zero (workspace policy: even dev-only advisories). Drop each override once
+# the upstream toolchain resolves the patched version on its own.
+#
 #   - esbuild: GHSA-g7r4-m6w7-qqqr (dev-server file read), via tsup/vitest — fixed in 0.28.1.
-#   - brace-expansion: GHSA-mh99-v99m-4gvg (DoS/OOM), via eslint>minimatch — fixed in 5.0.8.
+#     Still load-bearing: tsup@8.5.1 declares "^0.27.0", so this deliberately runs it against an
+#     esbuild minor it has not declared. Upper-bounded so a future `pnpm update` cannot silently
+#     pull 0.29/1.0 — the intent is "at least the patched version", not "any future major".
+#     Drop when tsup moves to ^0.28. (2026-07-30)
+#
+#   - brace-expansion: GHSA-mh99-v99m-4gvg dropped 2026-07-30 — every dependent in the tree now
+#     requests ^5.0.8 on its own, so the override could no longer change the resolution.
 overrides:
-  esbuild: ">=0.28.1"
-  brace-expansion: ">=5.0.8"
+  esbuild: ">=0.28.1 <0.29.0"

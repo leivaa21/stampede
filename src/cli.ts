@@ -32,4 +32,19 @@ const main = (argv: readonly string[]): number => {
   return ExitCode.Ok;
 };
 
-process.exitCode = main(process.argv.slice(2));
+/**
+ * Every startup failure has to land on `RunFailed`, never on Node's default uncaught-exception
+ * exit of 1 — `1` means the *target system* violated an invariant, so a broken tool install
+ * reporting as a failed threshold is the exact confusion the exit-code contract exists to
+ * prevent. This wrapper is also where every later `run` failure will land.
+ */
+const run = (argv: readonly string[]): number => {
+  try {
+    return main(argv);
+  } catch (error: unknown) {
+    process.stderr.write(`stampede: ${error instanceof Error ? error.message : String(error)}\n`);
+    return ExitCode.RunFailed;
+  }
+};
+
+process.exitCode = run(process.argv.slice(2));
