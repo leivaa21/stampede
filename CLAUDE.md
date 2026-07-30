@@ -8,11 +8,21 @@
 > security, docs, git) apply here in full; this file only adds what's specific to this project.
 > Read this file before every task and re-read the **Current state** line.
 
-> **Current state (2026-07-30):** **M1 designed, repo scaffolded — no engine yet.** The four
-> architecture-shaping decisions are locked (open-loop arrivals, HDR-style mergeable histograms,
-> native TS type-stripping, assertions in M1) and written up in `docs/design/m1.md` +
-> `docs/decisions.md`. Next: PR 2 of the M1 breakdown — the `metrics/` core (histogram, counters,
-> checks, and their merges). Keep this line current after every merged slice.
+> **Current state (2026-07-30):** **M1 PRs 1–3 merged — the engine measures honestly, single
+> threaded.** `metrics/`: HDR-style histograms (17,408 `Int32` counts = 68 KiB, worst-case error
+> 0.0975 %) whose merge is exact, associative and commutative, plus counters, checks, trends, and a
+> snapshot protocol with sequence numbers so a delayed message cannot rewind an aggregate.
+> `engine/`: pure lazy arrival profiles (`constantRate` · `ramp` · `burst` · `stages`) and an
+> open-loop dispatcher behind clock and transport ports. 217 tests, audit clean.
+> **Gate two passes against a real HTTP target** (`pnpm gate:two`): a 50 ms target reads 52 ms; a
+> target slower than the load offered reports p99 5931 ms against its 200 ms service time without
+> throttling itself; and asked for 50,000 rps on one thread it admits ~1,900 achieved, counts 95k
+> drops, and puts its own 320 ms backlog into `scheduledLatency` rather than hiding it.
+> **Not built yet:** worker threads (PR 4), TS config loading + setup/teardown (PR 5), the CLI and
+> thresholds (PR 6), the markdown report (PR 7), the TUI (PR 8). `stampede run` does not exist —
+> the engine is programmatic-only, and `src/index.ts` does not export it yet.
+> Next: PR 4 — the worker pool, where `metrics/`'s merge properties have to survive real threads.
+> Keep this line current after every merged slice.
 
 ## Identity
 
