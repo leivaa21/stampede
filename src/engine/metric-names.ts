@@ -1,0 +1,41 @@
+/**
+ * The metric names the engine records under, in one place and prefixed.
+ *
+ * A scenario's own `counters.inc("errors")` shares a namespace with the engine's bookkeeping, and
+ * a silent collision would corrupt exactly the kind of published number this repo keeps refusing
+ * to get wrong. The prefix makes the engine's names impossible to hit by accident, and exporting
+ * them means the reporter and the thresholds look them up by constant instead of by a string
+ * literal they can mistype into a phantom metric.
+ *
+ * They are ordinary counters, histograms and trends rather than fields on some side channel
+ * because everything here has to survive the worker → main-thread merge, and the metrics registry
+ * is the one carrier that merges exactly, associatively and commutatively (D1-03).
+ */
+export const EngineMetric = {
+  /** Histogram, µs: actual send → response. What the target took. */
+  latency: "stampede.latency",
+  /**
+   * Histogram, µs: **scheduled instant** → response. What a user waiting in line experienced,
+   * generator backlog included. The headline percentile of the whole tool (D1-01).
+   */
+  scheduledLatency: "stampede.scheduledLatency",
+  /**
+   * Trend, ms: scheduled instant → actual send. The generator's own backlog on its own terms.
+   *
+   * Redundant with the gap between the two histograms above, on purpose: that gap is a difference
+   * of percentiles, which is not a percentile of the difference. A run where the p99 lag lands on
+   * a few requests reads very differently from one where every request was 40 ms late, and only a
+   * distribution of the lag itself can tell those apart.
+   */
+  scheduleLag: "stampede.scheduleLagMs",
+  /** Counter: requests actually handed to the transport. */
+  dispatched: "stampede.dispatched",
+  /** Counter: requests refused by the in-flight cap. Dropped and counted, never absorbed. */
+  dropped: "stampede.dropped",
+  /** Counter: responses received and timed. */
+  responses: "stampede.responses",
+  /** Counter: transport-level failures — connection refused, DNS, timeout. Not timed. */
+  errors: "stampede.errors",
+  /** Counter: requests still outstanding when the run stopped waiting. */
+  abandoned: "stampede.abandoned",
+} as const;
