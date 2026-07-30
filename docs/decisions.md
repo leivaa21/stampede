@@ -61,7 +61,7 @@ re-merges. No shared mutable state, no `SharedArrayBuffer` atomics.
 cannot corrupt the total, which a delta protocol could. Shared-memory atomics would buy throughput
 this tool does not need and cost correctness risk it cannot afford.
 **Consequences:** slightly larger messages than deltas, at ~1 Hz — irrelevant. Schedule splitting
-across workers is deterministic so runs reproduce. **Delayed** messages need one thing more than
+across workers is deterministic so runs reproduce — see the entry below for how. **Delayed** messages need one thing more than
 cumulative snapshots: each carries a monotonic **sequence number** and the aggregator ignores
 anything it has already superseded. Without it the property held only because a single `MessagePort`
 preserves send order — an assumption a worker-protocol change could break silently, publishing a
@@ -179,3 +179,27 @@ deliberately do not re-apply them, so restore is a faithful inverse of serialise
 policy point. Unreachable from a real producer (every worker shares one config), and documented at
 the code rather than left implicit. `Map` (not a plain object) keys every named container, which also
 removes any `__proto__`-style hazard from user-supplied names.
+
+## 2026-07-31 — Shards are cut by stride, not by dividing the rate
+
+**Context:** D1-03 originally said each worker would generate `rate / workers` with a phase offset,
+and `burst(N)` would give each worker `N / workers` with the remainder spread over the first ones.
+That is implementable for `constantRate`. It is awkward for `ramp`, whose instants come from
+inverting an integral, and worse for `stages`, which composes profiles whose boundaries do not
+divide evenly — each shape needs its own rule, and each rule is a fresh chance to lose or duplicate
+a request.
+**Decision:** shard `w` of `W` takes the instants at **indices `w, w + W, w + 2W, …`**. Every
+profile is a sequence, so the split needs to know nothing about how the sequence was produced.
+**Rationale:** the union of the shards is _exactly_ the original **by construction**, not by
+arithmetic that happens to add up — there is no rounding to get wrong, and a profile shape added
+later inherits the split for free. The cost is that each shard walks the whole sequence and keeps
+one instant in `W`; generating an instant is a couple of multiplications with no allocation, so a
+six-million-dispatch run costs each worker microseconds of skipping against a run measured in
+minutes. Correctness by construction is worth that many times over.
+**Consequences:** the in-flight budget is divided the same way, remainder to the lowest shards, and
+a budget smaller than the worker count is refused before a thread spawns — a worker with no slots
+would drop its whole share while the run reported a healthy cap. **A shard cannot borrow a
+sibling's slack**, so drops appear slightly sooner than a perfectly shared budget would; that is the
+price of never taking a lock on the dispatch path. The stride also loses the _global_ dispatch
+ordinal (each shard re-counts from 0), which matters the moment per-request variation lands —
+recoverable exactly as `shardIndex + localIndex * shardCount`, and noted at the code.

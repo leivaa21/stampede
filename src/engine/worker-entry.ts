@@ -23,7 +23,13 @@ import type { WorkerAssignment, WorkerMessage } from "./worker-protocol.ts";
  */
 
 const post = (message: WorkerMessage): void => {
-  parentPort?.postMessage(message);
+  if (parentPort === null) {
+    // A hard invariant, not a maybe: this file only ever runs as a worker. Optional chaining here
+    // would make every message a silent no-op if that stopped being true, so the pool would wait
+    // out the whole run to learn nothing was ever reported.
+    throw new Error("worker-entry.ts must be run as a worker thread, not directly");
+  }
+  parentPort.postMessage(message);
 };
 
 interface WorkerRun {
@@ -52,7 +58,9 @@ const loadRun = async (assignment: WorkerAssignment): Promise<WorkerRun> => {
   if (typeof factory !== "function") {
     throw new TypeError(`${assignment.modulePath} must default-export a function`);
   }
-  const run: unknown = (factory as (state: unknown) => unknown)(assignment.setupState);
+  // Awaited, so an `async` factory works. A user who writes exactly what the docs describe, only
+  // with an `async` keyword, should not be told their export "must return { scenarios, transport }".
+  const run: unknown = await (factory as (state: unknown) => unknown)(assignment.setupState);
   if (!isRunShape(run)) {
     throw new TypeError(
       `${assignment.modulePath}'s default export must return { scenarios, transport }`,

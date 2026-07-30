@@ -40,6 +40,26 @@ export type WorkerMessage =
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
+/**
+ * `typeof x === "number"` admits `NaN` and `Infinity`, and a `NaN` reaching a frozen summary fails
+ * every threshold comparison silently — `run-spec.ts` re-validates the same fields for exactly this
+ * reason, and `metrics/narrow.ts` refuses them one field away in the same message. Shape checking
+ * alone would only stop a protocol change that renamed something.
+ */
+const finiteAt = (value: unknown, at: string): number => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TypeError(`${at} must be a finite, non-negative number, got ${String(value)}`);
+  }
+  return value;
+};
+
+const countAt = (value: unknown, at: string): number => {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`${at} must be a non-negative safe integer, got ${String(value)}`);
+  }
+  return value;
+};
+
 const parseScenarioProgress = (value: unknown, at: string): ScenarioProgress => {
   if (!isRecord(value)) {
     throw new TypeError(`${at} must be an object`);
@@ -48,13 +68,15 @@ const parseScenarioProgress = (value: unknown, at: string): ScenarioProgress => 
   if (typeof name !== "string") {
     throw new TypeError(`${at}.name must be a string`);
   }
-  if (typeof scheduledCount !== "number" || typeof requestedDurationMs !== "number") {
-    throw new TypeError(`${at} is missing a count or duration`);
-  }
-  if (lastDispatchElapsedMs !== undefined && typeof lastDispatchElapsedMs !== "number") {
-    throw new TypeError(`${at}.lastDispatchElapsedMs must be a number when present`);
-  }
-  return { name, scheduledCount, requestedDurationMs, lastDispatchElapsedMs };
+  return {
+    name,
+    scheduledCount: countAt(scheduledCount, `${at}.scheduledCount`),
+    requestedDurationMs: finiteAt(requestedDurationMs, `${at}.requestedDurationMs`),
+    lastDispatchElapsedMs:
+      lastDispatchElapsedMs === undefined
+        ? undefined
+        : finiteAt(lastDispatchElapsedMs, `${at}.lastDispatchElapsedMs`),
+  };
 };
 
 /**
@@ -77,16 +99,15 @@ export const parseWorkerMessage = (value: unknown): WorkerMessage => {
       if (!isRecord(progress) || !Array.isArray(progress.scenarios)) {
         throw new TypeError("a finished message must carry run progress");
       }
-      const { elapsedMs, maxObservedInFlight } = progress;
-      if (typeof elapsedMs !== "number" || typeof maxObservedInFlight !== "number") {
-        throw new TypeError("run progress is missing elapsedMs or maxObservedInFlight");
-      }
       return {
         kind: "finished",
         snapshot: value.snapshot,
         progress: {
-          elapsedMs,
-          maxObservedInFlight,
+          elapsedMs: finiteAt(progress.elapsedMs, "progress.elapsedMs"),
+          maxObservedInFlight: countAt(
+            progress.maxObservedInFlight,
+            "progress.maxObservedInFlight",
+          ),
           scenarios: progress.scenarios.map((scenario, index) =>
             parseScenarioProgress(scenario, `progress.scenarios[${String(index)}]`),
           ),

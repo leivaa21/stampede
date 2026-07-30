@@ -1,3 +1,5 @@
+import { appendFileSync } from "node:fs";
+import { workerData } from "node:worker_threads";
 import { burst, constantRate } from "../engine/arrival-profiles.ts";
 import type { Transport, TransportResponse } from "../engine/ports.ts";
 import type { Scenario } from "../engine/run-spec.ts";
@@ -18,6 +20,22 @@ export interface FixtureSetupState {
   readonly latencyMs?: number;
   /** When true the target rejects, so the run records errors instead of latencies. */
   readonly fails?: boolean;
+  /**
+   * Makes exactly one shard fail to load, leaving its siblings running a long schedule.
+   *
+   * That asymmetry is the only way to test that the pool tears down workers it is no longer
+   * waiting on: when *every* worker fails, they all exit by themselves and a missing teardown
+   * looks identical to a working one.
+   */
+  readonly failOnShard?: number;
+  /**
+   * A file each dispatch appends a byte to — proof of life for a worker still running.
+   *
+   * Node's `getActiveResourcesInfo()` does not report worker threads, so "did the pool actually
+   * terminate its workers" is not observable from the parent by inspection. A file that stops
+   * growing is.
+   */
+  readonly heartbeatPath?: string;
 }
 
 interface FixtureRequest {
@@ -28,6 +46,9 @@ const OK = 200;
 
 const makeTransport = (state: FixtureSetupState): Transport<FixtureRequest> => ({
   async send(): Promise<TransportResponse> {
+    if (state.heartbeatPath !== undefined) {
+      appendFileSync(state.heartbeatPath, ".");
+    }
     if (state.latencyMs !== undefined && state.latencyMs > 0) {
       await new Promise<void>((resolve) => setTimeout(resolve, state.latencyMs));
     }
@@ -59,5 +80,9 @@ export default (
   transport: Transport<FixtureRequest>;
 } => {
   const state = setupState as FixtureSetupState;
+  const shardIndex = (workerData as { shardIndex?: number } | null)?.shardIndex;
+  if (state.failOnShard !== undefined && state.failOnShard === shardIndex) {
+    throw new Error(`fixture refused to load on shard ${String(shardIndex)}`);
+  }
   return { scenarios: scenariosFor(state), transport: makeTransport(state) };
 };

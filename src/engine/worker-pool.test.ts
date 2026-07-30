@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { FixtureSetupState } from "../test-support/worker-fixture.ts";
@@ -91,7 +94,10 @@ describe("a sharded run reproduces the single-threaded one", () => {
 });
 
 describe("a pool that cannot run says so instead of hanging", () => {
-  it("fails the run when the module does not exist", async () => {
+  it("reports why the module could not be loaded, not merely that a worker left", async () => {
+    // Asserting the *diagnostic*, not just any rejection: matching /worker-\d/ alone would be
+    // satisfied by the exit handler's "exited before reporting its results", so deleting the whole
+    // failure-reporting path in worker-entry.ts would still pass. It has to name the cause.
     await expect(
       runPool({
         modulePath: "/definitely/not/a/module.ts",
@@ -101,7 +107,61 @@ describe("a pool that cannot run says so instead of hanging", () => {
         snapshotIntervalMs: 25,
         setupState: { kind: "burst", count: 1 },
       }),
-    ).rejects.toThrow(/worker-\d/);
+    ).rejects.toThrow(/Cannot find module|ERR_MODULE_NOT_FOUND/);
+  }, 20_000);
+
+  it("names the contract a module broke when it exports the wrong thing", async () => {
+    await expect(
+      runPool({
+        modulePath: fileURLToPath(new URL("./schedule-split.ts", import.meta.url)),
+        workerCount: 1,
+        maxInFlight: 4,
+        drainTimeoutMs: 100,
+        snapshotIntervalMs: 25,
+        setupState: { kind: "burst", count: 1 },
+      }),
+    ).rejects.toThrow(/must default-export a function/);
+  }, 20_000);
+
+  it("refuses a worker count of zero rather than reporting an empty run as a success", async () => {
+    // Without the guard this resolves happily with no scenarios: the pre-validation loop never
+    // runs and `Promise.all([])` resolves — a green run that generated no load at all.
+    await expect(runFixture({ kind: "burst", count: 10 }, 0)).rejects.toThrow(/workerCount/);
+  }, 20_000);
+
+  it("refuses a snapshot interval that would flood the run", async () => {
+    // 0 or NaN turns a one-second run into four seconds of posting thousands of registry clones —
+    // the instrument perturbing its own measurement, from a config value.
+    await expect(
+      runPool({
+        modulePath: FIXTURE,
+        workerCount: 2,
+        maxInFlight: 8,
+        drainTimeoutMs: 100,
+        snapshotIntervalMs: 0,
+        setupState: { kind: "burst", count: 1 },
+      }),
+    ).rejects.toThrow(/snapshotIntervalMs/);
+  }, 20_000);
+
+  it("tears down the siblings of a worker that failed, instead of leaving them running", async () => {
+    // Node does not report worker threads in `getActiveResourcesInfo()`, so liveness is measured
+    // the only way it is observable from here: the surviving workers append to a file on every
+    // dispatch, and a terminated worker stops appending.
+    const heartbeatPath = join(mkdtempSync(join(tmpdir(), "stampede-pool-")), "beats");
+    writeFileSync(heartbeatPath, "");
+
+    // Shard 1 refuses to load; shards 0 and 2 carry a five-second schedule. Without teardown they
+    // would keep dispatching long after the run rejected — a load tester that holds the process
+    // open after printing its report.
+    await expect(
+      runFixture({ kind: "rate", count: 20, durationMs: 5_000, failOnShard: 1, heartbeatPath }, 3),
+    ).rejects.toThrow(/fixture refused to load/);
+
+    const atRejection = readFileSync(heartbeatPath, "utf8").length;
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    expect(readFileSync(heartbeatPath, "utf8").length).toBe(atRejection);
   }, 20_000);
 
   it("refuses a budget too small to give every worker a slot, before spawning anything", async () => {
@@ -148,6 +208,75 @@ describe("mergeProgress", () => {
     expect(merged.scenarios[0]?.lastDispatchElapsedMs).toBe(950);
     // An upper bound by construction — the shards' peaks need not have coincided.
     expect(merged.maxObservedInFlight).toBe(7);
+  });
+
+  it("does not depend on the order the shards finished in", () => {
+    // CLAUDE.md: anything merged across workers is tested for commutativity, because worker
+    // completion order must never change a published number — and `progressByWorker` is iterated
+    // in finish order, so this is fed a different permutation on every run.
+    const parts = [
+      {
+        elapsedMs: 900,
+        maxObservedInFlight: 4,
+        scenarios: [
+          {
+            name: "reads",
+            scheduledCount: 5,
+            requestedDurationMs: 1_000,
+            lastDispatchElapsedMs: 800,
+          },
+          {
+            name: "writes",
+            scheduledCount: 2,
+            requestedDurationMs: 1_000,
+            lastDispatchElapsedMs: 10,
+          },
+        ],
+      },
+      {
+        elapsedMs: 1_100,
+        maxObservedInFlight: 3,
+        scenarios: [
+          {
+            name: "reads",
+            scheduledCount: 4,
+            requestedDurationMs: 1_000,
+            lastDispatchElapsedMs: 950,
+          },
+          {
+            name: "writes",
+            scheduledCount: 3,
+            requestedDurationMs: 1_000,
+            lastDispatchElapsedMs: 40,
+          },
+        ],
+      },
+      {
+        elapsedMs: 1_000,
+        maxObservedInFlight: 2,
+        scenarios: [
+          {
+            name: "reads",
+            scheduledCount: 6,
+            requestedDurationMs: 1_000,
+            lastDispatchElapsedMs: 20,
+          },
+          {
+            name: "writes",
+            scheduledCount: 1,
+            requestedDurationMs: 1_000,
+            lastDispatchElapsedMs: 5,
+          },
+        ],
+      },
+    ];
+
+    const forwards = mergeProgress(parts);
+    const backwards = mergeProgress([...parts].reverse());
+    const shuffled = mergeProgress([parts[2], parts[0], parts[1]].filter((p) => p !== undefined));
+
+    expect(backwards).toEqual(forwards);
+    expect(shuffled).toEqual(forwards);
   });
 
   it("keeps a scenario that only one shard ever dispatched", () => {

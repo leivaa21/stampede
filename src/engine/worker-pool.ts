@@ -3,7 +3,7 @@ import { Worker } from "node:worker_threads";
 import { SnapshotAggregator } from "../metrics/index.ts";
 import { summariseRun, type RunProgress, type ScenarioProgress } from "./run-summary.ts";
 import { shardMaxInFlight } from "./schedule-split.ts";
-import { assertPositiveCount } from "./validate.ts";
+import { assertDurationMs, assertPositiveCount } from "./validate.ts";
 import { parseWorkerMessage, type WorkerAssignment } from "./worker-protocol.ts";
 import type { RunSummary } from "./run-summary.ts";
 
@@ -22,7 +22,7 @@ import type { RunSummary } from "./run-summary.ts";
 export const DEFAULT_SNAPSHOT_INTERVAL_MS = 1_000;
 
 export interface PoolRunSpec {
-  /** Absolute path to the module each worker imports. */
+  /** Path to the module each worker imports. Resolved against the process cwd if relative. */
   readonly modulePath: string;
   readonly workerCount: number;
   /** The run's whole in-flight budget, divided across the workers. */
@@ -30,9 +30,18 @@ export interface PoolRunSpec {
   readonly drainTimeoutMs: number;
   readonly setupState?: unknown;
   readonly snapshotIntervalMs?: number;
-  /** Called on every snapshot, for a live view. Never called after the run resolves. */
-  readonly onProgress?: (summary: RunSummary) => void;
 }
+
+/*
+ * There is deliberately no live-progress callback here yet.
+ *
+ * The obvious one — merge on every snapshot and hand out a summary — is wrong in a way that is
+ * worse than not having it: a mid-run merge sees metrics from *every* worker but progress only
+ * from those that already finished, so it reports either an empty run or one whose dispatched
+ * count exceeds its scheduled count. Publishing that is exactly the achieved-vs-requested lie this
+ * repo rules out everywhere else. Making it right needs the snapshot message to carry the worker's
+ * own progress, which is a protocol change that belongs with the TUI that will consume it (PR 8).
+ */
 
 export interface PoolRunOutcome {
   readonly summary: RunSummary;
@@ -47,7 +56,19 @@ export interface PoolRunOutcome {
   readonly supersededSnapshots: number;
 }
 
-const workerEntryUrl = new URL("worker-entry.ts", import.meta.url);
+/**
+ * Where the worker entry lives, in whichever form this module is currently running.
+ *
+ * Running from `src/` it is a `.ts` file that Node type-strips; running from `dist/` it is the
+ * bundled `.js`. Hardcoding either one produces a package whose every worker spawn fails with
+ * `Cannot find module` — and no gate would catch it, because the tests run from `src` and
+ * `pnpm build` only checks that the bundle *builds*. So the extension is taken from the module
+ * doing the spawning, which is by definition the right one.
+ */
+const workerEntryUrl = new URL(
+  import.meta.url.endsWith(".ts") ? "worker-entry.ts" : "worker-entry.js",
+  import.meta.url,
+);
 
 /**
  * Combines what each shard saw into the facts of one run.
@@ -106,18 +127,27 @@ const maxDefined = (a: number | undefined, b: number | undefined): number | unde
  */
 export const runPool = async (spec: PoolRunSpec): Promise<PoolRunOutcome> => {
   assertPositiveCount(spec.workerCount, "workerCount");
-  // Validated before a thread is spawned: a budget too small to give every worker a slot is a
+  assertDurationMs(spec.drainTimeoutMs, "drainTimeoutMs");
+  const snapshotIntervalMs = spec.snapshotIntervalMs ?? DEFAULT_SNAPSHOT_INTERVAL_MS;
+  // An unvalidated interval reaches `setInterval` in every worker. Zero or NaN turns a one-second
+  // run into four seconds of posting thousands of full registry clones — the instrument perturbing
+  // its own measurement, from a config value. Config-derived, so it throws at startup.
+  assertPositiveCount(snapshotIntervalMs, "snapshotIntervalMs");
+  // Computed before a thread is spawned: a budget too small to give every worker a slot is a
   // config mistake, and it should fail at startup rather than as an unexplained wall of drops.
-  for (let index = 0; index < spec.workerCount; index += 1) {
-    shardMaxInFlight(spec.maxInFlight, { index, count: spec.workerCount });
-  }
+  const budgets = Array.from({ length: spec.workerCount }, (_unused, index) =>
+    shardMaxInFlight(spec.maxInFlight, { index, count: spec.workerCount }),
+  );
 
   const aggregator = new SnapshotAggregator();
   const progressByWorker = new Map<string, RunProgress>();
   const workers: Worker[] = [];
 
+  // `allSettled`, not `all`: this runs in a `finally`, so a rejecting `terminate()` would replace
+  // the real reason the run ended with a teardown error, and abandon the remaining terminations
+  // while it did. Teardown must not be able to lie about why it was reached.
   const terminateAll = async (): Promise<void> => {
-    await Promise.all(workers.map((worker) => worker.terminate()));
+    await Promise.allSettled(workers.map((worker) => worker.terminate()));
   };
 
   try {
@@ -128,9 +158,9 @@ export const runPool = async (spec: PoolRunSpec): Promise<PoolRunOutcome> => {
           modulePath: spec.modulePath,
           shardIndex: index,
           shardCount: spec.workerCount,
-          maxInFlight: shardMaxInFlight(spec.maxInFlight, { index, count: spec.workerCount }),
+          maxInFlight: budgets[index] ?? 1,
           drainTimeoutMs: spec.drainTimeoutMs,
-          snapshotIntervalMs: spec.snapshotIntervalMs ?? DEFAULT_SNAPSHOT_INTERVAL_MS,
+          snapshotIntervalMs,
           setupState: spec.setupState,
         };
 
@@ -149,11 +179,7 @@ export const runPool = async (spec: PoolRunSpec): Promise<PoolRunOutcome> => {
               if (message.kind === "finished") {
                 progressByWorker.set(workerId, message.progress);
                 resolve();
-                return;
               }
-              spec.onProgress?.(
-                summariseRun(mergeProgress([...progressByWorker.values()]), aggregator.aggregate()),
-              );
             } catch (error: unknown) {
               reject(error instanceof Error ? error : new Error(String(error)));
             }

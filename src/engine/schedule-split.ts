@@ -70,7 +70,17 @@ export const shardProfile = (profile: ArrivalProfile, shard: Shard): ArrivalProf
   };
 };
 
-/** Every scenario of a run, restricted to one shard. Names and order are preserved. */
+/**
+ * Every scenario of a run, restricted to one shard. Names and order are preserved.
+ *
+ * What is **not** preserved is the global dispatch ordinal: `mergedSchedule` re-derives
+ * `ScheduledDispatch.index` from 0 within each shard, so request 0 exists on every worker. Nothing
+ * reads it today, but per-request variation is promised for a later PR (`run-spec.ts`), and the
+ * natural implementation keys off that index — at which point four workers would each build
+ * request 0, 1, 2… and the namesake run (N buyers, N *distinct* seats) would quietly become four
+ * buyers per seat. The stride makes the recovery exact when it is needed:
+ * `globalIndex = shardIndex + localIndex * shardCount`.
+ */
 export const shardScenarios = <TScenario extends ScheduledScenario>(
   scenarios: readonly TScenario[],
   shard: Shard,
