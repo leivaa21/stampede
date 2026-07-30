@@ -41,9 +41,14 @@ digits, µs resolution to ~60s.
 **elementwise addition** — exact, associative, commutative. t-digest merges are approximate _and_
 order-dependent, so the same run would produce different published numbers depending on which worker
 finished first; that is unacceptable in a report meant to be reproducible. Exact retention is
-unbounded memory. Bounded cost: ~108 KB per histogram, ≤0.1% error.
+unbounded memory. Bounded cost: **17,408 `Int32` counts = 68 KiB** per histogram (1024 counts per
+octave × 17 octaves to a 2²⁶ µs ≈ 67.1s ceiling), ≤0.1% error — measured worst case **0.0975%**,
+swept across the full range.
 **Consequences:** values above the ceiling are clamped **and counted as overflow**, with the count
-printed — a silently clamped p99 is a lie.
+printed — a silently clamped p99 is a lie. Percentiles report the **top** of the sample's bucket so a
+latency is never under-reported; with overflow present the ceiling is returned as a documented lower
+bound; and an empty histogram returns `undefined` rather than `0`, which makes the summary type
+`number | undefined` and forces PR 6 to decide deliberately how a threshold treats missing data.
 
 ## 2026-07-30 — Workers own their metrics; the main thread merges cumulative snapshots
 
