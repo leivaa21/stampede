@@ -1,0 +1,17 @@
+{
+  // Declarations come from tsc, not tsup: tsup's dts builder injects a `baseUrl` that TypeScript 6
+  // rejects. tsup still bundles the JS. Types are part of the product here — the scenario config is
+  // the DSL — so dropping declarations was not an option.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "emitDeclarationOnly": true,
+    "declaration": true,
+    "declarationMap": true,
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/test-support"]
+}

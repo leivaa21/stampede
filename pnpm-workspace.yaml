@@ -1,0 +1,10 @@
+allowBuilds:
+  esbuild: true
+
+# Keep `pnpm audit` at zero (workspace policy: even dev-only advisories). Drop each override
+# once the upstream toolchain resolves the patched version on its own.
+#   - esbuild: GHSA-g7r4-m6w7-qqqr (dev-server file read), via tsup/vitest — fixed in 0.28.1.
+#   - brace-expansion: GHSA-mh99-v99m-4gvg (DoS/OOM), via eslint>minimatch — fixed in 5.0.8.
+overrides:
+  esbuild: ">=0.28.1"
+  brace-expansion: ">=5.0.8"

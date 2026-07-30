@@ -1,0 +1,4 @@
+# Generated / tool-owned — never let Prettier fight the tool that writes these.
+pnpm-lock.yaml
+dist/
+coverage/
