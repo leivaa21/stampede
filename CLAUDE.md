@@ -18,11 +18,17 @@
 > target slower than the load offered reports p99 5931 ms against its 200 ms service time without
 > throttling itself; and asked for 50,000 rps on one thread it admits ~1,900 achieved, counts 95k
 > drops, and puts its own 320 ms backlog into `scheduledLatency` rather than hiding it.
-> **Not built yet:** worker threads (PR 4), TS config loading + setup/teardown (PR 5), the CLI and
-> thresholds (PR 6), the markdown report (PR 7), the TUI (PR 8). `stampede run` does not exist —
-> the engine is programmatic-only, and `src/index.ts` does not export it yet.
-> Next: PR 4 — the worker pool, where `metrics/`'s merge properties have to survive real threads.
-> Keep this line current after every merged slice.
+> **Worker pool (PR 4) is in too:** the schedule is split across threads by **stride** (shard `w` of
+> `W` takes indices `w, w+W, …`), so the shards _are_ the run by construction rather than by
+> arithmetic that has to add up — every profile shape inherits it, including `stages`. Workers own
+> private registries and post cumulative sequence-numbered snapshots; the main thread merges and
+> projects once. Proven against the live target: 4 threads, 480 scheduled, 480 dispatched, **480
+> received by the target**, accounting balanced, zero out-of-order snapshots.
+> **Not built yet:** TS config loading + setup/teardown (PR 5), the CLI and thresholds (PR 6), the
+> markdown report (PR 7), the TUI (PR 8). `stampede run` does not exist — the engine is
+> programmatic-only, and `src/index.ts` does not export it yet.
+> Next: PR 5 — TS config loading, which turns the worker pool's `modulePath` seam into a user's
+> `scenarios.ts`. Keep this line current after every merged slice.
 
 ## Identity
 
