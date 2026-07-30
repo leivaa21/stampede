@@ -157,15 +157,25 @@ caller cannot mix ms and µs by accident.
 `counters.inc(res.headers["x-request-id"])` is a natural mistake rather than an exotic one. Every
 distinct name becomes a `Map` entry in **every worker** and part of a structured clone crossing
 `postMessage` at ~1 Hz; a distribution costs 68 KiB of buckets.
-**Decision:** cap metric-name **length** and **cardinality** per registry (distributions 32, tallies
-512). A name over the cap is **refused and counted**, never silently accepted and never thrown.
-**Rationale:** an unbounded, target-influenced key space is the one place a load generator can be
-made to exhaust its own memory by the system under test — and a load tester that dies mid-run
-publishes nothing. Refusing loudly beats throwing, because a metric-name typo should not abort a
-20-minute run; and it beats dropping, because a silently missing counter is the class of lie this
-repo keeps ruling out. Counting refusals is the same rule already applied to dropped requests and
-histogram overflow.
+**Decision:** cap name **length** and **cardinality**, and split the failure mode by where the name
+comes from:
+
+- **Data-derived names** (metrics — counters, checks, distributions; 32 and 512 per registry) are
+  **refused and counted**. They arrive mid-run, from responses, under load.
+- **Config-derived identifiers** (scenario names) **throw**, at startup, before any load.
+
+**Rationale:** an unbounded, target-influenced key space is the one place a load generator can be made
+to exhaust its own memory by the system under test — and a load tester that dies mid-run publishes
+nothing. For data-derived names, refusing beats throwing (a metric-name typo should not abort a
+20-minute run) and beats dropping (a silently missing counter is the class of lie this repo keeps
+ruling out); counting refusals is the same rule already applied to dropped requests and histogram
+overflow. Config-derived names invert every one of those: the same config fails identically every
+run, the failure costs nothing at startup, and silently dropping a scenario would cost an entire
+report section with only a counter to explain it. Uniformity would have been the worse answer here.
 **Consequences:** the cap is **per registry**, so a merged aggregate is bounded at `workers × cap`
 rather than at `cap` — stated explicitly, because the types otherwise imply an invariant that merging
-does not preserve. `Map` (not a plain object) keys every named container, which also removes any
-`__proto__`-style hazard from user-supplied names.
+does not preserve. The caps bound the **recording** path: `fromSnapshot`/`parseRegistrySnapshot`
+deliberately do not re-apply them, so restore is a faithful inverse of serialise rather than a second
+policy point. Unreachable from a real producer (every worker shares one config), and documented at
+the code rather than left implicit. `Map` (not a plain object) keys every named container, which also
+removes any `__proto__`-style hazard from user-supplied names.
