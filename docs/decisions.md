@@ -150,3 +150,22 @@ one worker-protocol change away from silently publishing a mid-run snapshot as f
 plus one 10-minute outlier reports 68ms against a true 601ms), so it travels with an `isLowerBound`
 flag rather than as a plain number. `Trend` reuses `Histogram` behind an explicit `Ms` suffix so a
 caller cannot mix ms and µs by accident.
+
+## 2026-07-30 — Metric names are bounded, and refusals are counted rather than dropped
+
+**Context:** the scenario API hands users the response with the metrics handle in scope, so
+`counters.inc(res.headers["x-request-id"])` is a natural mistake rather than an exotic one. Every
+distinct name becomes a `Map` entry in **every worker** and part of a structured clone crossing
+`postMessage` at ~1 Hz; a distribution costs 68 KiB of buckets.
+**Decision:** cap metric-name **length** and **cardinality** per registry (distributions 32, tallies
+512). A name over the cap is **refused and counted**, never silently accepted and never thrown.
+**Rationale:** an unbounded, target-influenced key space is the one place a load generator can be
+made to exhaust its own memory by the system under test — and a load tester that dies mid-run
+publishes nothing. Refusing loudly beats throwing, because a metric-name typo should not abort a
+20-minute run; and it beats dropping, because a silently missing counter is the class of lie this
+repo keeps ruling out. Counting refusals is the same rule already applied to dropped requests and
+histogram overflow.
+**Consequences:** the cap is **per registry**, so a merged aggregate is bounded at `workers × cap`
+rather than at `cap` — stated explicitly, because the types otherwise imply an invariant that merging
+does not preserve. `Map` (not a plain object) keys every named container, which also removes any
+`__proto__`-style hazard from user-supplied names.
