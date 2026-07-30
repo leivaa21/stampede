@@ -47,8 +47,8 @@ swept across the full range.
 **Consequences:** values above the ceiling are clamped **and counted as overflow**, with the count
 printed — a silently clamped p99 is a lie. Percentiles report the **top** of the sample's bucket so a
 latency is never under-reported; with overflow present the ceiling is returned as a documented lower
-bound; and an empty histogram returns `undefined` rather than `0`, which makes the summary type
-`number | undefined` and forces PR 6 to decide deliberately how a threshold treats missing data.
+bound; and an empty histogram returns `undefined` rather than `0` — see the entry below on what a
+threshold does with a scenario that recorded nothing.
 
 ## 2026-07-30 — Workers own their metrics; the main thread merges cumulative snapshots
 
@@ -57,11 +57,15 @@ are about the whole run, so per-worker metrics must aggregate correctly.
 **Decision:** each worker owns a private metrics registry and posts **cumulative** snapshots on a
 timer plus a final one at the end; the main thread keeps the latest snapshot per worker and
 re-merges. No shared mutable state, no `SharedArrayBuffer` atomics.
-**Rationale:** cumulative snapshots make aggregation **idempotent** — a dropped, delayed or
-duplicated message cannot corrupt the total, which a delta protocol could. Shared-memory atomics
-would buy throughput this tool does not need and cost correctness risk it cannot afford.
+**Rationale:** cumulative snapshots make aggregation **idempotent** — a dropped or duplicated message
+cannot corrupt the total, which a delta protocol could. Shared-memory atomics would buy throughput
+this tool does not need and cost correctness risk it cannot afford.
 **Consequences:** slightly larger messages than deltas, at ~1 Hz — irrelevant. Schedule splitting
-across workers is deterministic so runs reproduce.
+across workers is deterministic so runs reproduce. **Delayed** messages need one thing more than
+cumulative snapshots: each carries a monotonic **sequence number** and the aggregator ignores
+anything it has already superseded. Without it the property held only because a single `MessagePort`
+preserves send order — an assumption a worker-protocol change could break silently, publishing a
+mid-run snapshot as the final one.
 
 ## 2026-07-30 — TS scenario config loaded by Node 24 native type-stripping
 
