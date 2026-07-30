@@ -68,6 +68,9 @@ A violated invariant **fails CI** (exit `1`) instead of printing a red number.
 
 ## Quickstart
 
+> Not wired yet — the CLI lands in M1's PR 6. To run something today, see
+> [Status](#status): `pnpm gate:two` drives the engine against a reference server.
+
 ```bash
 pnpm install
 pnpm dev -- run scenarios.ts   # no build step — Node 24 strips the types
@@ -117,11 +120,30 @@ run** instead of quietly passing its thresholds.
 
 ## Status
 
-- **Designed:** M1 — open-loop engine, mergeable metrics, TS config, setup/teardown, thresholds,
-  live TUI, markdown report. See [`docs/design/m1.md`](docs/design/m1.md).
-- **Next:** the `metrics/` core, then the scheduler.
-- **Deferred on purpose:** SSE / long-lived streaming requests, distributed workers, protocols
-  beyond HTTP(S), a cloud service, a scripting DSL.
+**Built and merged:** the mergeable metrics core and the open-loop engine, single-threaded. 217
+tests, zero known vulnerabilities.
+
+**Not built yet — so the quickstart above does not run yet:** worker threads, TS config loading,
+the CLI itself, the markdown report, and the TUI. `stampede run` is the designed shape, not a
+working command; today the engine is programmatic only. Milestone plan in
+[`docs/design/m1.md`](docs/design/m1.md).
+
+**What you can run today** is the thing this project is actually about — pointing the engine at a
+target whose behaviour is known in advance and checking that it tells the truth:
+
+```bash
+pnpm install
+pnpm gate:two
+```
+
+That starts a reference server (fixed delay, bounded concurrency, keeping its own count) and drives
+four runs against it, comparing stampede's numbers to the server's. It exits non-zero if any claim
+fails. The interesting one asks for 50,000 rps from a single thread: stampede reports ~1,900
+achieved of 50,000, counts ~96,000 dropped, and puts its own ~320ms backlog into `scheduledLatency`
+instead of quietly reporting the flattering number.
+
+**Deferred on purpose:** SSE / long-lived streaming requests, distributed workers, protocols beyond
+HTTP(S), a cloud service, a scripting DSL.
 
 Built as the instrument for [open-ticket](https://github.com/leivaa21/open-ticket)'s published load
 numbers — built the instrument, then used it to validate the architecture.
