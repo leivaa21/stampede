@@ -110,7 +110,10 @@ The four that shaped everything else — full rationale in [`docs/decisions.md`]
   the threshold's name is what the CI failure prints.
 
 Honesty is a design rule, not a feature: dropped requests, histogram overflow, and achieved-vs-
-requested rate are always reported. If the tool can't keep up, the report says so.
+requested rate are always reported. If the tool can't keep up, the report says so. Every rounding
+errs away from flattering the target — percentiles report the top of their bucket, a clamped value
+is a labelled lower bound rather than a bare number, and a scenario that recorded nothing **fails the
+run** instead of quietly passing its thresholds.
 
 ## Status
 

@@ -110,3 +110,39 @@ report and the CI failure line print, which a parsed expression cannot express a
 independent consumers. Enforced with an ESLint import-boundary rule.
 **Rationale:** a lint rule is the only version of this that survives contact with a deadline.
 **Consequences:** the package ships two entries — `stampede` (CLI) and the library export.
+
+## 2026-07-30 — A scenario that recorded nothing fails the run, before thresholds are evaluated
+
+**Context:** D1-02 makes an empty histogram return `undefined` rather than `0`, because zero latency
+is a lie about a run that measured nothing. That type then has to reach user threshold predicates.
+**Decision:** a scenario that finishes with **zero recorded responses fails the run (exit 2)**, checked
+before any threshold runs. The threshold-facing summary therefore exposes plain `number`s.
+**Rationale:** if `number | undefined` reached user predicates, the obvious way to satisfy the
+type-checker is `(s.scenarios.reads.p99 ?? 0) < 250` — and then **a scenario that never ran passes
+its threshold**. That is exactly the lie the `undefined` was chosen to prevent, reintroduced by the
+ergonomics of preventing it. The trap is best removed where it starts, not documented as a footgun.
+Failing the _run_ rather than the _threshold_ is the honest classification: a load test whose
+scenario never issued a response is broken, not violated.
+**Consequences:** the summary projection is a separate read-only shape from the recording registry —
+which the reviewer independently wanted anyway, since get-or-create on a read path let a mistyped
+predicate inject a phantom scenario into the published report.
+
+## 2026-07-30 — Metrics reporting semantics: every rounding errs away from flattering the target
+
+**Context:** a bucketed histogram must choose what to report within a bucket, what to do when a
+sample exceeds the ceiling, and what to do when an `Int32` bucket saturates. Each has a "nicer
+number" answer and an honest one.
+**Decision:** percentiles report the **top** of the sample's bucket (means use midpoints); with
+overflow present the ceiling is returned as a **documented lower bound** carried alongside the value,
+never as a bare number; a saturated bucket **drops the sample and latches a `saturated` flag** rather
+than wrapping negative; and worker snapshots carry a monotonic **sequence number** so a delayed
+message cannot rewind the aggregate.
+**Rationale:** the tool's entire pitch is _prove your numbers_, so every one of these resolves toward
+under-claiming rather than over-claiming. The sequence number is the one that isn't about rounding:
+without it the "idempotent aggregation" property held only because a single `MessagePort` preserves
+order — a transport assumption living in a different file from the guarantee that depended on it, and
+one worker-protocol change away from silently publishing a mid-run snapshot as final.
+**Consequences:** `mean` under overflow is a lower bound with an _unbounded_ error (999 fast requests
+plus one 10-minute outlier reports 68ms against a true 601ms), so it travels with an `isLowerBound`
+flag rather than as a plain number. `Trend` reuses `Histogram` behind an explicit `Ms` suffix so a
+caller cannot mix ms and µs by accident.
