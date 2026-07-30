@@ -15,6 +15,44 @@ import { EngineMetric } from "./metric-names.ts";
  */
 
 const MS_PER_SECOND = 1000;
+const MICROSECONDS_PER_MS = 1000;
+
+/**
+ * A latency distribution in milliseconds.
+ *
+ * Structurally identical to `TrendSummary` — same projection, same units — so it is an alias rather
+ * than a parallel shape that could drift out of step with it.
+ */
+export type LatencySummary = TrendSummary;
+
+/**
+ * Microseconds are the histogram's *storage precision*, not a unit anyone writes a threshold in.
+ *
+ * Leaving raw µs on this surface put two units side by side with no unit in either name, and D1-06's
+ * own worked example — `s.scenarios.reads.p99 < 250` — would then have been a thousand times too
+ * lenient while type-checking perfectly. `arrival-profiles.ts` already states the repo rule that a
+ * field name carries its unit; this is that rule applied to the surface a reporter and a threshold
+ * predicate actually read.
+ *
+ * Converted, never rounded: full float precision belongs in the data, and presentation belongs to
+ * the renderer.
+ */
+const toLatencySummary = (summary: HistogramSummary | undefined): LatencySummary | undefined =>
+  summary === undefined
+    ? undefined
+    : Object.freeze({
+        count: summary.count,
+        minMs: summary.min / MICROSECONDS_PER_MS,
+        maxMs: summary.max / MICROSECONDS_PER_MS,
+        meanMs: summary.mean / MICROSECONDS_PER_MS,
+        p50Ms: summary.p50 / MICROSECONDS_PER_MS,
+        p95Ms: summary.p95 / MICROSECONDS_PER_MS,
+        p99Ms: summary.p99 / MICROSECONDS_PER_MS,
+        p999Ms: summary.p999 / MICROSECONDS_PER_MS,
+        overflowCount: summary.overflowCount,
+        saturated: summary.saturated,
+        isLowerBound: summary.isLowerBound,
+      });
 
 export interface ScenarioRunSummary {
   readonly name: string;
@@ -39,13 +77,17 @@ export interface ScenarioRunSummary {
    * Dispatches per second over the longer of the profile's span and the time the run really took
    * to issue them — so a generator that fell behind divides by the time it actually spent, not by
    * the time it was supposed to spend. `undefined` wherever `requestedRatePerSecond` is.
+   *
+   * Full precision, deliberately unrounded. This is the machine-readable surface threshold
+   * predicates read (`achieved >= requested * 0.95`); rounding it here would bake a presentation
+   * policy into the data. The renderer is where `1880.836698138292` becomes `1881`.
    */
   readonly achievedRatePerSecond: number | undefined;
-  /** µs, send → response. `undefined` when nothing was recorded — never a flattering zero. */
-  readonly latency: HistogramSummary | undefined;
-  /** µs, scheduled instant → response. The headline distribution (D1-01). */
-  readonly scheduledLatency: HistogramSummary | undefined;
-  /** ms, scheduled instant → send. The generator's own backlog. */
+  /** Send → response: what the target took. `undefined` if nothing was recorded — never a zero. */
+  readonly latencyMs: LatencySummary | undefined;
+  /** Scheduled instant → response. The headline distribution (D1-01). */
+  readonly scheduledLatencyMs: LatencySummary | undefined;
+  /** Scheduled instant → send. The generator's own backlog. */
   readonly scheduleLagMs: TrendSummary | undefined;
 }
 
@@ -85,8 +127,10 @@ const summariseScenario = (
   progress: ScenarioProgress,
   metrics: MetricsRegistry,
 ): ScenarioRunSummary => {
-  // `findScenario`, not `scenario`: a read must never conjure the thing it asked for, or a
-  // summary of a scenario that never ran renders as a real section full of zeroes.
+  // `findScenario`, not `scenario`: a read must never conjure the thing it asked for, or a summary
+  // of a scenario that never ran renders as a real section full of zeroes. Through `runDispatch`
+  // this is belt-and-braces — the dispatcher pre-creates every namespace, so the name is always
+  // there — but `summariseRun` is exported and PR 6 consumes it directly.
   const recorded = metrics.findScenario(progress.name);
   const counted = (name: string): number => recorded?.counters.get(name) ?? 0;
 
@@ -112,8 +156,10 @@ const summariseScenario = (
             dispatchedCount,
             Math.max(progress.requestedDurationMs, progress.lastDispatchElapsedMs ?? 0),
           ),
-    latency: recorded?.findHistogram(EngineMetric.latency)?.summary(),
-    scheduledLatency: recorded?.findHistogram(EngineMetric.scheduledLatency)?.summary(),
+    latencyMs: toLatencySummary(recorded?.findHistogram(EngineMetric.latency)?.summary()),
+    scheduledLatencyMs: toLatencySummary(
+      recorded?.findHistogram(EngineMetric.scheduledLatency)?.summary(),
+    ),
     scheduleLagMs: recorded?.findTrend(EngineMetric.scheduleLag)?.summaryMs(),
   });
 };

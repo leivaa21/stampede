@@ -81,3 +81,18 @@ export class FakeTransport implements Transport<FakeRequest> {
     return latencyMs ?? 0;
   }
 }
+
+/**
+ * A transport that breaks the port's contract by throwing **synchronously** instead of rejecting.
+ *
+ * `FakeTransport.fails` cannot express this: `send` is `async` there, so its `throw` is already a
+ * rejection. A real transport throws synchronously for ordinary reasons — `new URL()` on a
+ * malformed target, body serialisation, an invalid header value — and thrown from inside the
+ * dispatch loop that escapes `runDispatch` entirely, ending the run with no drain and no summary.
+ * A port is inbound data; the engine cannot assume it is well behaved.
+ */
+export const synchronouslyThrowingTransport: Transport<FakeRequest> = {
+  send(request: FakeRequest): Promise<TransportResponse> {
+    throw new TypeError(`invalid request for "${request.label}"`);
+  },
+};

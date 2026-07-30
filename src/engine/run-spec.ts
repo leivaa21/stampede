@@ -1,5 +1,5 @@
 import type { ScheduledScenario } from "./schedule.ts";
-import { assertDurationMs, assertPositiveCount } from "./validate.ts";
+import { assertCount, assertDurationMs, assertPositiveCount } from "./validate.ts";
 
 /** How long the run keeps waiting for responses after its last dispatch went out. */
 export const DEFAULT_DRAIN_TIMEOUT_MS = 30_000;
@@ -24,6 +24,11 @@ export interface RunSpec<TRequest> {
    * memory (D1-01): the schedule keeps producing instants whether or not anything comes back.
    * Breaches are dropped **and counted** — a run with drops has an achieved rate below its
    * requested one, and the report has to be able to say so.
+   *
+   * The cap is a **run-level** resource, and when it binds on requests sharing an instant the
+   * scenarios earlier in the list take the slots: first-listed wins, later ones are dropped. That
+   * is deterministic and fully reported per scenario, but it is winner-takes-all rather than a fair
+   * share — worth knowing when sizing this for a multi-scenario burst.
    */
   readonly maxInFlight: number;
   /**
@@ -52,10 +57,18 @@ export const assertRunSpec = <TRequest>(spec: RunSpec<TRequest>): void => {
   }
 
   const seen = new Set<string>();
-  for (const { name } of spec.scenarios) {
+  for (const { name, profile } of spec.scenarios) {
     if (seen.has(name)) {
       throw new RangeError(`Scenario names must be unique within a run; "${name}" is repeated`);
     }
     seen.add(name);
+
+    // `constantRate`/`ramp`/`burst` validate their own inputs, but `ArrivalProfile` is an exported
+    // interface: a programmatic caller can hand over a hand-built `{ count, durationMs, instants }`
+    // that never went through them. Re-checking here keeps `NaN` and `Infinity` out of
+    // `scheduledCount` and `requestedRatePerSecond`, which are published, frozen, and read by
+    // threshold predicates — a `NaN` there fails every comparison silently.
+    assertCount(profile.count, `${name}'s profile count`);
+    assertDurationMs(profile.durationMs, `${name}'s profile duration`);
   }
 };

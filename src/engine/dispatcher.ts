@@ -2,7 +2,7 @@ import { MetricsRegistry, type ScenarioMetrics } from "../metrics/index.ts";
 import { InFlight } from "./in-flight.ts";
 import { recordLatencies } from "./latency.ts";
 import { EngineMetric } from "./metric-names.ts";
-import type { Clock, Transport } from "./ports.ts";
+import type { Clock, Transport, TransportResponse } from "./ports.ts";
 import {
   assertRunSpec,
   DEFAULT_DRAIN_TIMEOUT_MS,
@@ -73,6 +73,26 @@ export const runDispatch = async <TRequest>(
   const startedAtMs = clock.now();
   let recordingResponses = true;
 
+  /**
+   * `ports.ts` requires `send` to *reject* on a transport failure, but a port is inbound data and
+   * nothing enforces that contract. A synchronous throw is ordinary in a real transport — `new
+   * URL()` on a malformed target, body serialisation, an invalid header value — and thrown from
+   * inside the dispatch loop it would escape `runDispatch` entirely: no drain, no summary, nothing
+   * published. One bad request must not cost a twenty-minute run, so a sync throw is folded into
+   * the same rejection path as an async one, where it is counted as an error like any other.
+   *
+   * `Promise.resolve` also covers a transport that returns something that is not a promise at all.
+   */
+  const sendSafely = (request: TRequest): Promise<TransportResponse> => {
+    try {
+      return Promise.resolve(transport.send(request));
+    } catch (error: unknown) {
+      return Promise.reject(
+        error instanceof Error ? error : new Error(String(error), { cause: error }),
+      );
+    }
+  };
+
   const dispatch = (state: ScenarioState<TRequest>, instantMs: number): void => {
     // The cap is the price of open-loop dispatch: against a target that has stopped answering, the
     // schedule keeps producing instants and memory is otherwise unbounded. Dropped *and* counted.
@@ -89,7 +109,7 @@ export const runDispatch = async <TRequest>(
     state.metrics.trend(EngineMetric.scheduleLag).recordMs(Math.max(0, sentAtMs - scheduledAtMs));
 
     inFlight.track(
-      transport.send(state.request).then(
+      sendSafely(state.request).then(
         (): void => {
           state.pendingCount -= 1;
           if (recordingResponses) {

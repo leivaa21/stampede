@@ -55,6 +55,12 @@ export class FakeClock implements Clock {
    * Makes the next wake-ups happen late by the given amounts, in order — a generator that was busy
    * elsewhere when its timer came due. Everything that fell due in the meantime wakes at once,
    * exactly as an overloaded real loop would find it.
+   *
+   * **The lag lands on whichever sleeper wakes next, not on the dispatcher specifically.** In the
+   * honesty tests that is always the dispatcher only because they pair this with a target that
+   * answers instantly. Give that target a latency and `FakeTransport`'s own `clock.sleep` can win
+   * the race instead — the test still passes, while measuring something else entirely. This is the
+   * knob the whole D1-01 assertion rests on, so keep the target instant when using it.
    */
   oversleepNext(...extraMs: readonly number[]): void {
     this.#oversleepMs.push(...extraMs);
