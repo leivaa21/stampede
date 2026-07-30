@@ -9,7 +9,7 @@ import {
   type RunSpec,
   type Scenario,
 } from "./run-spec.ts";
-import { summariseRun, type RunSummary } from "./run-summary.ts";
+import { summariseRun, type RunProgress, type RunSummary } from "./run-summary.ts";
 import { mergedSchedule } from "./schedule.ts";
 
 interface ScenarioState<TRequest> extends Scenario<TRequest> {
@@ -29,6 +29,15 @@ export interface RunOutcome {
   readonly summary: RunSummary;
   /** The registry everything was recorded into — the worker's side of the merge protocol. */
   readonly metrics: MetricsRegistry;
+  /**
+   * The facts only this dispatch loop saw, before they were projected into `summary`.
+   *
+   * A worker sends these to the main thread alongside its metrics snapshot, so the merged run can
+   * be projected by `summariseRun` **once, over the merged inputs** — rather than by combining
+   * several finished summaries, where a derived field like `achievedRatePerSecond` would have to be
+   * re-derived from numbers that had already been rounded into shape.
+   */
+  readonly progress: RunProgress;
 }
 
 /**
@@ -159,20 +168,16 @@ export const runDispatch = async <TRequest>(
     }
   }
 
-  return {
-    summary: summariseRun(
-      {
-        elapsedMs: clock.now() - startedAtMs,
-        maxObservedInFlight: inFlight.maxObserved,
-        scenarios: states.map((state) => ({
-          name: state.name,
-          scheduledCount: state.profile.count,
-          requestedDurationMs: state.profile.durationMs,
-          lastDispatchElapsedMs: state.lastDispatchElapsedMs,
-        })),
-      },
-      metrics,
-    ),
-    metrics,
+  const progress: RunProgress = {
+    elapsedMs: clock.now() - startedAtMs,
+    maxObservedInFlight: inFlight.maxObserved,
+    scenarios: states.map((state) => ({
+      name: state.name,
+      scheduledCount: state.profile.count,
+      requestedDurationMs: state.profile.durationMs,
+      lastDispatchElapsedMs: state.lastDispatchElapsedMs,
+    })),
   };
+
+  return { summary: summariseRun(progress, metrics), metrics, progress };
 };
