@@ -13,6 +13,8 @@ export interface RunArgs {
   readonly configPath: string;
   /** Overrides the config's own `workers`, which in turn overrides the default. */
   readonly workers: number | undefined;
+  /** Where to write the markdown report, if anywhere. */
+  readonly reportPath: string | undefined;
 }
 
 export type ParsedArgs =
@@ -22,7 +24,9 @@ export type ParsedArgs =
   | { readonly kind: "error"; readonly message: string };
 
 const asPositiveInteger = (raw: string | undefined, flag: string): number | { error: string } => {
-  if (raw === undefined) {
+  // A *flag*, not a negative number: `--workers --report x` was given nothing, while
+  // `--workers -1` was given something wrong, and the two deserve different messages.
+  if (raw === undefined || /^--?[a-zA-Z]/.test(raw)) {
     return { error: `${flag} needs a value` };
   }
   const value = Number(raw);
@@ -50,6 +54,7 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
 
   let configPath: string | undefined;
   let workers: number | undefined;
+  let reportPath: string | undefined;
 
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index];
@@ -62,6 +67,16 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
         return { kind: "error", message: parsed.error };
       }
       workers = parsed;
+      index += 1;
+      continue;
+    }
+    if (argument === "--report") {
+      const value = rest[index + 1];
+      if (value === undefined || value.startsWith("-")) {
+        // Consuming a following flag would write the report to a file called "--workers".
+        return { kind: "error", message: "--report needs a file path" };
+      }
+      reportPath = value;
       index += 1;
       continue;
     }
@@ -83,13 +98,14 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
       message: "`run` needs a config file — try `stampede run scenarios.ts`",
     };
   }
-  return { kind: "run", configPath, workers };
+  return { kind: "run", configPath, workers, reportPath };
 };
 
 export const HELP = `stampede — load testing that proves invariants, not just percentiles
 
   stampede run <scenarios.ts>              run the scenarios in a config file
-  stampede run <scenarios.ts> --workers 4  override the worker-thread count
+  stampede run <scenarios.ts> --workers 4    override the worker-thread count
+  stampede run <scenarios.ts> --report out.md  write a markdown report
 
   --help, -h        this message
   --version, -v     print the version

@@ -5,8 +5,8 @@ describe scenarios in typed TypeScript, and get a live terminal dashboard plus a
 markdown report — with named checks, custom counters merged across worker threads, and thresholds
 that decide the exit code.
 
-> **Status: M1 nearly done.** `stampede run` works end to end — the report and the live TUI are the
-> remaining slices. See [Status](#status).
+> **Status: M1 nearly done.** `stampede run` works end to end and writes a markdown report; the
+> live TUI is the remaining slice. See [Status](#status).
 
 ## Why it exists
 
@@ -117,12 +117,12 @@ run** instead of quietly passing its thresholds.
 ## Status
 
 **Built and merged:** the mergeable metrics core, the open-loop engine, the worker pool that shards
-a run across threads, TS config loading with the real HTTP transport, and **`stampede run`** —
-setup, storm, teardown, verdict, with exit codes CI can act on. 330 tests, zero known
-vulnerabilities.
+a run across threads, TS config loading with the real HTTP transport, **`stampede run`** — setup,
+storm, teardown, verdict, with exit codes CI can act on — and `--report out.md`. 357 tests, zero
+known vulnerabilities.
 
-**Not built yet:** the markdown report and the live TUI, so `--report` and `--ci` are not flags yet
-(an unknown flag is an error, not a shrug). Milestone plan in
+**Not built yet:** the live TUI, so `--ci` is not a flag yet (an unknown flag is an error, not a
+shrug). Milestone plan in
 [`docs/design/m1.md`](docs/design/m1.md).
 
 The example above is close to the real API, with two exceptions until those land: per-scenario

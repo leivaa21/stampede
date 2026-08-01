@@ -47,8 +47,26 @@ describe("parseArgs", () => {
     }
   });
 
+  it("blames a negative count as a bad value, not a missing one", () => {
+    // `-1` is something wrong; `--report` is nothing at all. Same rejection, different diagnosis.
+    expect(errorMessage(["run", "s.ts", "--workers", "-1"])).toContain("at least 1");
+    expect(errorMessage(["run", "s.ts", "--workers", "--report"])).toContain("needs a value");
+  });
+
   it("refuses --workers with nothing after it", () => {
     expect(parseArgs(["run", "s.ts", "--workers"])).toMatchObject({ kind: "error" });
+  });
+
+  it("takes a report path", () => {
+    expect(parseArgs(["run", "s.ts", "--report", "out.md"])).toMatchObject({
+      reportPath: "out.md",
+    });
+  });
+
+  it("refuses a flag where a value should be, rather than using it as one", () => {
+    // `--report --workers 4` would otherwise write the report to a file called "--workers".
+    expect(errorMessage(["run", "s.ts", "--report", "--workers"])).toContain("needs a file path");
+    expect(errorMessage(["run", "s.ts", "--workers", "--report"])).toContain("needs a value");
   });
 
   it("refuses two config files instead of silently picking one", () => {

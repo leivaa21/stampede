@@ -30,6 +30,10 @@ export interface RunReport {
   /** Why the run failed, when it did. Already phrased for a human. */
   readonly failure: string | undefined;
   readonly supersededSnapshots: number;
+  /** What the run was actually configured as — the report's provenance. */
+  readonly workerCount: number;
+  readonly maxInFlight: number;
+  readonly drainTimeoutMs: number;
 }
 
 export interface RunOptions {
@@ -37,12 +41,22 @@ export interface RunOptions {
   readonly workers?: number | undefined;
 }
 
-const failed = (failure: string): RunReport => ({
+interface RunSettings {
+  readonly workerCount: number;
+  readonly maxInFlight: number;
+  readonly drainTimeoutMs: number;
+}
+
+/** Before the config is readable there are no settings to report, only the failure. */
+const UNKNOWN_SETTINGS: RunSettings = { workerCount: 0, maxInFlight: 0, drainTimeoutMs: 0 };
+
+const failed = (failure: string, settings: RunSettings): RunReport => ({
   exitCode: ExitCode.RunFailed,
   summary: undefined,
   verdict: undefined,
   failure,
   supersededSnapshots: 0,
+  ...settings,
 });
 
 const messageOf = (error: unknown): string =>
@@ -55,8 +69,13 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
   try {
     config = await loadConfig(configPath);
   } catch (error: unknown) {
-    return failed(messageOf(error));
+    return failed(messageOf(error), UNKNOWN_SETTINGS);
   }
+  const settings: RunSettings = {
+    workerCount: options.workers ?? workerCountFor(config),
+    maxInFlight: maxInFlightFor(config),
+    drainTimeoutMs: drainTimeoutMsFor(config),
+  };
 
   // `setup()` runs **once, here, on the main thread** — never in a worker, and never per virtual
   // user. Its return value is data that every worker receives by structured clone (D1-04), which is
@@ -65,7 +84,7 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
   try {
     setupState = await config.setup?.();
   } catch (error: unknown) {
-    return failed(`setup() failed: ${messageOf(error)}`);
+    return failed(`setup() failed: ${messageOf(error)}`, settings);
   }
 
   let summary: RunSummary;
@@ -73,9 +92,9 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
   try {
     const outcome = await runPool({
       modulePath: configPath,
-      workerCount: options.workers ?? workerCountFor(config),
-      maxInFlight: maxInFlightFor(config),
-      drainTimeoutMs: drainTimeoutMsFor(config),
+      workerCount: settings.workerCount,
+      maxInFlight: settings.maxInFlight,
+      drainTimeoutMs: settings.drainTimeoutMs,
       setupState,
     });
     summary = outcome.summary;
@@ -84,13 +103,13 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
     // The load itself could not be generated. `teardown` still runs below on the happy path only:
     // there is deliberately no cleanup-on-failure here, because a teardown written to *assert* an
     // invariant would report a confusing failure about a run that never happened.
-    return failed(messageOf(error));
+    return failed(messageOf(error), settings);
   }
 
   // Before any threshold: a scenario that measured nothing cannot be judged, only reported broken.
   const unmeasured = findUnmeasuredScenario(summary);
   if (unmeasured !== undefined) {
-    return { ...failed(unmeasured), summary, supersededSnapshots };
+    return { ...failed(unmeasured, settings), summary, supersededSnapshots };
   }
 
   // The invariant is proven *after* the storm — this is the line D1-06 exists for. A throw here is
@@ -105,6 +124,7 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
         verdict: undefined,
         failure: `teardown() failed — the invariant did not hold after the run: ${messageOf(error)}`,
         supersededSnapshots,
+        ...settings,
       };
     }
   }
@@ -117,6 +137,7 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
       verdict,
       failure: `a threshold predicate threw: ${verdict.broken.join(", ")}`,
       supersededSnapshots,
+      ...settings,
     };
   }
 
@@ -126,5 +147,6 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
     verdict,
     failure: undefined,
     supersededSnapshots,
+    ...settings,
   };
 };

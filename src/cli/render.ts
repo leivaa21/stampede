@@ -1,3 +1,4 @@
+import { duration, ms, rate } from "../report/format.ts";
 import type { LatencySummary, RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 import type { Verdict } from "./thresholds.ts";
 
@@ -12,30 +13,6 @@ import type { Verdict } from "./thresholds.ts";
  * Rounding happens here and only here: `RunSummary` keeps full precision because threshold
  * predicates read it. Every rounding in this file goes **away** from flattering the target.
  */
-
-const ms = (value: number | undefined): string =>
-  value === undefined ? "—" : `${value.toFixed(1)}ms`;
-
-/**
- * A rate, rounded in the direction that cannot make a shortfall disappear.
- *
- * `Math.round` on both sides turned "2/s requested, 1.6/s achieved" — a 20 % shortfall — into
- * `2/s · 2/s`, and a scenario achieving 0.4/s into a flat `0/s`. So the requested side rounds up,
- * the achieved side rounds down, and anything under 10/s keeps a decimal rather than collapsing.
- */
-const rate = (value: number | undefined, direction: "requested" | "achieved"): string => {
-  if (value === undefined) {
-    return "—";
-  }
-  if (value < 10) {
-    // Two decimals below 10/s: a sub-1/s rate printing as "0/s" would read as "nothing happened".
-    const shown =
-      direction === "achieved" ? Math.floor(value * 100) / 100 : Math.ceil(value * 100) / 100;
-    return `${String(shown)}/s`;
-  }
-  const shown = direction === "achieved" ? Math.floor(value) : Math.ceil(value);
-  return `${shown.toLocaleString("en-US")}/s`;
-};
 
 /**
  * The caveat that has to travel with a clamped distribution.
@@ -105,7 +82,7 @@ export const renderSummary = (summary: RunSummary): string =>
     "",
     // "peak in flight" is a sum of independent per-thread maxima, so it is an upper bound rather
     // than something anyone observed — the threads peaked whenever they peaked. Said, not implied.
-    `run finished in ${(summary.elapsedMs / 1000).toFixed(1)}s · peak in flight ≤ ${String(summary.maxObservedInFlight)} (sum of per-thread peaks)`,
+    `run finished in ${duration(summary.elapsedMs)} · peak in flight ≤ ${String(summary.maxObservedInFlight)} (sum of per-thread peaks)`,
     "",
     ...summary.scenarios.flatMap((scenario) => [...scenarioLines(scenario), ""]),
   ].join("\n");
