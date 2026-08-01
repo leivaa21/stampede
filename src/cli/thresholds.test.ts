@@ -1,0 +1,120 @@
+import { describe, expect, it } from "vitest";
+import type { RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
+import { evaluateThresholds, findUnmeasuredScenario } from "./thresholds.ts";
+
+const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary => ({
+  name: "reads",
+  scheduledCount: 10,
+  dispatchedCount: 10,
+  droppedCount: 0,
+  responseCount: 10,
+  errorCount: 0,
+  abandonedCount: 0,
+  requestedRatePerSecond: 10,
+  achievedRatePerSecond: 10,
+  latencyMs: undefined,
+  scheduledLatencyMs: undefined,
+  scheduleLagMs: undefined,
+  ...over,
+});
+
+const summaryOf = (...scenarios: readonly ScenarioRunSummary[]): RunSummary => ({
+  elapsedMs: 1_000,
+  scenarios,
+  droppedCount: 0,
+  abandonedCount: 0,
+  maxObservedInFlight: 1,
+});
+
+describe("findUnmeasuredScenario", () => {
+  it("passes a scenario that recorded responses", () => {
+    expect(findUnmeasuredScenario(summaryOf(scenario()))).toBeUndefined();
+  });
+
+  it("catches a scenario where everything failed", () => {
+    // The unreachable-target case. Without this the run would reach the thresholds with no
+    // percentiles at all, and the obvious `(s.p99 ?? 0) < 250` would *pass* — a scenario that never
+    // ran clearing its own threshold, which is the exact lie D1-02's `undefined` exists to prevent.
+    const message = findUnmeasuredScenario(
+      summaryOf(scenario({ responseCount: 0, errorCount: 10 })),
+    );
+
+    expect(message).toContain('"reads"');
+    expect(message).toContain("10 failed");
+    expect(message).toContain("target is reachable");
+  });
+
+  it("catches a scenario where everything was dropped", () => {
+    expect(
+      findUnmeasuredScenario(
+        summaryOf(scenario({ responseCount: 0, dispatchedCount: 0, droppedCount: 10 })),
+      ),
+    ).toContain("10 dropped");
+  });
+
+  it("ignores a scenario that never scheduled anything", () => {
+    // A profile of zero requests measured nothing, but nothing was asked of it either.
+    expect(
+      findUnmeasuredScenario(summaryOf(scenario({ scheduledCount: 0, responseCount: 0 }))),
+    ).toBeUndefined();
+  });
+
+  it("names the first broken scenario when several ran", () => {
+    expect(
+      findUnmeasuredScenario(
+        summaryOf(scenario({ name: "writes", responseCount: 0, errorCount: 10 }), scenario()),
+      ),
+    ).toContain('"writes"');
+  });
+});
+
+describe("evaluateThresholds", () => {
+  const summary = summaryOf(scenario());
+
+  it("reports nothing violated when every claim holds", () => {
+    const verdict = evaluateThresholds(
+      [
+        { name: "answered everything", assert: (s) => s.scenarios[0]?.responseCount === 10 },
+        { name: "nothing dropped", assert: (s) => s.droppedCount === 0 },
+      ],
+      summary,
+    );
+
+    expect(verdict.violated).toEqual([]);
+    expect(verdict.broken).toEqual([]);
+    expect(verdict.results.every((r) => r.held)).toBe(true);
+  });
+
+  it("names the claim that broke, not the expression", () => {
+    // D1-06's whole reason for a named predicate over a string mini-language.
+    const verdict = evaluateThresholds(
+      [{ name: "exactly one buyer wins", assert: () => false }],
+      summary,
+    );
+
+    expect(verdict.violated).toEqual(["exactly one buyer wins"]);
+  });
+
+  it("keeps a predicate that threw apart from one that returned false", () => {
+    // A typo reaching into a scenario that does not exist is the config's mistake. Counting it as a
+    // violation would blame the target for it, so it lands on the run-failed code instead.
+    const verdict = evaluateThresholds(
+      [
+        { name: "broken claim", assert: (s) => (s as never as { x: { y: number } }).x.y === 1 },
+        { name: "honest failure", assert: () => false },
+      ],
+      summary,
+    );
+
+    expect(verdict.broken).toEqual(["broken claim"]);
+    expect(verdict.violated).toEqual(["honest failure"]);
+    expect(verdict.results[0]?.error).toBeTruthy();
+  });
+
+  it("has nothing to say when no thresholds were declared", () => {
+    const verdict = evaluateThresholds([], summary);
+
+    expect(verdict.results).toEqual([]);
+    expect(verdict.violated).toEqual([]);
+  });
+});

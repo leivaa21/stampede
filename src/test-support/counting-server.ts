@@ -18,6 +18,13 @@ export const startCountingServer = async (
 ): Promise<CountingServer> => {
   let received = 0;
   const server: Server = createServer((request, response) => {
+    // A count the *config under test* can read over HTTP. A teardown asserting on it is how run
+    // ordering gets proven: run before the storm it would see zero.
+    if (request.url === "/__count") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ received }));
+      return;
+    }
     received += 1;
     request.resume();
     response.writeHead(options.failStatus ?? 200, { "content-type": "application/json" });

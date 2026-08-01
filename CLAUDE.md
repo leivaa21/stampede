@@ -29,11 +29,17 @@
 > types — no bundler, no build step — and the loader translates
 > `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` into the file plus the fix. Ships the real HTTP transport,
 > which follows **no** redirects on purpose. 284 tests.
-> **Not built yet:** the CLI and thresholds (PR 6), the markdown report (PR 7), the TUI (PR 8).
-> `stampede run` still does not exist — `setup()`/`teardown()` are declared and typed but nothing
-> calls them yet; the engine is reachable programmatically via `src/index.ts`.
-> Next: PR 6 — the CLI, thresholds and exit codes, which is where `setup`/`teardown` get wired and
-> `stampede run` becomes real. Keep this line current after every merged slice.
+> **`stampede run` works (PR 6).** setup → storm across threads → teardown → verdict, in that
+> order, because an invariant like "exactly one seat sold" can only be asked after the storm. Exit
+> codes are a contract: **0** every threshold held · **1** a threshold was violated _or_ teardown
+> proved the invariant broke · **2** the run itself failed. A scenario that recorded no responses
+> fails the run before any threshold is evaluated, so `(s.p99 ?? 0) < 250` can never let a scenario
+> that never ran pass. 316 tests.
+> **Verified against a target that double-sells:** `teardown() failed — the invariant did not hold
+after the run: double sell: 300 seats sold`, exit 1. That is open-ticket's M5 case working.
+> **Not built yet:** the markdown report (PR 7) and the live TUI (PR 8). `--report` and `--ci` do
+> not exist as flags yet — an unknown flag is an error, not a shrug.
+> Next: PR 7 — the markdown report. Keep this line current after every merged slice.
 
 ## Identity
 
