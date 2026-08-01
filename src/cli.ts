@@ -4,6 +4,7 @@ import { HELP, parseArgs } from "./cli/args.ts";
 import { renderSummary, renderVerdict } from "./cli/render.ts";
 import { ExitCode, runFromConfig, type ExitCodeValue } from "./cli/run-command.ts";
 import { renderMarkdownReport } from "./report/markdown.ts";
+import { createDashboard } from "./tui/dashboard.ts";
 import { readVersion } from "./version.ts";
 
 /**
@@ -41,7 +42,29 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
     return ExitCode.RunFailed;
   }
 
-  const report = await runFromConfig({ configPath: args.configPath, workers: args.workers });
+  // A dashboard only where there is a terminal to draw on. Piped into a file or a CI log, the
+  // cursor moves would be literal escape codes in the artefact — so the same run that draws live
+  // for a human prints nothing extra for a machine, and `--ci` forces the machine's view.
+  const interactive = !args.ci && process.stdout.isTTY;
+  const dashboard = interactive
+    ? createDashboard({
+        write: (text) => process.stdout.write(text),
+        columns: process.stdout.columns,
+      })
+    : undefined;
+
+  const report = await runFromConfig({
+    configPath: args.configPath,
+    workers: args.workers,
+    onProgress:
+      dashboard === undefined
+        ? undefined
+        : (summary) => {
+            dashboard.update(summary);
+          },
+  });
+  // Cleared before anything else prints, so the final summary never lands under a stale frame.
+  dashboard?.stop();
 
   // Written whenever there is something to report, including on a *failed* run: a report showing
   // which threshold broke is exactly what someone needs after a red CI job, and withholding it

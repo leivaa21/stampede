@@ -41,9 +41,13 @@ after the run: double sell: 300 seats sold`, exit 1. That is open-ticket's M5 ca
 > provenance (version, worker count, config path, timestamp) and every caveat _inside_ the table —
 > a clamped percentile that loses its footnote on the way to a README becomes a measurement nobody
 > can challenge. Written on failed runs too, which is when it is most wanted. 357 tests.
-> **Not built yet:** the live TUI (PR 8). `--ci` is not a flag yet — an unknown flag is an error,
-> not a shrug.
-> Next: PR 8 — the live TUI. Keep this line current after every merged slice.
+> **Live TUI (PR 8) is in — M1 feature-complete.** The dashboard redraws in place on a TTY and is
+> silent when piped or under `--ci`, so the same run draws for a human and prints nothing extra for
+> a machine. It needed the protocol change deferred from PR 4: every worker message now carries its
+> sender's progress, without which a mid-run merge held metrics from all workers and progress only
+> from finished ones, and reported more dispatched than scheduled. 385 tests.
+> Next: PR 9 — README and the reality-gate evidence, then M1 is done. Keep this line current after
+> every merged slice.
 
 ## Identity
 

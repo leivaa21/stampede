@@ -30,7 +30,7 @@ export interface WorkerAssignment {
  * elapsed time and its last-dispatch instant are things only that thread saw.
  */
 export type WorkerMessage =
-  | { readonly kind: "snapshot"; readonly snapshot: unknown }
+  | { readonly kind: "snapshot"; readonly snapshot: unknown; readonly progress: RunProgress }
   | { readonly kind: "finished"; readonly snapshot: unknown; readonly progress: RunProgress }
   | { readonly kind: "failed"; readonly message: string };
 
@@ -90,14 +90,16 @@ export const parseWorkerMessage = (value: unknown): WorkerMessage => {
   }
   switch (value.kind) {
     case "snapshot":
-      return { kind: "snapshot", snapshot: value.snapshot };
     case "finished": {
       const { progress } = value;
       if (!isRecord(progress) || !Array.isArray(progress.scenarios)) {
-        throw new TypeError("a finished message must carry run progress");
+        // Both message kinds carry progress now. A mid-run merge that had metrics from every worker
+        // but progress only from the finished ones reported a run whose dispatched count exceeded
+        // its scheduled count — so progress travels on every message or the live view lies.
+        throw new TypeError(`a ${value.kind} message must carry run progress`);
       }
       return {
-        kind: "finished",
+        kind: value.kind,
         snapshot: value.snapshot,
         progress: {
           elapsedMs: finiteAt(progress.elapsedMs, "progress.elapsedMs"),
