@@ -47,6 +47,12 @@ describe("parseArgs", () => {
     }
   });
 
+  it("blames a negative count as a bad value, not a missing one", () => {
+    // `-1` is something wrong; `--report` is nothing at all. Same rejection, different diagnosis.
+    expect(errorMessage(["run", "s.ts", "--workers", "-1"])).toContain("at least 1");
+    expect(errorMessage(["run", "s.ts", "--workers", "--report"])).toContain("needs a value");
+  });
+
   it("refuses --workers with nothing after it", () => {
     expect(parseArgs(["run", "s.ts", "--workers"])).toMatchObject({ kind: "error" });
   });

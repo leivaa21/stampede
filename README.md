@@ -5,8 +5,8 @@ describe scenarios in typed TypeScript, and get a live terminal dashboard plus a
 markdown report — with named checks, custom counters merged across worker threads, and thresholds
 that decide the exit code.
 
-> **Status: M1 nearly done.** `stampede run` works end to end — the report and the live TUI are the
-> remaining slices. See [Status](#status).
+> **Status: M1 nearly done.** `stampede run` works end to end and writes a markdown report; the
+> live TUI is the remaining slice. See [Status](#status).
 
 ## Why it exists
 

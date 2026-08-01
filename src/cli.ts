@@ -24,13 +24,14 @@ const err = (text: string): void => {
 
 const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
   const args = parseArgs(argv);
+  const version = readVersion(new URL("../package.json", import.meta.url));
 
   if (args.kind === "help") {
     out(HELP);
     return ExitCode.Ok;
   }
   if (args.kind === "version") {
-    out(readVersion(new URL("../package.json", import.meta.url)));
+    out(version);
     return ExitCode.Ok;
   }
   if (args.kind === "error") {
@@ -45,6 +46,11 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
   // Written whenever there is something to report, including on a *failed* run: a report showing
   // which threshold broke is exactly what someone needs after a red CI job, and withholding it
   // because the run failed would withhold it precisely when it matters.
+  if (args.reportPath !== undefined && report.summary === undefined) {
+    // Silence here is dangerous: a CI job that uploads out.md as an artifact would publish the
+    // previous run's numbers as this run's.
+    err(`stampede: no report written to ${args.reportPath} — the run produced no measurements`);
+  }
   if (args.reportPath !== undefined && report.summary !== undefined) {
     try {
       const target = path.resolve(args.reportPath);
@@ -52,9 +58,15 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
       writeFileSync(
         target,
         renderMarkdownReport(report.summary, report.verdict, {
-          version: readVersion(new URL("../package.json", import.meta.url)),
+          version,
+          // The raw string the user typed, not the resolved one: it is short, it is what they
+          // wrote, and it keeps an absolute home directory out of a file bound for a public README.
           configPath: args.configPath,
           workerCount: report.workerCount,
+          maxInFlight: report.maxInFlight,
+          drainTimeoutMs: report.drainTimeoutMs,
+          failure: report.failure,
+          supersededSnapshots: report.supersededSnapshots,
           generatedAt: new Date(),
         }),
       );

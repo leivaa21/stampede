@@ -24,9 +24,9 @@ export type ParsedArgs =
   | { readonly kind: "error"; readonly message: string };
 
 const asPositiveInteger = (raw: string | undefined, flag: string): number | { error: string } => {
-  if (raw === undefined || raw.startsWith("-")) {
-    // Without the second check `--workers --report x` blames the *value* for not being a number,
-    // when what actually happened is that the flag was given nothing.
+  // A *flag*, not a negative number: `--workers --report x` was given nothing, while
+  // `--workers -1` was given something wrong, and the two deserve different messages.
+  if (raw === undefined || /^--?[a-zA-Z]/.test(raw)) {
     return { error: `${flag} needs a value` };
   }
   const value = Number(raw);
@@ -104,8 +104,8 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
 export const HELP = `stampede — load testing that proves invariants, not just percentiles
 
   stampede run <scenarios.ts>              run the scenarios in a config file
-  stampede run <scenarios.ts> --workers 4  override the worker-thread count
-  stampede run <scenarios.ts> --report out.md   write a markdown report
+  stampede run <scenarios.ts> --workers 4    override the worker-thread count
+  stampede run <scenarios.ts> --report out.md  write a markdown report
 
   --help, -h        this message
   --version, -v     print the version
