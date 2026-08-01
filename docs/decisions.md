@@ -203,3 +203,24 @@ sibling's slack**, so drops appear slightly sooner than a perfectly shared budge
 price of never taking a lock on the dispatch path. The stride also loses the _global_ dispatch
 ordinal (each shard re-counts from 0), which matters the moment per-request variation lands —
 recoverable exactly as `shardIndex + localIndex * shardCount`, and noted at the code.
+
+## 2026-07-31 — The HTTP transport follows no redirects, and adds nothing else
+
+**Context:** the transport is the code every published latency number is measured around. `fetch`
+ships with defaults — most notably **follow up to twenty redirect hops** — that are inherited by
+simply not mentioning them.
+**Decision:** `redirect: "manual"`. A 3xx is a response: timed like any other, reported as the
+status it really was, and left to the scenario's own checks to judge. No retries, no connection
+pooling knobs, nothing else.
+**Rationale:** an inherited redirect policy is the most expensive kind, because it is invisible.
+Behind an http→https 301 the default would fold an extra round trip and a TLS handshake into the p50
+and attribute them to the endpoint under test, while a `status === 200` check passed for an endpoint
+that actually answered 301. The transport's own comment already refused to add a redirect policy;
+it was silently running one. Retries are refused for the same reason: a retry that turns two
+failures into one success is a lie about the target.
+**Consequences:** a user pointing at a redirecting URL sees the 3xx rather than the destination, and
+has to point at the destination — noisier once, honest every time after. The response body is
+drained inside the measured window, because stopping at the headers would report a streaming target
+as far faster than any client of it experiences. `fetch` labels a _string_ body `text/plain` on its
+own, so pre-serialised JSON needs an explicit header; passing the object and letting the transport
+encode it is the path that does the right thing.

@@ -12,6 +12,13 @@ import type { RunSummary } from "../engine/run-summary.ts";
 
 /** A run's whole state from `setup()`, as every virtual user sees it. */
 export interface ScenarioConfig<TSetup> {
+  /**
+   * When this scenario dispatches.
+   *
+   * Evaluated when the module is imported — **before `setup()` runs** — so it cannot read the setup
+   * state. `request` can, because it is a function called afterwards. A profile whose rate depends
+   * on something discovered at setup time is not expressible today.
+   */
   readonly profile: ArrivalProfile;
   /**
    * The request this scenario sends, built once from the setup state.

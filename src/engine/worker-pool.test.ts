@@ -137,7 +137,7 @@ describe("a pool that cannot run says so instead of hanging", () => {
         snapshotIntervalMs: 25,
         setupState: { kind: "burst", count: 1, url: target.url },
       }),
-    ).rejects.toThrow(/must declare a `scenarios` object|no default export/);
+    ).rejects.toThrow(/no default export/);
   }, 20_000);
 
   it("refuses a worker count of zero rather than reporting an empty run as a success", async () => {

@@ -1,10 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { constantRate, runDispatch, systemClock } from "../../src/engine/index.ts";
+import { constantRate, httpTransport, runDispatch, systemClock } from "../../src/engine/index.ts";
+import type { HttpRequestSpec } from "../../src/engine/http-transport.ts";
 import { runPool } from "../../src/engine/worker-pool.ts";
 import type { ScenarioRunSummary } from "../../src/engine/run-summary.ts";
-import type { Transport, TransportResponse } from "../../src/engine/ports.ts";
 
 /**
  * Gate two — the reality gate (workspace CLAUDE.md §7).
@@ -23,22 +23,14 @@ import type { Transport, TransportResponse } from "../../src/engine/ports.ts";
 const TARGET_PORT = 5999;
 const TARGET_URL = `http://localhost:${String(TARGET_PORT)}/`;
 
-interface HttpRequest {
-  readonly url: string;
-}
-
-/**
- * The real transport ships properly in a later PR. This is the harness's own, and deliberately the
- * dumbest thing that makes the numbers real: one `fetch`, body drained so the timing covers the
- * whole response rather than just the headers.
+/*
+ * The transport here is the shipped `httpTransport`, not a copy.
+ *
+ * It used to be a local one — which meant the gate's headline numbers, the ones quoted in the
+ * README and the current-state line, were produced by code that never ships. A regression in the
+ * real transport would have left this page green while it kept claiming to have verified the tool
+ * against a real target. Evidence has to run the code it is evidence for.
  */
-const httpTransport: Transport<HttpRequest> = {
-  async send(request) {
-    const response = await fetch(request.url);
-    await response.arrayBuffer();
-    return { status: response.status } satisfies TransportResponse;
-  },
-};
 
 interface TargetStats {
   readonly received: number;
@@ -107,7 +99,7 @@ const gateRun = async ({
   process.stdout.write(`\n${"─".repeat(76)}\n${title}\n${"─".repeat(76)}\n`);
   const target = await startTarget(targetArgs);
   try {
-    const outcome = await runDispatch<HttpRequest>(
+    const outcome = await runDispatch<HttpRequestSpec>(
       {
         scenarios: [
           {

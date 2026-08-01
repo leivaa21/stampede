@@ -120,13 +120,18 @@ run** instead of quietly passing its thresholds.
 
 ## Status
 
-**Built and merged:** the mergeable metrics core and the open-loop engine, single-threaded. 217
-tests, zero known vulnerabilities.
+**Built and merged:** the mergeable metrics core, the open-loop engine, the worker pool that shards
+a run across threads, and TS config loading with the real HTTP transport. 284 tests, zero known
+vulnerabilities.
 
-**Not built yet — so the quickstart above does not run yet:** worker threads, TS config loading,
-the CLI itself, the markdown report, and the TUI. `stampede run` is the designed shape, not a
-working command; today the engine is programmatic only. Milestone plan in
+**Not built yet — so the quickstart above does not run yet:** the CLI itself, the markdown report,
+and the TUI. `stampede run` is the designed shape, not a working command; today the engine and the
+config loader are reachable programmatically. Milestone plan in
 [`docs/design/m1.md`](docs/design/m1.md).
+
+The example above is close to the real API, with two exceptions until the remaining slices land:
+per-scenario `checks` and `onResponse` do not exist yet, and a scenario's `profile` is evaluated
+when the config is imported, so it cannot read setup state (the `request` builder can).
 
 **What you can run today** is the thing this project is actually about — pointing the engine at a
 target whose behaviour is known in advance and checking that it tells the truth:

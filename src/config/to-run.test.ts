@@ -1,0 +1,87 @@
+import { describe, expect, it } from "vitest";
+import { burst } from "../engine/arrival-profiles.ts";
+import type { StampedeConfig } from "./types.ts";
+import {
+  DEFAULT_MAX_IN_FLIGHT,
+  defaultWorkerCount,
+  drainTimeoutMsFor,
+  maxInFlightFor,
+  scenariosFrom,
+  workerCountFor,
+} from "./to-run.ts";
+
+const configWith = (request: (state: unknown) => unknown): StampedeConfig<unknown> =>
+  ({
+    scenarios: { reads: { profile: burst({ count: 2 }), request } },
+  }) as unknown as StampedeConfig<unknown>;
+
+describe("scenariosFrom", () => {
+  it("names each scenario after its key and builds its request from the setup state", () => {
+    const scenarios = scenariosFrom(
+      configWith((state) => ({ url: `http://x/${String(state)}` })),
+      7,
+    );
+
+    expect(scenarios).toHaveLength(1);
+    expect(scenarios[0]?.name).toBe("reads");
+    expect(scenarios[0]?.request.url).toBe("http://x/7");
+  });
+
+  it("refuses a request() that returned the URL instead of a request", () => {
+    // The natural first-run slip: the parameter *is* the state and the state often *is* a URL.
+    // Unchecked it produces a run where every dispatch fails inside fetch and lands in one
+    // undifferentiated error counter — "5 errors" and no way to tell why.
+    expect(() =>
+      scenariosFrom(
+        configWith(() => "http://x/"),
+        undefined,
+      ),
+    ).toThrow(/scenario "reads": request\(\) must return an object/);
+  });
+
+  it("refuses a request() that returned an object with no url", () => {
+    expect(() =>
+      scenariosFrom(
+        configWith(() => ({ path: "/x" })),
+        undefined,
+      ),
+    ).toThrow(/must return a `url` string/);
+  });
+
+  it("refuses an empty url rather than sending it", () => {
+    expect(() =>
+      scenariosFrom(
+        configWith(() => ({ url: "" })),
+        undefined,
+      ),
+    ).toThrow(/must return a `url` string/);
+  });
+});
+
+describe("run settings", () => {
+  const bare = { scenarios: {} } as unknown as StampedeConfig<unknown>;
+
+  it("falls back to the defaults when the config says nothing", () => {
+    expect(maxInFlightFor(bare)).toBe(DEFAULT_MAX_IN_FLIGHT);
+    expect(workerCountFor(bare)).toBe(defaultWorkerCount());
+    expect(drainTimeoutMsFor(bare)).toBeGreaterThan(0);
+  });
+
+  it("prefers what the config asked for", () => {
+    const config = {
+      scenarios: {},
+      workers: 3,
+      maxInFlight: 17,
+      drainTimeoutMs: 250,
+    } as unknown as StampedeConfig<unknown>;
+
+    expect(workerCountFor(config)).toBe(3);
+    expect(maxInFlightFor(config)).toBe(17);
+    expect(drainTimeoutMsFor(config)).toBe(250);
+  });
+
+  it("always leaves at least one worker, even on a single-core machine", () => {
+    // Floored at 1, not 0: a machine reporting one core should still run the test.
+    expect(defaultWorkerCount()).toBeGreaterThanOrEqual(1);
+  });
+});
