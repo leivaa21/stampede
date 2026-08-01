@@ -1,8 +1,6 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { startCountingServer, type CountingServer } from "../test-support/counting-server.ts";
 import type { FixtureSetupState } from "../test-support/worker-fixture.ts";
 import { mergeProgress, runPool } from "./worker-pool.ts";
 
@@ -19,10 +17,25 @@ import { mergeProgress, runPool } from "./worker-pool.ts";
 
 const FIXTURE = fileURLToPath(new URL("../test-support/worker-fixture.ts", import.meta.url));
 
+let target: CountingServer;
+
+beforeEach(async () => {
+  // A real HTTP target, because the worker now uses the real transport. That makes these tests
+  // exercise the whole path — config import, request build, fetch, merge — rather than a fake in
+  // the middle of it.
+  target = await startCountingServer();
+});
+
+afterEach(async () => {
+  await target.close();
+});
+
+type FixtureLoad = Omit<FixtureSetupState, "url">;
+
 const runFixture = async (
-  setupState: FixtureSetupState,
+  setupState: FixtureLoad,
   workerCount: number,
-  extra: { readonly maxInFlight?: number } = {},
+  extra: { readonly maxInFlight?: number; readonly url?: string } = {},
 ): ReturnType<typeof runPool> =>
   runPool({
     modulePath: FIXTURE,
@@ -30,12 +43,12 @@ const runFixture = async (
     maxInFlight: extra.maxInFlight ?? 64,
     drainTimeoutMs: 2_000,
     snapshotIntervalMs: 25,
-    setupState,
+    setupState: { ...setupState, url: extra.url ?? target.url },
   });
 
 describe("a sharded run reproduces the single-threaded one", () => {
   it("dispatches every scheduled request exactly once across four workers", async () => {
-    const state: FixtureSetupState = { kind: "burst", count: 200 };
+    const state: FixtureLoad = { kind: "burst", count: 200 };
 
     const one = await runFixture(state, 1);
     const four = await runFixture(state, 4);
@@ -76,7 +89,11 @@ describe("a sharded run reproduces the single-threaded one", () => {
   }, 20_000);
 
   it("counts transport failures across workers rather than losing them", async () => {
-    const outcome = await runFixture({ kind: "burst", count: 60, fails: true }, 3);
+    // A refused connection, not an error status: an HTTP 500 *resolves* and is a perfectly good
+    // response to time. Only a transport-level failure is kept out of the latency percentiles.
+    const outcome = await runFixture({ kind: "burst", count: 60 }, 3, {
+      url: "http://127.0.0.1:1/",
+    });
     const scenario = outcome.summary.scenarios[0];
 
     expect(scenario?.errorCount).toBe(60);
@@ -105,9 +122,9 @@ describe("a pool that cannot run says so instead of hanging", () => {
         maxInFlight: 8,
         drainTimeoutMs: 100,
         snapshotIntervalMs: 25,
-        setupState: { kind: "burst", count: 1 },
+        setupState: { kind: "burst", count: 1, url: target.url },
       }),
-    ).rejects.toThrow(/Cannot find module|ERR_MODULE_NOT_FOUND/);
+    ).rejects.toThrow(/No config file at/);
   }, 20_000);
 
   it("names the contract a module broke when it exports the wrong thing", async () => {
@@ -118,9 +135,9 @@ describe("a pool that cannot run says so instead of hanging", () => {
         maxInFlight: 4,
         drainTimeoutMs: 100,
         snapshotIntervalMs: 25,
-        setupState: { kind: "burst", count: 1 },
+        setupState: { kind: "burst", count: 1, url: target.url },
       }),
-    ).rejects.toThrow(/must default-export a function/);
+    ).rejects.toThrow(/must declare a `scenarios` object|no default export/);
   }, 20_000);
 
   it("refuses a worker count of zero rather than reporting an empty run as a success", async () => {
@@ -139,29 +156,27 @@ describe("a pool that cannot run says so instead of hanging", () => {
         maxInFlight: 8,
         drainTimeoutMs: 100,
         snapshotIntervalMs: 0,
-        setupState: { kind: "burst", count: 1 },
+        setupState: { kind: "burst", count: 1, url: target.url },
       }),
     ).rejects.toThrow(/snapshotIntervalMs/);
   }, 20_000);
 
   it("tears down the siblings of a worker that failed, instead of leaving them running", async () => {
-    // Node does not report worker threads in `getActiveResourcesInfo()`, so liveness is measured
-    // the only way it is observable from here: the surviving workers append to a file on every
-    // dispatch, and a terminated worker stops appending.
-    const heartbeatPath = join(mkdtempSync(join(tmpdir(), "stampede-pool-")), "beats");
-    writeFileSync(heartbeatPath, "");
-
+    // Node does not report worker threads in `getActiveResourcesInfo()`, so worker liveness is not
+    // observable from here by inspection. The target is the witness: a terminated worker stops
+    // arriving, so the received count stops climbing.
+    //
     // Shard 1 refuses to load; shards 0 and 2 carry a five-second schedule. Without teardown they
     // would keep dispatching long after the run rejected — a load tester that holds the process
     // open after printing its report.
     await expect(
-      runFixture({ kind: "rate", count: 20, durationMs: 5_000, failOnShard: 1, heartbeatPath }, 3),
+      runFixture({ kind: "rate", count: 20, durationMs: 5_000, failOnShard: 1 }, 3),
     ).rejects.toThrow(/fixture refused to load/);
 
-    const atRejection = readFileSync(heartbeatPath, "utf8").length;
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    const atRejection = target.received();
+    await new Promise((resolve) => setTimeout(resolve, 700));
 
-    expect(readFileSync(heartbeatPath, "utf8").length).toBe(atRejection);
+    expect(target.received()).toBe(atRejection);
   }, 20_000);
 
   it("refuses a budget too small to give every worker a slot, before spawning anything", async () => {

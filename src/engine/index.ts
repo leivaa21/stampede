@@ -24,6 +24,7 @@ export { DEFAULT_DRAIN_TIMEOUT_MS, type RunSpec, type Scenario } from "./run-spe
 export type { RunSummary, ScenarioRunSummary } from "./run-summary.ts";
 export { mergedSchedule, type ScheduledDispatch, type ScheduledScenario } from "./schedule.ts";
 export { shardMaxInFlight, shardProfile, shardScenarios, type Shard } from "./schedule-split.ts";
+export { httpTransport, type HttpRequestSpec } from "./http-transport.ts";
 export { systemClock } from "./system-clock.ts";
 export {
   DEFAULT_SNAPSHOT_INTERVAL_MS,
