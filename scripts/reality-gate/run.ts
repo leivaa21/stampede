@@ -259,7 +259,7 @@ await gateRun({
       maxInFlight: 400,
       drainTimeoutMs: 5_000,
       snapshotIntervalMs: 250,
-      setupState: { url: TARGET_URL, ratePerSecond: 240, durationMs: 2_000 },
+      setupState: { url: TARGET_URL },
     });
     const summary = outcome.summary.scenarios[0];
     if (summary === undefined) {
