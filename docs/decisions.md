@@ -224,3 +224,25 @@ drained inside the measured window, because stopping at the headers would report
 as far faster than any client of it experiences. `fetch` labels a _string_ body `text/plain` on its
 own, so pre-serialised JSON needs an explicit header; passing the object and letting the transport
 encode it is the path that does the right thing.
+
+## 2026-07-31 — What each exit code means, and what teardown is for
+
+**Context:** `stampede run` has to tell CI three different things apart, and the config author has to
+know which hook does what.
+**Decision:** **0** every threshold held · **1** a threshold was violated _or_ `teardown()` threw ·
+**2** the run itself failed. `teardown()` is an **assertion** hook that runs only after a successful
+storm; it is not a cleanup hook and does not run when the run failed. A threshold predicate that
+_throws_ — or returns a non-boolean — is a **broken claim** (2), not a violated one (1). A scenario
+that recorded no responses fails the run (2) before any threshold is evaluated, and a scenario whose
+profile schedules **zero** requests is refused at config load.
+**Rationale:** the split between 1 and 2 is the whole reason the codes exist — a broken install or a
+config typo reporting as a failed invariant sends someone hunting a race condition that was never
+there. Teardown throwing is a genuine invariant failure ("exactly one seat sold" can only be asked
+after the storm), so it earns 1; a predicate throwing is the config's mistake, so it earns 2. And a
+zero-request scenario had to be closed at load time because it slips past the "recorded nothing"
+guard — it dispatched nothing, so nothing failed — and reaches the thresholds where
+`(s.p99 ?? 0) < 250` passes: a green CI job for a load test that sent no load.
+**Consequences:** teardown not running on failure means a `setup()` that created real state leaks it
+when the pool fails; stated in the `teardown` JSDoc rather than left to be discovered. Rates like
+`constantRate({ ratePerSecond: 2, durationMs: 100 })` now fail at startup with the arithmetic
+spelled out, instead of running an empty test.

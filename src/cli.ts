@@ -65,7 +65,21 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
 /**
  * Every failure lands on a deliberate code — never on Node's default uncaught-exception exit of 1,
  * which is the code reserved for "your system violated an invariant".
+ *
+ * The promise chain below only covers rejections of `run` itself. stampede *executes the user's
+ * config* by design, so a stray unhandled rejection from it would otherwise exit 1 no matter what
+ * `process.exitCode` was set to — telling CI the target broke an invariant because someone forgot
+ * an `await`. These two handlers are what make the claim above true rather than aspirational.
  */
+const exitOnStrayFailure = (label: string) => (error: unknown) => {
+  err(
+    `stampede: ${label}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+  );
+  process.exit(ExitCode.RunFailed);
+};
+process.on("unhandledRejection", exitOnStrayFailure("unhandled rejection"));
+process.on("uncaughtException", exitOnStrayFailure("uncaught exception"));
+
 run(process.argv.slice(2))
   .then((code) => {
     process.exitCode = code;

@@ -109,6 +109,23 @@ describe("evaluateThresholds", () => {
     expect(verdict.broken).toEqual(["broken claim"]);
     expect(verdict.violated).toEqual(["honest failure"]);
     expect(verdict.results[0]?.error).toBeTruthy();
+    // Not merely "not violated": a broken predicate must never read as held, or the natural
+    // `results.every(r => r.held)` summary line would report it as a pass.
+    expect(verdict.results[0]?.held).toBe(false);
+  });
+
+  it("treats a predicate that returned a non-boolean as broken, not violated", () => {
+    // Node strips the user's types without checking them, so `assert: (s) => { s.x === 1 }` —
+    // braces instead of an expression body — returns undefined. Calling that a violation would
+    // exit 1 and blame the target for a config typo.
+    const verdict = evaluateThresholds(
+      [{ name: "braces not parens", assert: (() => undefined) as unknown as () => boolean }],
+      summary,
+    );
+
+    expect(verdict.broken).toEqual(["braces not parens"]);
+    expect(verdict.violated).toEqual([]);
+    expect(verdict.results[0]?.error).toContain("undefined");
   });
 
   it("has nothing to say when no thresholds were declared", () => {

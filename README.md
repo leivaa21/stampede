@@ -5,9 +5,8 @@ describe scenarios in typed TypeScript, and get a live terminal dashboard plus a
 markdown report — with named checks, custom counters merged across worker threads, and thresholds
 that decide the exit code.
 
-> **Status: M1 in progress.** The design is settled (`docs/design/m1.md`) and the repo is scaffolded;
-> the engine is being built. The API below is the designed shape — this README will show real
-> numbers, not intentions, before it ships. See [Status](#status).
+> **Status: M1 nearly done.** `stampede run` works end to end — the report and the live TUI are the
+> remaining slices. See [Status](#status).
 
 ## Why it exists
 
@@ -68,9 +67,6 @@ A violated invariant **fails CI** (exit `1`) instead of printing a red number.
 
 ## Quickstart
 
-> Not wired yet — the CLI lands in M1's PR 6. To run something today, see
-> [Status](#status): `pnpm gate:two` drives the engine against a reference server.
-
 ```bash
 pnpm install
 pnpm dev -- run scenarios.ts   # no build step — Node 24 strips the types
@@ -121,17 +117,17 @@ run** instead of quietly passing its thresholds.
 ## Status
 
 **Built and merged:** the mergeable metrics core, the open-loop engine, the worker pool that shards
-a run across threads, and TS config loading with the real HTTP transport. 284 tests, zero known
+a run across threads, TS config loading with the real HTTP transport, and **`stampede run`** —
+setup, storm, teardown, verdict, with exit codes CI can act on. 330 tests, zero known
 vulnerabilities.
 
-**Not built yet — so the quickstart above does not run yet:** the CLI itself, the markdown report,
-and the TUI. `stampede run` is the designed shape, not a working command; today the engine and the
-config loader are reachable programmatically. Milestone plan in
+**Not built yet:** the markdown report and the live TUI, so `--report` and `--ci` are not flags yet
+(an unknown flag is an error, not a shrug). Milestone plan in
 [`docs/design/m1.md`](docs/design/m1.md).
 
-The example above is close to the real API, with two exceptions until the remaining slices land:
-per-scenario `checks` and `onResponse` do not exist yet, and a scenario's `profile` is evaluated
-when the config is imported, so it cannot read setup state (the `request` builder can).
+The example above is close to the real API, with two exceptions until those land: per-scenario
+`checks` and `onResponse` do not exist yet, and a scenario's `profile` is evaluated when the config
+is imported, so it cannot read setup state (the `request` builder can).
 
 **What you can run today** is the thing this project is actually about — pointing the engine at a
 target whose behaviour is known in advance and checking that it tells the truth:

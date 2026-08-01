@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "./load.ts";
 
@@ -14,7 +15,7 @@ import { loadConfig } from "./load.ts";
  * constraint every user will eventually walk into.
  */
 
-const REPO_ROOT = new URL("../../", import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 const writeConfig = (source: string): string => {
   const dir = mkdtempSync(join(tmpdir(), "stampede-config-"));

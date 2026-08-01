@@ -35,6 +35,22 @@ export interface Verdict {
  * Exit 2 rather than 1 is the honest classification: a scenario that issued requests and got nothing
  * back is broken, not violated.
  */
+/**
+ * Points at the knob the counts actually implicate.
+ *
+ * "check the target is reachable" is one hypothesis, and printing it while the same sentence says
+ * `10 dropped` sends the user to the wrong place — that is `maxInFlight`, not the network.
+ */
+const adviceFor = (scenario: RunSummary["scenarios"][number]): string => {
+  if (scenario.droppedCount >= scenario.dispatchedCount && scenario.droppedCount > 0) {
+    return "almost everything was refused by the in-flight cap; raise `maxInFlight`.";
+  }
+  if (scenario.abandonedCount > 0 && scenario.errorCount === 0) {
+    return "the requests went out but nothing came back in time; raise `drainTimeoutMs`.";
+  }
+  return "check the target is reachable.";
+};
+
 export const findUnmeasuredScenario = (summary: RunSummary): string | undefined => {
   for (const scenario of summary.scenarios) {
     if (scenario.scheduledCount > 0 && scenario.responseCount === 0) {
@@ -42,7 +58,7 @@ export const findUnmeasuredScenario = (summary: RunSummary): string | undefined 
         `scenario "${scenario.name}" recorded no responses at all ` +
         `(${String(scenario.dispatchedCount)} dispatched, ${String(scenario.errorCount)} failed, ` +
         `${String(scenario.droppedCount)} dropped, ${String(scenario.abandonedCount)} abandoned). ` +
-        `There is nothing to publish a percentile from — check the target is reachable.`
+        `There is nothing to publish a percentile from — ${adviceFor(scenario)}`
       );
     }
   }
@@ -55,7 +71,19 @@ export const evaluateThresholds = (
 ): Verdict => {
   const results = thresholds.map((threshold): ThresholdResult => {
     try {
-      return { name: threshold.name, held: threshold.assert(summary), error: undefined };
+      const held: unknown = threshold.assert(summary);
+      // Node strips the user's types without checking them, so nothing at runtime guarantees a
+      // boolean — and the commonest slip in JavaScript, braces instead of an expression body,
+      // returns `undefined`. Reporting that as a violation would exit 1, telling CI the *target*
+      // broke an invariant, for a typo in the config.
+      if (typeof held !== "boolean") {
+        return {
+          name: threshold.name,
+          held: false,
+          error: `the predicate returned ${held === undefined ? "undefined" : typeof held}, not true or false — did you write \`{ … }\` where you meant \`( … )\`?`,
+        };
+      }
+      return { name: threshold.name, held, error: undefined };
     } catch (error: unknown) {
       // A predicate that throws is a broken *claim* — a typo reaching into a scenario that does not
       // exist, most likely. Reporting it as a violation would blame the target for the config's

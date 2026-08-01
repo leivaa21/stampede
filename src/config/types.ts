@@ -54,7 +54,13 @@ export interface StampedeConfig<TSetup = undefined> {
    * Runs **once, on the main thread**, after the storm and after the drain.
    *
    * This is where an invariant gets *proven* rather than merely observed: re-read the seat map and
-   * assert exactly one seat sold. Throwing here fails the run.
+   * assert exactly one seat sold. Throwing here fails the run with exit 1, like a violated
+   * threshold — because that is what it is.
+   *
+   * **An assertion hook, not a cleanup hook.** It does not run when the run itself failed: a
+   * teardown written to assert would otherwise report "the invariant did not hold" about a storm
+   * that never happened, and mask the real reason. Anything that must be cleaned up regardless
+   * belongs in the harness around `stampede`, not here.
    */
   readonly teardown?: (setupState: TSetup) => void | Promise<void>;
   /** At least one. Several run concurrently, each with its own metrics (D1-05). */

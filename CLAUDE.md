@@ -55,7 +55,8 @@ and the **markdown reporter** are two independent consumers of the engine's type
 
 ```
 src/
-├── cli.ts        # arg parsing, exit codes — the only process.exit in the repo
+├── cli.ts        # the binary: argv in, exit code out
+├── cli/          # arg parsing · run orchestration · thresholds · terminal output
 ├── index.ts      # programmatic entry: run an engine, get a summary back
 ├── config/       # TS config loading, defineConfig types, edge validation
 ├── metrics/      # histogram · counters · checks · merge   (pure, no I/O)

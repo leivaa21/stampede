@@ -1,6 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startCountingServer, type CountingServer } from "../test-support/counting-server.ts";
 import { ExitCode, runFromConfig } from "./run-command.ts";
@@ -13,7 +14,7 @@ import { ExitCode, runFromConfig } from "./run-command.ts";
  * order wrong is not something a mocked run would notice.
  */
 
-const REPO_ROOT = new URL("../../", import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 let target: CountingServer;
 
@@ -91,7 +92,9 @@ describe("runFromConfig", () => {
     const report = await runFromConfig({
       configPath: configFor({
         url: target.url,
-        teardown: `teardown: () => { throw new Error("double sell: 2 seats sold"); },`,
+        // `async`, deliberately: a synchronous throw is caught even by a `void`-ed call, so only
+        // an async teardown pins that the run actually awaits it.
+        teardown: `teardown: async () => { throw new Error("double sell: 2 seats sold"); },`,
       }),
     });
 
