@@ -1,9 +1,10 @@
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { maxWorkerCount } from "../config/to-run.ts";
 import { SnapshotAggregator } from "../metrics/index.ts";
 import { summariseRun, type RunProgress, type ScenarioProgress } from "./run-summary.ts";
 import { shardMaxInFlight } from "./schedule-split.ts";
-import { assertDurationMs, assertPositiveCount } from "./validate.ts";
+import { assertDurationMs, assertPositiveCount, assertWorkerCount } from "./validate.ts";
 import { parseWorkerMessage, type WorkerAssignment } from "./worker-protocol.ts";
 import type { RunSummary } from "./run-summary.ts";
 
@@ -124,7 +125,7 @@ const maxDefined = (a: number | undefined, b: number | undefined): number | unde
  * publishes nothing at all. Both are worse than a run that ends early and says why.
  */
 export const runPool = async (spec: PoolRunSpec): Promise<PoolRunOutcome> => {
-  assertPositiveCount(spec.workerCount, "workerCount");
+  assertWorkerCount(spec.workerCount, maxWorkerCount(), "workerCount");
   assertDurationMs(spec.drainTimeoutMs, "drainTimeoutMs");
   const snapshotIntervalMs = spec.snapshotIntervalMs ?? DEFAULT_SNAPSHOT_INTERVAL_MS;
   // An unvalidated interval reaches `setInterval` in every worker. Zero or NaN turns a one-second
@@ -197,7 +198,12 @@ export const runPool = async (spec: PoolRunSpec): Promise<PoolRunOutcome> => {
         try {
           worker = new Worker(fileURLToPath(workerEntryUrl), { workerData: assignment });
         } catch (error: unknown) {
-          const detail = error instanceof Error ? error.message : String(error);
+          // Only a clone failure is blamed on `setup()`. Catching everything here sent a user to
+          // rewrite a `setup()` that was never the problem.
+          if (!(error instanceof DOMException) || error.name !== "DataCloneError") {
+            throw error;
+          }
+          const detail = error.message;
           throw new Error(
             `setup() returned something that cannot be sent to a worker: ${detail}\n\n` +
               "Every worker imports your config in its own thread, so setup state travels as data " +

@@ -16,15 +16,15 @@ still correct when 500 people hit the same row at once?"_ — and that is a clai
 a request. stampede makes those claims first-class:
 
 ```ts
-// scenarios.ts
-import { defineConfig, burst } from "@leivaa21/stampede";
+// scenarios.ts — this runs today
+import { burst, defineConfig } from "@leivaa21/stampede";
 
 export default defineConfig({
-  // Runs once, on the main thread. Its return value is handed to every virtual user,
-  // so it must be plain data.
+  // Runs once, on the main thread, before any load. Its return value reaches every worker by
+  // structured clone, so it must be plain data — an id, not a client.
   setup: async () => {
-    const res = await fetch("http://localhost:5210/shows", { method: "POST" /* … */ });
-    const { showId, seatId } = await res.json();
+    const res = await fetch("http://localhost:5210/shows", { method: "POST" });
+    const { showId, seatId } = (await res.json()) as { showId: string; seatId: string };
     return { showId, seatId };
   },
 
@@ -36,28 +36,32 @@ export default defineConfig({
         url: `http://localhost:5210/shows/${showId}/reservations`,
         body: { seatIds: [seatId] },
       }),
-      checks: {
-        oneWinnerOrConflict: (res) => res.status === 201 || res.status === 409,
-      },
-      onResponse: (res, { counters }) => {
-        if (res.status === 201) counters.inc("reserved201");
-      },
     },
   },
 
-  // Runs after the storm — the invariant is proven, not just observed.
+  // Runs after the storm. This is where the invariant is *proven* rather than observed —
+  // "exactly one seat sold" is a claim about the run, and only askable once it is over.
   teardown: async ({ showId, seatId }) => {
-    const seat = await getSeat(showId, seatId);
-    if (seat.soldCount !== 1) throw new Error(`double sell: ${String(seat.soldCount)}`);
+    const res = await fetch(`http://localhost:5210/shows/${showId}/seats/${seatId}`);
+    const seat = (await res.json()) as { soldCount: number };
+    if (seat.soldCount !== 1) throw new Error(`double sell: ${String(seat.soldCount)} sold`);
   },
 
   thresholds: [
-    { name: "exactly one buyer wins", assert: (s) => s.counters.reserved201 === 1 },
-    { name: "no failed checks", assert: (s) => s.checks.oneWinnerOrConflict.failed === 0 },
-    { name: "p99 under 250ms", assert: (s) => s.scenarios.theStampede.p99 < 250 },
+    { name: "every buyer got an answer", assert: (s) => s.scenarios[0]!.responseCount === 500 },
+    {
+      name: "p99 under 250ms",
+      assert: (s) => (s.scenarios[0]!.latencyMs?.p99Ms ?? Infinity) < 250,
+    },
   ],
 });
 ```
+
+> **Not in M1:** per-scenario `checks` and `onResponse`, and per-_request_ variation. The engine
+> carries one request per scenario, so "500 buyers, one seat" works and "500 buyers, 500 seats"
+> does not yet. Until they land, a run's verdict comes from `teardown` plus thresholds over the
+> run summary — which is enough for the case above, and is what the numbers below were produced
+> with.
 
 ```bash
 stampede run scenarios.ts                      # live TUI

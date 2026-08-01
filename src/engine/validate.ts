@@ -34,6 +34,17 @@ export const assertCount = (value: number, subject: string): void => {
   }
 };
 
+export const assertWorkerCount = (value: number, limit: number, subject: string): void => {
+  assertPositiveCount(value, subject);
+  if (value > limit) {
+    throw new RangeError(
+      `${subject} is ${String(value)}, which is more than this machine should be asked for ` +
+        `(limit ${String(limit)}). Node aborts natively rather than throwing when thread creation ` +
+        `fails, so this is refused before the threads are asked for.`,
+    );
+  }
+};
+
 export const assertPositiveCount = (value: number, subject: string): void => {
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new RangeError(`${subject} must be a safe integer of at least 1, got ${String(value)}`);
