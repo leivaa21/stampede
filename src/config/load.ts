@@ -170,6 +170,17 @@ export const assertConfigShape: (
         `${configPath}: scenario "${name}" has a profile with no valid \`durationMs\``,
       );
     }
+    // A scenario that schedules nothing would sail past the "recorded no responses" guard — it
+    // dispatched nothing, so nothing failed — and reach the thresholds with `latencyMs` undefined,
+    // where `(s.p99 ?? 0) < 250` passes. A green CI job for a load test that sent zero requests is
+    // the exact lie D1-06 exists to prevent, reached through a different door. Rates that round
+    // down are the usual cause: 2/s for 100ms is 0.2 requests, floored to none.
+    if (profile.count === 0) {
+      throw new ConfigLoadError(
+        `${configPath}: scenario "${name}" schedules 0 requests over ${String(profile.durationMs)}ms — ` +
+          `a rate that rounds down to nothing, most likely. Raise the rate or lengthen the duration.`,
+      );
+    }
   }
   assertOptionalNumber(value.workers, "workers", configPath, true);
   assertOptionalNumber(value.maxInFlight, "maxInFlight", configPath, true);

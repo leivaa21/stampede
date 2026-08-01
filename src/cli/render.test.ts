@@ -1,0 +1,196 @@
+import { describe, expect, it } from "vitest";
+import type { LatencySummary, RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
+import { renderSummary, renderVerdict } from "./render.ts";
+
+/**
+ * The only user-facing output in the tool, and the place every honesty rule in this milestone
+ * finally has to show up as text.
+ *
+ * Worth testing precisely because it is "just formatting": a rounding that hides a 20 % shortfall
+ * and a missing overflow warning are both invisible to every other test in the repo, and both
+ * publish a flattering number.
+ */
+
+const latency = (over: Partial<LatencySummary> = {}): LatencySummary => ({
+  count: 10,
+  minMs: 1,
+  maxMs: 9,
+  meanMs: 5,
+  p50Ms: 4,
+  p95Ms: 8,
+  p99Ms: 9,
+  p999Ms: 9,
+  overflowCount: 0,
+  saturated: false,
+  isLowerBound: false,
+  ...over,
+});
+
+const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary => ({
+  name: "reads",
+  scheduledCount: 10,
+  dispatchedCount: 10,
+  droppedCount: 0,
+  responseCount: 10,
+  errorCount: 0,
+  abandonedCount: 0,
+  requestedRatePerSecond: 10,
+  achievedRatePerSecond: 10,
+  latencyMs: latency(),
+  scheduledLatencyMs: latency(),
+  scheduleLagMs: undefined,
+  ...over,
+});
+
+const summaryOf = (...scenarios: readonly ScenarioRunSummary[]): RunSummary => ({
+  elapsedMs: 1_000,
+  scenarios,
+  droppedCount: 0,
+  abandonedCount: 0,
+  maxObservedInFlight: 40,
+});
+
+describe("renderSummary", () => {
+  it("prints achieved beside requested so a shortfall cannot hide", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ requestedRatePerSecond: 1_000, achievedRatePerSecond: 400 })),
+    );
+
+    expect(text).toContain("1,000/s requested · 400/s achieved");
+  });
+
+  it("never rounds a shortfall away", () => {
+    // Math.round on both sides turned a 20% shortfall into "2/s · 2/s". Requested rounds up,
+    // achieved rounds down, so the gap can only ever look worse than it was — never better.
+    const text = renderSummary(
+      summaryOf(scenario({ requestedRatePerSecond: 2, achievedRatePerSecond: 1.6 })),
+    );
+
+    expect(text).toContain("2/s requested · 1.6/s achieved");
+    expect(text).not.toContain("2/s requested · 2/s achieved");
+  });
+
+  it("floors the achieved rate and ceils the requested one above 10/s", () => {
+    // The direction only shows up where round and floor disagree: 999.6 achieved must never print
+    // as a round 1,000 next to a requested 1,000, because that reads as "kept up exactly".
+    const text = renderSummary(
+      summaryOf(scenario({ requestedRatePerSecond: 999.4, achievedRatePerSecond: 999.6 })),
+    );
+
+    expect(text).toContain("1,000/s requested · 999/s achieved");
+  });
+
+  it("does not collapse a sub-1/s achieved rate to zero", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ requestedRatePerSecond: 0.5, achievedRatePerSecond: 0.4 })),
+    );
+
+    expect(text).toContain("0.4/s achieved");
+    expect(text).not.toContain("0/s achieved");
+  });
+
+  it("says why a burst has no rate rather than printing dashes", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ requestedRatePerSecond: undefined, achievedRatePerSecond: undefined })),
+    );
+
+    expect(text).toContain("a burst asks for a count, not a rate");
+  });
+
+  it("warns when the queued distribution was clamped, not just the send-side one", () => {
+    // scheduledLatency ≥ latency by construction, so it hits the ceiling FIRST. Warning only about
+    // `latency` stays silent on exactly the coordinated-omission run D1-01 was written for.
+    const text = renderSummary(
+      summaryOf(
+        scenario({
+          latencyMs: latency(),
+          scheduledLatencyMs: latency({
+            isLowerBound: true,
+            overflowCount: 4_211,
+            p99Ms: 67_108.9,
+          }),
+        }),
+      ),
+    );
+
+    expect(text).toContain("as queued: 4211 samples exceeded the histogram ceiling");
+    expect(text).toContain("lower bounds, not measurements");
+  });
+
+  it("warns per distribution, so a clean row is not tarred by a clamped one", () => {
+    const text = renderSummary(
+      summaryOf(
+        scenario({
+          latencyMs: latency({ isLowerBound: true, overflowCount: 7 }),
+          scheduledLatencyMs: latency(),
+        }),
+      ),
+    );
+
+    expect(text).toContain("latency: 7 samples exceeded");
+    expect(text).not.toContain("as queued: ");
+  });
+
+  it("says nothing about the ceiling when nothing was clamped", () => {
+    expect(renderSummary(summaryOf(scenario()))).not.toContain("histogram ceiling");
+  });
+
+  it("shows every shortfall it has, and none it does not", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ droppedCount: 3, errorCount: 2, abandonedCount: 0 })),
+    );
+
+    expect(text).toContain("3 dropped");
+    expect(text).toContain("2 failed");
+    expect(text).not.toContain("abandoned");
+  });
+
+  it("calls peak in flight an upper bound, because that is what it is", () => {
+    // worker-pool documents it as a sum of independent per-thread maxima — the peaks need not have
+    // coincided, so printing it bare would state something nobody observed.
+    expect(renderSummary(summaryOf(scenario()))).toContain("peak in flight ≤ 40");
+  });
+
+  it("keeps multiple scenarios separate and named", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ name: "reads" }), scenario({ name: "writes" })),
+    );
+
+    expect(text).toContain("  reads");
+    expect(text).toContain("  writes");
+  });
+});
+
+describe("renderVerdict", () => {
+  it("marks a held claim PASS and a violated one FAIL, by name", () => {
+    const text = renderVerdict({
+      results: [
+        { name: "exactly one buyer wins", held: true, error: undefined },
+        { name: "p99 under 250ms", held: false, error: undefined },
+      ],
+      violated: ["p99 under 250ms"],
+      broken: [],
+    });
+
+    expect(text).toContain("PASS    exactly one buyer wins");
+    expect(text).toContain("FAIL    p99 under 250ms");
+  });
+
+  it("distinguishes a broken predicate from a failed one", () => {
+    const text = renderVerdict({
+      results: [{ name: "reaches into nothing", held: false, error: "cannot read x of undefined" }],
+      violated: [],
+      broken: ["reaches into nothing"],
+    });
+
+    expect(text).toContain("BROKEN  reaches into nothing");
+    expect(text).toContain("cannot read x of undefined");
+    expect(text).not.toContain("FAIL");
+  });
+
+  it("says plainly when a run asserted nothing at all", () => {
+    expect(renderVerdict({ results: [], violated: [], broken: [] })).toContain(
+      "nothing was asserted",
+    );
+  });
+});

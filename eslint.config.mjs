@@ -24,7 +24,16 @@ export default tseslint.config(
   // the only version of this boundary that survives contact with a deadline.
   // See docs/decisions.md — "Engine and TUI share nothing but a typed event stream".
   {
-    files: ["src/engine/**", "src/metrics/**", "src/config/**", "src/report/**", "src/index.ts"],
+    files: [
+      "src/engine/**",
+      "src/metrics/**",
+      "src/config/**",
+      "src/report/**",
+      // `src/index.ts` re-exports `cli/run-command.ts`, so without `src/cli/**` here the path
+      // index.ts → cli/ → tui/ would be lint-clean and the boundary would be a habit again.
+      "src/cli/**",
+      "src/index.ts",
+    ],
     rules: {
       "no-restricted-imports": [
         "error",
