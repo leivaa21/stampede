@@ -8,46 +8,30 @@
 > security, docs, git) apply here in full; this file only adds what's specific to this project.
 > Read this file before every task and re-read the **Current state** line.
 
-> **Current state (2026-07-30):** **M1 PRs 1–3 merged — the engine measures honestly, single
-> threaded.** `metrics/`: HDR-style histograms (17,408 `Int32` counts = 68 KiB, worst-case error
-> 0.0975 %) whose merge is exact, associative and commutative, plus counters, checks, trends, and a
-> snapshot protocol with sequence numbers so a delayed message cannot rewind an aggregate.
-> `engine/`: pure lazy arrival profiles (`constantRate` · `ramp` · `burst` · `stages`) and an
-> open-loop dispatcher behind clock and transport ports. 217 tests, audit clean.
-> **Gate two passes against a real HTTP target** (`pnpm gate:two`): a 50 ms target reads 52 ms; a
-> target slower than the load offered reports p99 5931 ms against its 200 ms service time without
-> throttling itself; and asked for 50,000 rps on one thread it admits ~1,900 achieved, counts 95k
-> drops, and puts its own 320 ms backlog into `scheduledLatency` rather than hiding it.
-> **Worker pool (PR 4) is in too:** the schedule is split across threads by **stride** (shard `w` of
-> `W` takes indices `w, w+W, …`), so the shards _are_ the run by construction rather than by
-> arithmetic that has to add up — every profile shape inherits it, including `stages`. Workers own
-> private registries and post cumulative sequence-numbered snapshots; the main thread merges and
-> projects once. Proven against the live target: 4 threads, 480 scheduled, 480 dispatched, **480
-> received by the target**, accounting balanced, zero out-of-order snapshots.
-> **Config loading (PR 5) is in:** `defineConfig` anchors `TSetup`, so `setup()` → `request(state)`
-> → `teardown(state)` are typed end to end with no annotations in the user's file. Node strips the
-> types — no bundler, no build step — and the loader translates
-> `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` into the file plus the fix. Ships the real HTTP transport,
-> which follows **no** redirects on purpose. 284 tests.
-> **`stampede run` works (PR 6).** setup → storm across threads → teardown → verdict, in that
-> order, because an invariant like "exactly one seat sold" can only be asked after the storm. Exit
-> codes are a contract: **0** every threshold held · **1** a threshold was violated _or_ teardown
-> proved the invariant broke · **2** the run itself failed. A scenario that recorded no responses
-> fails the run before any threshold is evaluated, so `(s.p99 ?? 0) < 250` can never let a scenario
-> that never ran pass. 316 tests.
-> **Verified against a target that double-sells:** `teardown() failed — the invariant did not hold
-after the run: double sell: 300 seats sold`, exit 1. That is open-ticket's M5 case working.
-> **Markdown report (PR 7) is in:** `--report out.md` writes a paste-ready table carrying its own
-> provenance (version, worker count, config path, timestamp) and every caveat _inside_ the table —
-> a clamped percentile that loses its footnote on the way to a README becomes a measurement nobody
-> can challenge. Written on failed runs too, which is when it is most wanted. 357 tests.
-> **Live TUI (PR 8) is in — M1 feature-complete.** The dashboard redraws in place on a TTY and is
-> silent when piped or under `--ci`, so the same run draws for a human and prints nothing extra for
-> a machine. It needed the protocol change deferred from PR 4: every worker message now carries its
-> sender's progress, without which a mid-run merge held metrics from all workers and progress only
-> from finished ones, and reported more dispatched than scheduled. 385 tests.
-> Next: PR 9 — README and the reality-gate evidence, then M1 is done. Keep this line current after
-> every merged slice.
+> **Current state (2026-08-01):** **M1 is complete — `stampede run` works end to end.** 401 tests,
+> audit clean, every slice through the implementer → reviewer loop.
+>
+> `metrics/`: HDR-style histograms (17,408 `Int32` counts = 68 KiB, worst-case error 0.0975 %) whose
+> merge is exact, associative and commutative, plus counters, checks, trends, and a
+> sequence-numbered snapshot protocol. `engine/`: pure lazy arrival profiles, an open-loop
+> dispatcher behind clock and transport ports, a worker pool that splits the schedule **by stride**
+> so the shards are the run by construction, and the real HTTP transport (no redirects, on purpose).
+> `config/`: `defineConfig` anchoring `TSetup` so setup → request → teardown type end to end, loaded
+> by Node's own type-stripping. `cli/`: setup → storm → teardown → verdict, with exit codes CI can
+> act on. `report/`: a paste-ready markdown table carrying its own provenance. `tui/`: a live
+> dashboard that redraws in place and is silent when piped.
+>
+> **Gate two (`pnpm gate:two`) is the proof, and it runs the shipped code.** A 50 ms target reads
+> 52 ms; a target slower than the load offered reports p99 5910 ms against its 200 ms service time
+> without throttling itself; asked for 50,000 rps on one thread it admits 6,181 achieved, counts
+> 87,302 drops, and puts its own 130 ms backlog into `scheduledLatency`; and a 4-thread pooled run
+> is cross-checked by the target's own request count.
+>
+> **Not done:** not published to npm (`@leivaa21/stampede` is reserved, `publishConfig` is set).
+> **M2 candidates:** per-request variation (a different seat per buyer — the engine carries one
+> request per scenario today, so contract run 2 is not yet expressible), per-scenario `checks` and
+> `onResponse`, and SSE / long-lived streaming requests. Keep this line current after every merged
+> slice.
 
 ## Identity
 

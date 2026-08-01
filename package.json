@@ -1,6 +1,6 @@
 {
   "name": "@leivaa21/stampede",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Load-testing CLI that proves invariants, not just percentiles — open-loop engine, live TUI, markdown reports.",
   "keywords": [
     "load-testing",
