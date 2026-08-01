@@ -12,6 +12,20 @@ import type { StampedeConfig } from "./types.ts";
  */
 
 export const DEFAULT_MAX_IN_FLIGHT = 1_000;
+
+/**
+ * The most worker threads a run may ask for.
+ *
+ * Unbounded, a fat-fingered `--workers 10000` does not produce a stampede diagnostic — it produces
+ * a **V8 native abort**: `Assertion failed: (0) == (uv_thread_create(...))`, a stack dump, and a
+ * dead process with no exit code, no report and nothing said. That directly contradicts what this
+ * repo promises about its own errors, and it is not catchable after the fact, so it has to be a
+ * bound checked before the threads are asked for.
+ *
+ * Four per core rather than one: oversubscription is a legitimate thing to measure when the
+ * bottleneck is the target rather than the CPU.
+ */
+export const maxWorkerCount = (): number => Math.max(4, availableParallelism() * 4);
 // The drain default is the engine's, imported rather than restated: two constants for one meaning
 // are free to drift, and the one that drifts is always the one the report was generated with.
 
@@ -43,6 +57,17 @@ const assertRequestShape = (built: unknown, name: string): HttpRequestSpec => {
   const { url } = built as { url?: unknown };
   if (typeof url !== "string" || url.length === 0) {
     throw new TypeError(`scenario "${name}": request() must return a \`url\` string`);
+  }
+  // `fetch("data:text/plain,hi")` answers 200 in about no time and touches no network, so a
+  // typo'd or accidentally-constructed `data:` URL yields a run where every request "succeeds",
+  // every threshold passes, and the report says PASSED over a sub-millisecond p50. That is the
+  // most convincing false-green this tool can produce, and it is refused at the one seam that
+  // runs once and knows the scenario's name.
+  if (!/^https?:\/\//i.test(url)) {
+    throw new TypeError(
+      `scenario "${name}": request() returned a non-HTTP url (${url.slice(0, 40)}). ` +
+        `stampede measures HTTP(S); a data: or file: URL would answer instantly and publish a run that never touched a network.`,
+    );
   }
   return built as HttpRequestSpec;
 };

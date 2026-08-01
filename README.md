@@ -5,8 +5,9 @@ describe scenarios in typed TypeScript, and get a live terminal dashboard plus a
 markdown report — with named checks, custom counters merged across worker threads, and thresholds
 that decide the exit code.
 
-> **Status: M1 nearly done.** `stampede run` works end to end and writes a markdown report; the
-> live TUI is the remaining slice. See [Status](#status).
+> **M1 is done.** `stampede run` works end to end: live dashboard, markdown report, exit codes CI
+> can act on. The numbers below are from real runs, not intentions — see
+> [Proving the numbers](#proving-the-numbers).
 
 ## Why it exists
 
@@ -15,15 +16,15 @@ still correct when 500 people hit the same row at once?"_ — and that is a clai
 a request. stampede makes those claims first-class:
 
 ```ts
-// scenarios.ts
-import { defineConfig, burst } from "@leivaa21/stampede";
+// scenarios.ts — this runs today
+import { burst, defineConfig } from "@leivaa21/stampede";
 
 export default defineConfig({
-  // Runs once, on the main thread. Its return value is handed to every virtual user,
-  // so it must be plain data.
+  // Runs once, on the main thread, before any load. Its return value reaches every worker by
+  // structured clone, so it must be plain data — an id, not a client.
   setup: async () => {
-    const res = await fetch("http://localhost:5210/shows", { method: "POST" /* … */ });
-    const { showId, seatId } = await res.json();
+    const res = await fetch("http://localhost:5210/shows", { method: "POST" });
+    const { showId, seatId } = (await res.json()) as { showId: string; seatId: string };
     return { showId, seatId };
   },
 
@@ -35,28 +36,32 @@ export default defineConfig({
         url: `http://localhost:5210/shows/${showId}/reservations`,
         body: { seatIds: [seatId] },
       }),
-      checks: {
-        oneWinnerOrConflict: (res) => res.status === 201 || res.status === 409,
-      },
-      onResponse: (res, { counters }) => {
-        if (res.status === 201) counters.inc("reserved201");
-      },
     },
   },
 
-  // Runs after the storm — the invariant is proven, not just observed.
+  // Runs after the storm. This is where the invariant is *proven* rather than observed —
+  // "exactly one seat sold" is a claim about the run, and only askable once it is over.
   teardown: async ({ showId, seatId }) => {
-    const seat = await getSeat(showId, seatId);
-    if (seat.soldCount !== 1) throw new Error(`double sell: ${String(seat.soldCount)}`);
+    const res = await fetch(`http://localhost:5210/shows/${showId}/seats/${seatId}`);
+    const seat = (await res.json()) as { soldCount: number };
+    if (seat.soldCount !== 1) throw new Error(`double sell: ${String(seat.soldCount)} sold`);
   },
 
   thresholds: [
-    { name: "exactly one buyer wins", assert: (s) => s.counters.reserved201 === 1 },
-    { name: "no failed checks", assert: (s) => s.checks.oneWinnerOrConflict.failed === 0 },
-    { name: "p99 under 250ms", assert: (s) => s.scenarios.theStampede.p99 < 250 },
+    { name: "every buyer got an answer", assert: (s) => s.scenarios[0]!.responseCount === 500 },
+    {
+      name: "p99 under 250ms",
+      assert: (s) => (s.scenarios[0]!.latencyMs?.p99Ms ?? Infinity) < 250,
+    },
   ],
 });
 ```
+
+> **Not in M1:** per-scenario `checks` and `onResponse`, and per-_request_ variation. The engine
+> carries one request per scenario, so "500 buyers, one seat" works and "500 buyers, 500 seats"
+> does not yet. Until they land, a run's verdict comes from `teardown` plus thresholds over the
+> run summary — which is enough for the case above, and is what the numbers below were produced
+> with.
 
 ```bash
 stampede run scenarios.ts                      # live TUI
@@ -69,7 +74,17 @@ A violated invariant **fails CI** (exit `1`) instead of printing a red number.
 
 ```bash
 pnpm install
-pnpm dev -- run scenarios.ts   # no build step — Node 24 strips the types
+pnpm dev -- run scenarios.ts                    # live dashboard
+pnpm dev -- run scenarios.ts --report out.md    # + a report to paste into a README
+pnpm dev -- run scenarios.ts --ci               # no dashboard, for CI
+```
+
+```
+stampede · 3.0s · in flight ≤ 9
+  theStampede
+    ████████████████████████ 360/360 · 355 answered
+    rate 120/s asked · 120/s so far
+    p50 41.2ms · p99 44.7ms · queued p99 45.7ms
 ```
 
 Scenario configs are plain TypeScript loaded directly by Node, so they must use **erasable syntax
@@ -114,37 +129,65 @@ errs away from flattering the target — percentiles report the top of their buc
 is a labelled lower bound rather than a bare number, and a scenario that recorded nothing **fails the
 run** instead of quietly passing its thresholds.
 
-## Status
+## Proving the numbers
 
-**Built and merged:** the mergeable metrics core, the open-loop engine, the worker pool that shards
-a run across threads, TS config loading with the real HTTP transport, **`stampede run`** — setup,
-storm, teardown, verdict, with exit codes CI can act on — and `--report out.md`. 357 tests, zero
-known vulnerabilities.
-
-**M1 is feature-complete.** `stampede run` draws a live dashboard on a terminal, writes a markdown
-report with `--report`, and sets an exit code CI can act on. `--ci` suppresses the dashboard. Milestone plan in
-[`docs/design/m1.md`](docs/design/m1.md).
-
-The example above is close to the real API, with two exceptions until those land: per-scenario
-`checks` and `onResponse` do not exist yet, and a scenario's `profile` is evaluated when the config
-is imported, so it cannot read setup state (the `request` builder can).
-
-**What you can run today** is the thing this project is actually about — pointing the engine at a
-target whose behaviour is known in advance and checking that it tells the truth:
+An instrument cannot validate itself, and `pnpm test` cannot either — the fake clock in those tests
+is agreed on by both the implementation and the assertion, so a shared wrong assumption passes
+twice. So there is a second gate:
 
 ```bash
-pnpm install
 pnpm gate:two
 ```
 
-That starts a reference server (fixed delay, bounded concurrency, keeping its own count) and drives
-four runs against it, comparing stampede's numbers to the server's. It exits non-zero if any claim
-fails. The interesting one asks for 50,000 rps from a single thread: stampede reports ~1,900
-achieved of 50,000, counts ~96,000 dropped, and puts its own ~320ms backlog into `scheduledLatency`
-instead of quietly reporting the flattering number.
+It starts a reference server — fixed delay, bounded concurrency, queueing the rest, keeping its own
+count — and drives four runs against it through the real system clock and real HTTP, checking
+stampede's numbers against the server's. **Non-zero exit if any claim fails.** Real output:
+
+**It can measure a stopwatch.** A 50ms target reads p50 52.4ms, and the server's own request count
+matches what stampede says it sent.
+
+**A target slower than the load offered** — 200ms per request, 10 slots, asked for 200rps:
+
+```
+    achieved rate — stampede vs target        200 rps vs 50 rps
+    dispatched / dropped / errors             600 / 0 / 0
+    latency p50 / p99 (the target)            3055.6ms / 5910.5ms
+```
+
+It dispatched all 600 while the target completed 390, and reported **p99 5910ms against a 200ms
+isolated service time** — 30×. A closed-loop generator throttles itself here and publishes the 200ms
+as though it were the user's experience.
+
+**The generator itself as the bottleneck** — asking 50,000rps from one thread:
+
+```
+    achieved rate — stampede vs target        6181 rps vs 6271 rps
+    dispatched / dropped / errors             12698 / 87302 / 0
+    latency p50 / p99 (the target)            40.6ms / 162.9ms
+    scheduledLatency p50 / p99 (D1-01)        124.5ms / 241.3ms
+    schedule lag max (own backlog)            130.0ms
+```
+
+It admits **6,181rps of the 50,000 requested**, counts **87,302 drops**, and puts its own 130ms
+backlog into `scheduledLatency` — 241ms against a raw 163ms. A tool that reported the 163ms would be
+describing a machine that was never under that load.
+
+**The worker pool, cross-checked by the target itself**: 4 threads, 480 scheduled, 480 dispatched,
+**480 received by the server**, accounting balanced, zero out-of-order snapshots. A merge bug cannot
+fool an independent observer.
+
+## Status
+
+**M1 is complete.** Mergeable metrics core · open-loop engine · worker pool · TS config loading ·
+real HTTP transport · `stampede run` with setup/teardown, thresholds and exit codes · markdown
+report · live dashboard. **401 tests**, zero known vulnerabilities, gate two green.
+
+**Not published to npm yet.** Install from source; `@leivaa21/stampede` is reserved.
 
 **Deferred on purpose:** SSE / long-lived streaming requests, distributed workers, protocols beyond
-HTTP(S), a cloud service, a scripting DSL.
+HTTP(S), a cloud service, a scripting DSL. Per-_request_ variation (a different seat per buyer) and
+per-scenario `checks`/`onResponse` are named M2 work — the engine carries one request per scenario
+today, which covers "500 buyers, one seat" but not "500 buyers, 500 seats".
 
 Built as the instrument for [open-ticket](https://github.com/leivaa21/open-ticket)'s published load
 numbers — built the instrument, then used it to validate the architecture.

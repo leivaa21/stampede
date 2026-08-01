@@ -179,6 +179,15 @@ describe("a pool that cannot run says so instead of hanging", () => {
     expect(target.received()).toBe(atRejection);
   }, 20_000);
 
+  it("refuses more workers than the machine should be asked for", async () => {
+    // Node aborts natively rather than throwing when thread creation fails — no exit code, no
+    // report, just a V8 stack dump — so the bound has to be checked before the threads are asked
+    // for.
+    await expect(runFixture({ kind: "burst", count: 1 }, 10_000)).rejects.toThrow(
+      /more than this machine should be asked for/,
+    );
+  }, 20_000);
+
   it("refuses a budget too small to give every worker a slot, before spawning anything", async () => {
     await expect(runFixture({ kind: "burst", count: 10 }, 8, { maxInFlight: 4 })).rejects.toThrow(
       /at least the worker count/,

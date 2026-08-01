@@ -93,7 +93,8 @@ createServer((request, response) => {
   } else {
     serve(pending);
   }
-}).listen(port, () => {
+  // Loopback only: `pnpm gate:two` should not put an unauthenticated server on the local network.
+}).listen(port, "127.0.0.1", () => {
   const limit = Number.isFinite(capacity) ? String(capacity) : "unbounded";
   process.stdout.write(
     `reality-gate target on :${String(port)} — ${String(delayMs)}ms, capacity ${limit}\n`,

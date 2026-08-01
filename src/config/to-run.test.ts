@@ -48,6 +48,26 @@ describe("scenariosFrom", () => {
     ).toThrow(/must return a `url` string/);
   });
 
+  it("refuses a data: url, the most convincing false-green available", () => {
+    // `fetch("data:…")` answers 200 instantly without a network, so every request "succeeds",
+    // every threshold passes, and the report publishes PASSED over a sub-millisecond p50.
+    expect(() =>
+      scenariosFrom(
+        configWith(() => ({ url: "data:text/plain,hello" })),
+        undefined,
+      ),
+    ).toThrow(/non-HTTP url/);
+  });
+
+  it("refuses a file: url for the same reason", () => {
+    expect(() =>
+      scenariosFrom(
+        configWith(() => ({ url: "file:///etc/passwd" })),
+        undefined,
+      ),
+    ).toThrow(/non-HTTP url/);
+  });
+
   it("refuses an empty url rather than sending it", () => {
     expect(() =>
       scenariosFrom(
