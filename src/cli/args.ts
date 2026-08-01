@@ -15,6 +15,8 @@ export interface RunArgs {
   readonly workers: number | undefined;
   /** Where to write the markdown report, if anywhere. */
   readonly reportPath: string | undefined;
+  /** Suppress the live dashboard even on a TTY. */
+  readonly ci: boolean;
 }
 
 export type ParsedArgs =
@@ -55,6 +57,7 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
   let configPath: string | undefined;
   let workers: number | undefined;
   let reportPath: string | undefined;
+  let ci = false;
 
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index];
@@ -80,6 +83,10 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
       index += 1;
       continue;
     }
+    if (argument === "--ci") {
+      ci = true;
+      continue;
+    }
     if (argument.startsWith("-")) {
       return { kind: "error", message: `Unknown option "${argument}"` };
     }
@@ -98,7 +105,7 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
       message: "`run` needs a config file — try `stampede run scenarios.ts`",
     };
   }
-  return { kind: "run", configPath, workers, reportPath };
+  return { kind: "run", configPath, workers, reportPath, ci };
 };
 
 export const HELP = `stampede — load testing that proves invariants, not just percentiles
@@ -106,6 +113,7 @@ export const HELP = `stampede — load testing that proves invariants, not just 
   stampede run <scenarios.ts>              run the scenarios in a config file
   stampede run <scenarios.ts> --workers 4    override the worker-thread count
   stampede run <scenarios.ts> --report out.md  write a markdown report
+  stampede run <scenarios.ts> --ci             no live dashboard, even on a terminal
 
   --help, -h        this message
   --version, -v     print the version

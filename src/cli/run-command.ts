@@ -39,6 +39,8 @@ export interface RunReport {
 export interface RunOptions {
   readonly configPath: string;
   readonly workers?: number | undefined;
+  /** Called with a merged summary while the run is in flight, for a live view. */
+  readonly onProgress?: (summary: RunSummary) => void;
 }
 
 interface RunSettings {
@@ -96,6 +98,7 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
       maxInFlight: settings.maxInFlight,
       drainTimeoutMs: settings.drainTimeoutMs,
       setupState,
+      onProgress: options.onProgress,
     });
     summary = outcome.summary;
     supersededSnapshots = outcome.supersededSnapshots;

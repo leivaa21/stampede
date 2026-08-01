@@ -16,6 +16,8 @@ describe("parseArgs", () => {
       kind: "run",
       configPath: "scenarios.ts",
       workers: undefined,
+      reportPath: undefined,
+      ci: false,
     });
   });
 
@@ -55,6 +57,10 @@ describe("parseArgs", () => {
 
   it("refuses --workers with nothing after it", () => {
     expect(parseArgs(["run", "s.ts", "--workers"])).toMatchObject({ kind: "error" });
+  });
+
+  it("takes --ci, which suppresses the dashboard even on a terminal", () => {
+    expect(parseArgs(["run", "s.ts", "--ci"])).toMatchObject({ ci: true });
   });
 
   it("takes a report path", () => {

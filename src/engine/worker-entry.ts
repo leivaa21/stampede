@@ -2,7 +2,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { loadConfig } from "../config/load.ts";
 import { scenariosFrom } from "../config/to-run.ts";
 import { MetricsRegistry } from "../metrics/index.ts";
-import { runDispatch } from "./dispatcher.ts";
+import { LiveProgress, runDispatch } from "./dispatcher.ts";
 import { httpTransport, type HttpRequestSpec } from "./http-transport.ts";
 import { shardScenarios } from "./schedule-split.ts";
 import { systemClock } from "./system-clock.ts";
@@ -40,13 +40,20 @@ const main = async (assignment: WorkerAssignment): Promise<void> => {
   const transport = httpTransport;
   const metrics = new MetricsRegistry();
   const shard = { index: assignment.shardIndex, count: assignment.shardCount };
+  const live = new LiveProgress();
 
   // Cumulative snapshots on a timer, for the live view. Each carries a fresh sequence, so a
-  // message delayed in flight can never rewind the aggregate it arrives at.
+  // message delayed in flight can never rewind the aggregate it arrives at — and each carries this
+  // worker's *progress*, without which a mid-run merge would hold metrics from every worker and
+  // progress only from the finished ones, and report more dispatched than scheduled.
   let sequence = 0;
   const ticker = setInterval(() => {
+    const progress = live.read();
+    if (progress === undefined) {
+      return; // the run has not started yet; there is nothing true to say
+    }
     sequence += 1;
-    post({ kind: "snapshot", snapshot: metrics.toSnapshot(sequence) });
+    post({ kind: "snapshot", snapshot: metrics.toSnapshot(sequence), progress });
   }, assignment.snapshotIntervalMs);
   // The run is what keeps this thread alive; the ticker must not extend it by itself.
   ticker.unref();
@@ -58,7 +65,7 @@ const main = async (assignment: WorkerAssignment): Promise<void> => {
         maxInFlight: assignment.maxInFlight,
         drainTimeoutMs: assignment.drainTimeoutMs,
       },
-      { clock: systemClock, transport, metrics },
+      { clock: systemClock, transport, metrics, live },
     );
     // A *fresh* sequence, even though the timer may have just fired and nothing changed since.
     // `snapshots.ts` requires it: reusing the last one would make the final snapshot read as a

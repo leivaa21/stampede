@@ -17,7 +17,7 @@ export type {
   RampOptions,
 } from "./arrival-profiles.ts";
 export { burst, constantRate, ramp, stages } from "./arrival-profiles.ts";
-export { runDispatch, type RunOutcome, type RunPorts } from "./dispatcher.ts";
+export { LiveProgress, runDispatch, type RunOutcome, type RunPorts } from "./dispatcher.ts";
 export { httpTransport, type HttpRequestSpec } from "./http-transport.ts";
 export { EngineMetric } from "./metric-names.ts";
 export type { Clock, Transport, TransportResponse } from "./ports.ts";

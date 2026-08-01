@@ -30,18 +30,16 @@ export interface PoolRunSpec {
   readonly drainTimeoutMs: number;
   readonly setupState?: unknown;
   readonly snapshotIntervalMs?: number;
+  /**
+   * Called with a merged summary each time a worker reports, for a live view.
+   *
+   * Correct only because every message — not just the final one — carries its worker's progress. A
+   * merge that held metrics from all workers and progress from the finished ones alone reported an
+   * empty run, and then one whose dispatched count exceeded its scheduled count. A consumer that
+   * throws is isolated: a render bug must not abort the load test.
+   */
+  readonly onProgress?: (summary: RunSummary) => void;
 }
-
-/*
- * There is deliberately no live-progress callback here yet.
- *
- * The obvious one — merge on every snapshot and hand out a summary — is wrong in a way that is
- * worse than not having it: a mid-run merge sees metrics from *every* worker but progress only
- * from those that already finished, so it reports either an empty run or one whose dispatched
- * count exceeds its scheduled count. Publishing that is exactly the achieved-vs-requested lie this
- * repo rules out everywhere else. Making it right needs the snapshot message to carry the worker's
- * own progress, which is a protocol change that belongs with the TUI that will consume it (PR 8).
- */
 
 export interface PoolRunOutcome {
   readonly summary: RunSummary;
@@ -143,6 +141,34 @@ export const runPool = async (spec: PoolRunSpec): Promise<PoolRunOutcome> => {
   const progressByWorker = new Map<string, RunProgress>();
   const workers: Worker[] = [];
 
+  /**
+   * Outside the protocol's own error handling on purpose: a consumer that throws — a render bug on
+   * frame three — must not abort the load test. `in-flight.ts` makes the same argument by name, and
+   * a load tester that dies mid-run publishes nothing.
+   */
+  const publishProgress = (): void => {
+    if (spec.onProgress === undefined) {
+      return;
+    }
+    // Nothing is published until every worker has been heard from once. The merged progress is a
+    // union over the workers that have reported, so an early frame states a fraction of the run's
+    // schedule and a fraction of its *requested rate* — and the progress bar goes backwards as
+    // later workers arrive. Under-reporting a static fact the config already fixed is the same
+    // category of wrong as the bug this protocol change was made to kill.
+    if (progressByWorker.size < spec.workerCount) {
+      return;
+    }
+    const merged = summariseRun(
+      mergeProgress([...progressByWorker.values()]),
+      aggregator.aggregate(),
+    );
+    try {
+      spec.onProgress(merged);
+    } catch {
+      // Deliberately swallowed: the run is the product, the live view is a convenience.
+    }
+  };
+
   // `allSettled`, not `all`: this runs in a `finally`, so a rejecting `terminate()` would replace
   // the real reason the run ended with a teardown error, and abandon the remaining terminations
   // while it did. Teardown must not be able to lie about why it was reached.
@@ -190,11 +216,18 @@ export const runPool = async (spec: PoolRunSpec): Promise<PoolRunOutcome> => {
                 reject(new Error(`${workerId}: ${message.message}`));
                 return;
               }
-              aggregator.update(workerId, message.snapshot);
-              if (message.kind === "finished") {
+              // Progress follows the same ordering guard as the metrics: `update` reports whether
+              // the snapshot advanced this worker's state, and a superseded message must not rewind
+              // `elapsedMs` while the metrics correctly keep the newer one.
+              const advanced = aggregator.update(workerId, message.snapshot);
+              if (advanced || message.kind === "finished") {
                 progressByWorker.set(workerId, message.progress);
-                resolve();
               }
+              if (message.kind === "finished") {
+                resolve();
+                return;
+              }
+              publishProgress();
             } catch (error: unknown) {
               reject(error instanceof Error ? error : new Error(String(error)));
             }

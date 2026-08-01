@@ -121,8 +121,8 @@ a run across threads, TS config loading with the real HTTP transport, **`stamped
 storm, teardown, verdict, with exit codes CI can act on — and `--report out.md`. 357 tests, zero
 known vulnerabilities.
 
-**Not built yet:** the live TUI, so `--ci` is not a flag yet (an unknown flag is an error, not a
-shrug). Milestone plan in
+**M1 is feature-complete.** `stampede run` draws a live dashboard on a terminal, writes a markdown
+report with `--report`, and sets an exit code CI can act on. `--ci` suppresses the dashboard. Milestone plan in
 [`docs/design/m1.md`](docs/design/m1.md).
 
 The example above is close to the real API, with two exceptions until those land: per-scenario

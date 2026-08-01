@@ -23,6 +23,34 @@ export interface RunPorts<TRequest> {
   readonly transport: Transport<TRequest>;
   /** Defaults to a fresh registry. A worker passes its own, which is the one it snapshots (D1-03). */
   readonly metrics?: MetricsRegistry;
+  /**
+   * A window onto the run while it is still in flight, for the live view.
+   *
+   * A handle the caller **reads on its own cadence** rather than a callback the loop pushes into:
+   * a callback would fire once per dispatch batch — thousands of times a second — to feed something
+   * that redraws a few times a second, and the loop's job is dispatching on schedule, not
+   * formatting. Reading costs nothing until someone asks.
+   */
+  readonly live?: LiveProgress;
+}
+
+/**
+ * The handle `RunPorts.live` passes in. `runDispatch` fills it in; the caller reads it.
+ *
+ * `read()` returns `undefined` until the run has actually started, so a reader that arrives early
+ * gets nothing rather than a zeroed shape that looks like a run which measured nothing.
+ */
+export class LiveProgress {
+  #read: (() => RunProgress) | undefined;
+
+  /** @internal Called by `runDispatch`. */
+  attach(read: () => RunProgress): void {
+    this.#read = read;
+  }
+
+  read(): RunProgress | undefined {
+    return this.#read?.();
+  }
 }
 
 export interface RunOutcome {
@@ -81,6 +109,18 @@ export const runDispatch = async <TRequest>(
   const inFlight = new InFlight();
   const startedAtMs = clock.now();
   let recordingResponses = true;
+
+  const progressNow = (): RunProgress => ({
+    elapsedMs: clock.now() - startedAtMs,
+    maxObservedInFlight: inFlight.maxObserved,
+    scenarios: states.map((state) => ({
+      name: state.name,
+      scheduledCount: state.profile.count,
+      requestedDurationMs: state.profile.durationMs,
+      lastDispatchElapsedMs: state.lastDispatchElapsedMs,
+    })),
+  });
+  ports.live?.attach(progressNow);
 
   /**
    * `ports.ts` requires `send` to *reject* on a transport failure, but a port is inbound data and
@@ -168,16 +208,7 @@ export const runDispatch = async <TRequest>(
     }
   }
 
-  const progress: RunProgress = {
-    elapsedMs: clock.now() - startedAtMs,
-    maxObservedInFlight: inFlight.maxObserved,
-    scenarios: states.map((state) => ({
-      name: state.name,
-      scheduledCount: state.profile.count,
-      requestedDurationMs: state.profile.durationMs,
-      lastDispatchElapsedMs: state.lastDispatchElapsedMs,
-    })),
-  };
+  const progress = progressNow();
 
   return { summary: summariseRun(progress, metrics), metrics, progress };
 };
