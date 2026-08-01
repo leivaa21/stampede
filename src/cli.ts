@@ -1,6 +1,9 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { HELP, parseArgs } from "./cli/args.ts";
 import { renderSummary, renderVerdict } from "./cli/render.ts";
 import { ExitCode, runFromConfig, type ExitCodeValue } from "./cli/run-command.ts";
+import { renderMarkdownReport } from "./report/markdown.ts";
 import { readVersion } from "./version.ts";
 
 /**
@@ -38,6 +41,32 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
   }
 
   const report = await runFromConfig({ configPath: args.configPath, workers: args.workers });
+
+  // Written whenever there is something to report, including on a *failed* run: a report showing
+  // which threshold broke is exactly what someone needs after a red CI job, and withholding it
+  // because the run failed would withhold it precisely when it matters.
+  if (args.reportPath !== undefined && report.summary !== undefined) {
+    try {
+      const target = path.resolve(args.reportPath);
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(
+        target,
+        renderMarkdownReport(report.summary, report.verdict, {
+          version: readVersion(new URL("../package.json", import.meta.url)),
+          configPath: args.configPath,
+          workerCount: report.workerCount,
+          generatedAt: new Date(),
+        }),
+      );
+      out(`report written to ${target}`);
+    } catch (error: unknown) {
+      // A report that could not be written must not turn a passing run into a failing one, but it
+      // must not pass silently either — someone asked for it and is going to go looking.
+      err(
+        `stampede: could not write the report: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 
   if (report.summary !== undefined) {
     out(renderSummary(report.summary));

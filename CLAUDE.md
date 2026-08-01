@@ -37,9 +37,13 @@
 > that never ran pass. 316 tests.
 > **Verified against a target that double-sells:** `teardown() failed — the invariant did not hold
 after the run: double sell: 300 seats sold`, exit 1. That is open-ticket's M5 case working.
-> **Not built yet:** the markdown report (PR 7) and the live TUI (PR 8). `--report` and `--ci` do
-> not exist as flags yet — an unknown flag is an error, not a shrug.
-> Next: PR 7 — the markdown report. Keep this line current after every merged slice.
+> **Markdown report (PR 7) is in:** `--report out.md` writes a paste-ready table carrying its own
+> provenance (version, worker count, config path, timestamp) and every caveat _inside_ the table —
+> a clamped percentile that loses its footnote on the way to a README becomes a measurement nobody
+> can challenge. Written on failed runs too, which is when it is most wanted. 357 tests.
+> **Not built yet:** the live TUI (PR 8). `--ci` is not a flag yet — an unknown flag is an error,
+> not a shrug.
+> Next: PR 8 — the live TUI. Keep this line current after every merged slice.
 
 ## Identity
 

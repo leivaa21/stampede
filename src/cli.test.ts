@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -138,6 +138,48 @@ export default defineConfig({
 
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("unhandled rejection");
+  }, 30_000);
+
+  it("writes a markdown report when asked, and says where", async () => {
+    const reportPath = join(mkdtempSync(join(tmpdir(), "stampede-report-")), "nested", "out.md");
+
+    const result = await runCli(["run", configFor(target.url), "--report", reportPath]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("report written to");
+    const report = readFileSync(reportPath, "utf8");
+    expect(report).toContain("## Load test");
+    expect(report).toContain("### reads");
+    // Directories are created rather than making the user mkdir first.
+    expect(report).toContain("| percentile | latency |");
+  }, 30_000);
+
+  it("still writes the report when a threshold failed — that is when it is needed", async () => {
+    const reportPath = join(mkdtempSync(join(tmpdir(), "stampede-report-")), "out.md");
+
+    const result = await runCli([
+      "run",
+      configFor(target.url, `thresholds: [{ name: "impossible", assert: () => false }],`),
+      "--report",
+      reportPath,
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(readFileSync(reportPath, "utf8")).toContain("| **FAIL** | impossible |");
+  }, 30_000);
+
+  it("does not fail a passing run because the report could not be written", async () => {
+    // Someone asked for a report and will go looking for it, so it is reported on stderr — but a
+    // green run must not turn red over an unwritable path.
+    const result = await runCli([
+      "run",
+      configFor(target.url),
+      "--report",
+      "/proc/version/nope.md",
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("could not write the report");
   }, 30_000);
 
   it("does not claim thresholds were violated when teardown was what failed", async () => {
