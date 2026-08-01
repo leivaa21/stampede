@@ -139,7 +139,6 @@ export const runPool = async (spec: PoolRunSpec): Promise<PoolRunOutcome> => {
 
   const aggregator = new SnapshotAggregator();
   const progressByWorker = new Map<string, RunProgress>();
-  const finished = new Set<string>();
   const workers: Worker[] = [];
 
   /**
@@ -149,6 +148,14 @@ export const runPool = async (spec: PoolRunSpec): Promise<PoolRunOutcome> => {
    */
   const publishProgress = (): void => {
     if (spec.onProgress === undefined) {
+      return;
+    }
+    // Nothing is published until every worker has been heard from once. The merged progress is a
+    // union over the workers that have reported, so an early frame states a fraction of the run's
+    // schedule and a fraction of its *requested rate* — and the progress bar goes backwards as
+    // later workers arrive. Under-reporting a static fact the config already fixed is the same
+    // category of wrong as the bug this protocol change was made to kill.
+    if (progressByWorker.size < spec.workerCount) {
       return;
     }
     const merged = summariseRun(
@@ -209,10 +216,14 @@ export const runPool = async (spec: PoolRunSpec): Promise<PoolRunOutcome> => {
                 reject(new Error(`${workerId}: ${message.message}`));
                 return;
               }
-              aggregator.update(workerId, message.snapshot);
-              progressByWorker.set(workerId, message.progress);
+              // Progress follows the same ordering guard as the metrics: `update` reports whether
+              // the snapshot advanced this worker's state, and a superseded message must not rewind
+              // `elapsedMs` while the metrics correctly keep the newer one.
+              const advanced = aggregator.update(workerId, message.snapshot);
+              if (advanced || message.kind === "finished") {
+                progressByWorker.set(workerId, message.progress);
+              }
               if (message.kind === "finished") {
-                finished.add(workerId);
                 resolve();
                 return;
               }

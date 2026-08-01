@@ -3,6 +3,7 @@ import path from "node:path";
 import { HELP, parseArgs } from "./cli/args.ts";
 import { renderSummary, renderVerdict } from "./cli/render.ts";
 import { ExitCode, runFromConfig, type ExitCodeValue } from "./cli/run-command.ts";
+import { guardTerminal } from "./cli/signals.ts";
 import { renderMarkdownReport } from "./report/markdown.ts";
 import { createDashboard } from "./tui/dashboard.ts";
 import { readVersion } from "./version.ts";
@@ -22,6 +23,9 @@ const out = (text: string): void => {
 const err = (text: string): void => {
   process.stderr.write(text.endsWith("\n") ? text : `${text}\n`);
 };
+
+/** Set while a dashboard is drawing, so the stray-failure handlers can put the terminal back. */
+let restoreTerminal: (() => void) | undefined;
 
 const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
   const args = parseArgs(argv);
@@ -53,18 +57,37 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
       })
     : undefined;
 
-  const report = await runFromConfig({
-    configPath: args.configPath,
-    workers: args.workers,
-    onProgress:
-      dashboard === undefined
-        ? undefined
-        : (summary) => {
-            dashboard.update(summary);
-          },
+  // Ctrl-C is the *normal* way to end a long load test, and the dashboard hides the cursor when it
+  // starts. Without this the user's shell is left with an invisible cursor after the run they
+  // interrupted — a tool damaging the terminal on its most common exit.
+  restoreTerminal = () => {
+    dashboard?.stop();
+  };
+  const guard = guardTerminal(restoreTerminal, {
+    once: (signal, handler) => process.once(signal, handler),
+    off: (signal, handler) => process.off(signal, handler),
+    exit: (code) => process.exit(code),
   });
-  // Cleared before anything else prints, so the final summary never lands under a stale frame.
-  dashboard?.stop();
+
+  let report;
+  try {
+    report = await runFromConfig({
+      configPath: args.configPath,
+      workers: args.workers,
+      onProgress:
+        dashboard === undefined
+          ? undefined
+          : (summary) => {
+              dashboard.update(summary);
+            },
+    });
+  } finally {
+    // Cleared before anything else prints, so the final summary never lands under a stale frame —
+    // and in a `finally`, so a throw does not leave the frame and the hidden cursor behind.
+    dashboard?.stop();
+    restoreTerminal = undefined;
+    guard.release();
+  }
 
   // Written whenever there is something to report, including on a *failed* run: a report showing
   // which threshold broke is exactly what someone needs after a red CI job, and withholding it

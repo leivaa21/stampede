@@ -246,3 +246,26 @@ guard — it dispatched nothing, so nothing failed — and reaches the threshold
 when the pool fails; stated in the `teardown` JSDoc rather than left to be discovered. Rates like
 `constantRate({ ratePerSecond: 2, durationMs: 100 })` now fail at startup with the arithmetic
 spelled out, instead of running an empty test.
+
+## 2026-08-01 — Live progress rides on every worker message, and is pulled rather than pushed
+
+**Context:** PR 4 shipped the worker pool with **no** live-progress callback, and a comment arguing
+against adding one: a mid-run merge held metrics from every worker but progress only from those that
+had finished, so it published an empty run and then one whose dispatched count exceeded its
+scheduled count. The comment said the fix was a protocol change belonging with the consumer that
+would need it. The TUI is that consumer.
+**Decision:** **every** worker message carries its sender's progress, not just the final one. The
+dispatcher exposes a `LiveProgress` **handle the caller reads**, rather than a callback the loop
+pushes into. Nothing is published until every worker has reported at least once.
+**Rationale:** a push callback would fire once per dispatch batch — thousands of times a second — to
+feed something that redraws a few times a second, and the dispatch loop's job is issuing requests on
+schedule, not formatting. Withholding the first frame closes the remaining hole: merged progress is
+a union over the workers heard from, so an early frame stated a fraction of the run's schedule _and_
+of its requested rate, and the progress bar went backwards as later workers arrived. Under-reporting
+a static fact the config already fixed is the same category of wrong as the bug the protocol change
+was made to kill.
+**Consequences:** the live view starts one snapshot interval late, which is the honest trade. A live
+frame must **not** use `RunSummary.achievedRatePerSecond` — that divides by the profile's whole
+configured window, which is right only at the end, and mid-run showed a run issuing exactly its
+requested rate as a two-thirds shortfall for its entire duration. The dashboard derives its own rate
+from elapsed time. A consumer that throws is isolated: a render bug must not abort a load test.

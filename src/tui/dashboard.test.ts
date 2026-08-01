@@ -70,12 +70,53 @@ describe("frameFor", () => {
     expect(frameFor(summaryOf(scenario())).join("\n")).not.toContain("⚠");
   });
 
-  it("shows achieved against requested, rounded the honest way", () => {
+  it("computes the achieved rate from elapsed time, not the configured window", () => {
+    // `achievedRatePerSecond` divides by the profile's *whole* window, which is right only at the
+    // end. Used mid-run it showed a run issuing exactly its requested rate as a two-thirds
+    // shortfall for the entire duration: 200 of 600 dispatched at t+1s of a 3s run read "66/s".
+    const frame = frameFor({
+      ...summaryOf(
+        scenario({
+          dispatchedCount: 200,
+          scheduledCount: 600,
+          requestedRatePerSecond: 200,
+          achievedRatePerSecond: 66,
+        }),
+      ),
+      elapsedMs: 1_000,
+    }).join("\n");
+
+    expect(frame).toContain("200/s asked · 200/s so far");
+    expect(frame).not.toContain("66/s");
+  });
+
+  it("says nothing about a rate before any time has passed", () => {
+    const frame = frameFor({ ...summaryOf(scenario()), elapsedMs: 0 }).join("\n");
+
+    expect(frame).toContain("— so far");
+  });
+
+  it("counts dropped requests as dealt with in the progress bar", () => {
+    // A bar that ignored refusals would crawl while the run raced to its end.
     const frame = frameFor(
-      summaryOf(scenario({ requestedRatePerSecond: 100, achievedRatePerSecond: 96.7 })),
+      summaryOf(scenario({ scheduledCount: 100, dispatchedCount: 40, droppedCount: 60 })),
     ).join("\n");
 
-    expect(frame).toContain("100/s asked · 96/s achieved");
+    expect(frame).toContain("100/100");
+  });
+
+  it("fills the bar in proportion to what has been dealt with", () => {
+    const empty = frameFor(
+      summaryOf(scenario({ scheduledCount: 100, dispatchedCount: 0, droppedCount: 0 })),
+    ).join("\n");
+    const full = frameFor(summaryOf(scenario({ scheduledCount: 100, dispatchedCount: 100 }))).join(
+      "\n",
+    );
+
+    expect(empty).toContain("░░░░░░░░░░░░░░░░░░░░░░░░");
+    expect(empty).not.toContain("█");
+    expect(full).toContain("████████████████████████");
+    expect(full).not.toContain("░");
   });
 
   it("shows the queued percentile beside the raw one", () => {
@@ -142,31 +183,53 @@ describe("createDashboard", () => {
     expect(text()).toContain("[?25h");
   });
 
-  it("truncates to the terminal width rather than wrapping", () => {
-    // A wrapped line takes two rows, so the next redraw would move up by fewer rows than it printed.
-    const { dashboard, text } = collect();
-    const narrow = createDashboard({ write: (t) => text().concat(t), columns: 20 });
+  /** The rows actually printed, with the escape sequences stripped. */
+  const rowsOf = (written: readonly string[]): readonly string[] =>
+    written
+      .join("")
+      // eslint-disable-next-line no-control-regex
+      .replace(/\u001b\[[0-9?]*[A-Za-z]/g, "")
+      .split("\n")
+      .filter((line) => line.length > 0);
 
-    expect(() => {
-      narrow.update(summaryOf(scenario({ name: "a-very-long-scenario-name-indeed" })));
-    }).not.toThrow();
-    dashboard.stop();
+  it("prints exactly as many rows as it will later move up over", () => {
+    // The invariant the whole design rests on. A line that wraps occupies two rows while counting
+    // as one, so the next redraw moves up too little and leaves debris climbing the terminal.
+    const written: string[] = [];
+    const narrow = createDashboard({ write: (t) => written.push(t), columns: 60 });
+
+    narrow.update(summaryOf(scenario({ name: "an-extremely-long-scenario-name-that-would-wrap" })));
+
+    const rows = rowsOf(written);
+    expect(rows).toHaveLength(frameFor(summaryOf(scenario())).length);
+    for (const row of rows) {
+      expect(row.length).toBeLessThan(60);
+    }
   });
 
-  it("keeps every line inside the given width", () => {
+  it("strips a newline out of a scenario name rather than gaining a row", () => {
+    // Scenario names are user config. A newline in one adds a physical row the redraw does not
+    // know about, and one line of debris climbs the terminal on every frame.
     const written: string[] = [];
-    const narrow = createDashboard({ write: (t) => written.push(t), columns: 30 });
+    const dashboard = createDashboard({ write: (t) => written.push(t), columns: 120 });
 
-    narrow.update(summaryOf(scenario({ name: "an-extremely-long-scenario-name-here" })));
+    dashboard.update(summaryOf(scenario({ name: "reads\nINJECTED" })));
 
-    const drawn = written
-      .join("")
-      .split("\n")
-      // eslint-disable-next-line no-control-regex
-      .map((line) => line.replace(/\[[0-9?]*[A-Za-z]/g, ""))
-      .filter((line) => line.length > 0);
-    for (const line of drawn) {
-      expect(line.length).toBeLessThanOrEqual(29);
+    expect(rowsOf(written)).toHaveLength(frameFor(summaryOf(scenario())).length);
+  });
+
+  it("draws a usable frame when the terminal reports no width at all", () => {
+    // A pty with no window size reports 0, and some report undefined. Both drew a garbage frame —
+    // one character per row, or five blank rows — for the whole run.
+    for (const columns of [0, undefined]) {
+      const written: string[] = [];
+      const dashboard = createDashboard({ write: (t) => written.push(t), columns });
+
+      dashboard.update(summaryOf(scenario()));
+
+      for (const row of rowsOf(written)) {
+        expect(row.trim().length).toBeGreaterThan(1);
+      }
     }
   });
 });
