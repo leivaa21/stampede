@@ -41,9 +41,9 @@ export interface TransportResponse {
 /**
  * Sends one request and waits for the response.
  *
- * Generic in the request because the engine does not know what a request *is* — HTTP arrives with
- * the real transport in a later PR, and nothing in the scheduler should have to change when it
- * does. This PR ships only a fake.
+ * Generic in the request because the engine does not know what a request *is*. `http-transport.ts`
+ * is the shipped implementation; the generic is what let it arrive without the scheduler changing,
+ * and what will let a streaming transport arrive the same way.
  *
  * **`send` must reject on a transport-level failure** (connection refused, DNS, timeout) rather
  * than resolving with a synthetic status. The dispatcher counts those separately and deliberately

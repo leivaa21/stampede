@@ -1,0 +1,49 @@
+import { createServer, type Server } from "node:http";
+
+/**
+ * A target that counts what it was asked for.
+ *
+ * Used where the assertion needs a witness other than stampede itself: "did four shards really send
+ * 200 requests" is only worth asking of something that was on the receiving end. It doubles as the
+ * proof-of-life signal for worker teardown — a terminated worker stops arriving.
+ */
+export interface CountingServer {
+  readonly url: string;
+  readonly received: () => number;
+  readonly close: () => Promise<void>;
+}
+
+export const startCountingServer = async (
+  options: { failStatus?: number } = {},
+): Promise<CountingServer> => {
+  let received = 0;
+  const server: Server = createServer((request, response) => {
+    received += 1;
+    request.resume();
+    response.writeHead(options.failStatus ?? 200, { "content-type": "application/json" });
+    response.end("{}");
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("the counting server did not bind a port");
+  }
+
+  return {
+    url: `http://127.0.0.1:${String(address.port)}/`,
+    received: () => received,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      }),
+  };
+};

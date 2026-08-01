@@ -24,11 +24,16 @@
 > private registries and post cumulative sequence-numbered snapshots; the main thread merges and
 > projects once. Proven against the live target: 4 threads, 480 scheduled, 480 dispatched, **480
 > received by the target**, accounting balanced, zero out-of-order snapshots.
-> **Not built yet:** TS config loading + setup/teardown (PR 5), the CLI and thresholds (PR 6), the
-> markdown report (PR 7), the TUI (PR 8). `stampede run` does not exist — the engine is
-> programmatic-only, and `src/index.ts` does not export it yet.
-> Next: PR 5 — TS config loading, which turns the worker pool's `modulePath` seam into a user's
-> `scenarios.ts`. Keep this line current after every merged slice.
+> **Config loading (PR 5) is in:** `defineConfig` anchors `TSetup`, so `setup()` → `request(state)`
+> → `teardown(state)` are typed end to end with no annotations in the user's file. Node strips the
+> types — no bundler, no build step — and the loader translates
+> `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` into the file plus the fix. Ships the real HTTP transport,
+> which follows **no** redirects on purpose. 284 tests.
+> **Not built yet:** the CLI and thresholds (PR 6), the markdown report (PR 7), the TUI (PR 8).
+> `stampede run` still does not exist — `setup()`/`teardown()` are declared and typed but nothing
+> calls them yet; the engine is reachable programmatically via `src/index.ts`.
+> Next: PR 6 — the CLI, thresholds and exit codes, which is where `setup`/`teardown` get wired and
+> `stampede run` becomes real. Keep this line current after every merged slice.
 
 ## Identity
 

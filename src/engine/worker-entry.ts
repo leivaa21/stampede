@@ -1,10 +1,9 @@
-import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parentPort, workerData } from "node:worker_threads";
+import { loadConfig } from "../config/load.ts";
+import { scenariosFrom } from "../config/to-run.ts";
 import { MetricsRegistry } from "../metrics/index.ts";
 import { runDispatch } from "./dispatcher.ts";
-import type { Transport } from "./ports.ts";
-import type { Scenario } from "./run-spec.ts";
+import { httpTransport, type HttpRequestSpec } from "./http-transport.ts";
 import { shardScenarios } from "./schedule-split.ts";
 import { systemClock } from "./system-clock.ts";
 import type { WorkerAssignment, WorkerMessage } from "./worker-protocol.ts";
@@ -32,45 +31,13 @@ const post = (message: WorkerMessage): void => {
   parentPort.postMessage(message);
 };
 
-interface WorkerRun {
-  readonly scenarios: readonly Scenario<unknown>[];
-  readonly transport: Transport<unknown>;
-}
-
-const isRunShape = (value: unknown): value is WorkerRun =>
-  typeof value === "object" &&
-  value !== null &&
-  Array.isArray((value as { scenarios?: unknown }).scenarios) &&
-  typeof (value as { transport?: { send?: unknown } }).transport?.send === "function";
-
-/**
- * Imports the module the run was pointed at.
- *
- * The specifier is resolved to a `file:` URL first. A raw string handed to `import()` would also
- * accept `data:` URLs, which execute inline, and bare specifiers, which resolve out of
- * `node_modules` — running a user's config is arbitrary code execution by design, but a path the
- * user typed as a path should only ever be read as a path (D1-04).
- */
-const loadRun = async (assignment: WorkerAssignment): Promise<WorkerRun> => {
-  const moduleUrl = pathToFileURL(path.resolve(assignment.modulePath)).href;
-  const imported: unknown = await import(moduleUrl);
-  const factory = (imported as { default?: unknown }).default;
-  if (typeof factory !== "function") {
-    throw new TypeError(`${assignment.modulePath} must default-export a function`);
-  }
-  // Awaited, so an `async` factory works. A user who writes exactly what the docs describe, only
-  // with an `async` keyword, should not be told their export "must return { scenarios, transport }".
-  const run: unknown = await (factory as (state: unknown) => unknown)(assignment.setupState);
-  if (!isRunShape(run)) {
-    throw new TypeError(
-      `${assignment.modulePath}'s default export must return { scenarios, transport }`,
-    );
-  }
-  return run;
-};
-
 const main = async (assignment: WorkerAssignment): Promise<void> => {
-  const { scenarios, transport } = await loadRun(assignment);
+  // The worker imports the user's config *itself*, in its own isolate. That is not duplication of
+  // the main thread's work — it is the only option: `request` is a function, and a function cannot
+  // be structured-cloned across a `postMessage` (D1-04). Only the setup **state** travels.
+  const config = await loadConfig(assignment.modulePath);
+  const scenarios = scenariosFrom(config, assignment.setupState);
+  const transport = httpTransport;
   const metrics = new MetricsRegistry();
   const shard = { index: assignment.shardIndex, count: assignment.shardCount };
 
@@ -85,7 +52,7 @@ const main = async (assignment: WorkerAssignment): Promise<void> => {
   ticker.unref();
 
   try {
-    const outcome = await runDispatch<unknown>(
+    const outcome = await runDispatch<HttpRequestSpec>(
       {
         scenarios: shardScenarios(scenarios, shard),
         maxInFlight: assignment.maxInFlight,

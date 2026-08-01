@@ -164,7 +164,22 @@ export const runPool = async (spec: PoolRunSpec): Promise<PoolRunOutcome> => {
           setupState: spec.setupState,
         };
 
-        const worker = new Worker(fileURLToPath(workerEntryUrl), { workerData: assignment });
+        // `setup()` returning something that cannot be structured-cloned is the single most likely
+        // first-run mistake, because the natural thing to return is a *client* rather than data.
+        // The raw DataCloneError names neither `setup()` nor the rule, so it is translated here.
+        let worker: Worker;
+        try {
+          worker = new Worker(fileURLToPath(workerEntryUrl), { workerData: assignment });
+        } catch (error: unknown) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `setup() returned something that cannot be sent to a worker: ${detail}\n\n` +
+              "Every worker imports your config in its own thread, so setup state travels as data " +
+              "(structured clone). Return plain values — an id, a token, a URL — and build clients " +
+              "inside the scenario, not in setup().",
+            { cause: error },
+          );
+        }
         workers.push(worker);
 
         await new Promise<void>((resolve, reject) => {

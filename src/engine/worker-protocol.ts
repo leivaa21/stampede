@@ -9,11 +9,8 @@ import type { RunProgress, ScenarioProgress } from "./run-summary.ts";
  * the same way — plain data produced once on the main thread and given to every worker.
  */
 
-/** What a worker's module must default-export. PR 5's config loader produces one of these. */
-export type WorkerRunFactory = (setupState: unknown) => unknown;
-
 export interface WorkerAssignment {
-  /** Absolute path to the module the worker imports. Resolved to a `file:` URL on the other side. */
+  /** Path to the config the worker imports; relative paths resolve against the process cwd. */
   readonly modulePath: string;
   readonly shardIndex: number;
   readonly shardCount: number;

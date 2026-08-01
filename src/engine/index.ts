@@ -18,6 +18,7 @@ export type {
 } from "./arrival-profiles.ts";
 export { burst, constantRate, ramp, stages } from "./arrival-profiles.ts";
 export { runDispatch, type RunOutcome, type RunPorts } from "./dispatcher.ts";
+export { httpTransport, type HttpRequestSpec } from "./http-transport.ts";
 export { EngineMetric } from "./metric-names.ts";
 export type { Clock, Transport, TransportResponse } from "./ports.ts";
 export { DEFAULT_DRAIN_TIMEOUT_MS, type RunSpec, type Scenario } from "./run-spec.ts";
@@ -32,4 +33,3 @@ export {
   type PoolRunOutcome,
   type PoolRunSpec,
 } from "./worker-pool.ts";
-export type { WorkerRunFactory } from "./worker-protocol.ts";
