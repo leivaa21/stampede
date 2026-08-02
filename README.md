@@ -165,9 +165,10 @@ twice. So there is a second gate:
 pnpm gate:two
 ```
 
-It starts a reference server — fixed delay, bounded concurrency, queueing the rest, keeping its own
-count — and drives four runs against it through the real system clock and real HTTP, checking
-stampede's numbers against the server's. **Non-zero exit if any claim fails.** Real output:
+It starts a reference server — fixed delay, bounded concurrency, queueing the rest, **selling seats
+at most once each** and keeping its own count of everything — then drives seven runs against it
+through the real system clock and real HTTP, checking stampede's numbers against the server's.
+**Non-zero exit if any claim fails.** Real output:
 
 **It can measure a stopwatch.** A 50ms target reads p50 52.4ms, and the server's own request count
 matches what stampede says it sent.
@@ -202,11 +203,48 @@ describing a machine that was never under that load.
 **480 received by the server**, accounting balanced, zero out-of-order snapshots. A merge bug cannot
 fool an independent observer.
 
+**The invariants, not just the percentiles.** The last two runs are
+[open-ticket](https://github.com/leivaa21/open-ticket)'s load contract, produced against a target
+that counts seats for itself:
+
+```
+RUN 6 — contract run 1: 200 buyers, one seat, exactly one wins
+    201s counted by stampede                  1
+    seats the target says it sold             1
+    check oneWinnerOrConflict                 200 pass · 0 fail · 0 broken
+
+RUN 7 — contract runs 2 & 4: 200 buyers, 200 distinct seats, 4 threads
+    201s counted by stampede                  200
+    seats the target says it sold             200
+    projection lag — p50 / p99 / max          240.1ms / 451.1ms / 461.1ms
+    target's own max behind                   462ms
+```
+
+Run 7 is the one that cannot be faked. Four threads that restarted their numbering would send four
+buyers to the same seat, and the target would answer three of them `409` — so the seat count is a
+verdict on the ordinal mapping delivered by something that is not stampede. Break
+`shardIndex + ordinal * shardCount` and the gate says so:
+
+```
+    check created                             50 pass · 150 fail · 0 broken
+    FAIL  the target sold one seat per buyer, no collisions — 50 distinct seats sold
+```
+
+And the `behindMs` the config recorded through `onResponse` — merged across four worker threads —
+lands within a millisecond of the lag the target measured on itself.
+
 ## Status
 
-**M1 is complete.** Mergeable metrics core · open-loop engine · worker pool · TS config loading ·
-real HTTP transport · `stampede run` with setup/teardown, thresholds and exit codes · markdown
-report · live dashboard. **504 tests**, zero known vulnerabilities, gate two green.
+**M1 and M2 are complete.** Mergeable metrics core · open-loop engine · worker pool · TS config
+loading · real HTTP transport · `stampede run` with setup/teardown, thresholds and exit codes ·
+markdown report · live dashboard — and, from M2, named per-response **checks** counted three ways,
+**custom counters and trends** merged across worker threads, and **per-request variation** keyed on
+the run's ordinal. **504 tests**, zero known vulnerabilities, gate two green across seven runs.
+
+**Next (M3): SSE / long-lived streaming requests** — open-ticket's contract run 5. Two debts M2
+surfaced are named rather than forgotten: there is no way to express a bounded-cardinality counter
+(ask for 600 names and the run fails telling you to use fewer), and `request()` is documented as
+pure but not enforced.
 
 **Not published to npm yet.** Install from source; `@leivaa21/stampede` is reserved.
 
