@@ -58,6 +58,21 @@ const hasContentType = (headers: Readonly<Record<string, string>>): boolean =>
   Object.keys(headers).some((name) => name.toLowerCase() === "content-type");
 
 /**
+ * Response headers as a plain object, lower-cased.
+ *
+ * `Headers` already lower-cases on iteration, so this is a shape change rather than a
+ * normalisation — but the object is what a check reads, and it is frozen because it is handed to
+ * user code that must not be able to edit the record of what the target actually sent.
+ */
+const headersOf = (response: Response): Readonly<Record<string, string>> => {
+  const headers: Record<string, string> = {};
+  for (const [name, value] of response.headers) {
+    headers[name] = value;
+  }
+  return Object.freeze(headers);
+};
+
+/**
  * Encoding is memoised per request object.
  *
  * A scenario's request is built once (`config/to-run.ts`) and then sent N times, so serialising it
@@ -94,9 +109,12 @@ export const httpTransport: Transport<HttpRequestSpec> = {
       redirect: "manual",
     });
     // Drained on purpose: without it the timing stops at the response headers, which would report a
-    // streaming target as far faster than any client of it experiences.
-    await response.arrayBuffer();
+    // streaming target as far faster than any client of it experiences. The decode is inside the
+    // measured window for the same reason — a client that has to read the body really does pay for
+    // it, and moving the cost outside would make latency mean something different here than it
+    // means everywhere else in the tool (D2-01).
+    const text = await response.text();
 
-    return { status: response.status };
+    return { status: response.status, headers: headersOf(response), text };
   },
 };

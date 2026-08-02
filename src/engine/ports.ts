@@ -36,6 +36,24 @@ export interface Clock {
  */
 export interface TransportResponse {
   readonly status: number;
+  /**
+   * Header names lower-cased once, here, so a check can read `headers["x-retry-count"]` without
+   * knowing what casing the target chose. HTTP header names are case-insensitive; a check that has
+   * to guess is a check that silently reads `undefined`.
+   */
+  readonly headers: Readonly<Record<string, string>>;
+  /**
+   * The response body, decoded (D2-01).
+   *
+   * Always present, because the bytes are **already read** — the transport drains the body so the
+   * measured window covers the whole response rather than stopping at the headers. The only new
+   * cost is decoding them, and it buys an API with no flag to forget and no `undefined` body to
+   * explain.
+   *
+   * A string, not parsed JSON: parsing costs on the hot path and throws on the one response that
+   * is not JSON, which is exactly the response a check most wants to catch.
+   */
+  readonly text: string;
 }
 
 /**

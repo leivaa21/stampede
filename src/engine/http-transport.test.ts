@@ -20,7 +20,12 @@ interface Seen {
 let server: Server;
 let baseUrl: string;
 let seen: Seen[];
-let handler: (path: string) => { status: number; headers?: Record<string, string> };
+let handler: (path: string) => {
+  status: number;
+  headers?: Record<string, string>;
+  body?: string;
+  bytes?: Buffer;
+};
 
 beforeEach(async () => {
   seen = [];
@@ -35,9 +40,9 @@ beforeEach(async () => {
         body: Buffer.concat(chunks).toString(),
         contentType: request.headers["content-type"],
       });
-      const { status, headers } = handler(request.url ?? "");
+      const { status, headers, body, bytes } = handler(request.url ?? "");
       response.writeHead(status, headers);
-      response.end("ok");
+      response.end(bytes ?? body ?? "ok");
     });
   });
   await new Promise<void>((resolve) => {
@@ -70,13 +75,57 @@ describe("httpTransport", () => {
     expect(seen[0]?.method).toBe("GET");
   });
 
+  it("hands back the response body it already had to read", async () => {
+    // D2-01: the bytes are drained for timing honesty regardless, so decoding them is the only new
+    // cost — and it is what makes checks and `onResponse` possible at all.
+    handler = () => ({ status: 200, body: '{"behindMs":42}' });
+
+    const response = await send({});
+
+    expect(response.text).toBe('{"behindMs":42}');
+  });
+
+  it("hands back headers lower-cased, so a check need not guess the casing", async () => {
+    handler = () => ({ status: 200, headers: { "X-Retry-Count": "3" } });
+
+    const response = await send({});
+
+    expect(response.headers["x-retry-count"]).toBe("3");
+  });
+
+  it("freezes the headers, so user code cannot edit the record of what was sent", async () => {
+    const response = await send({});
+
+    expect(Object.isFrozen(response.headers)).toBe(true);
+  });
+
+  it("returns an empty string for a body-less response rather than undefined", async () => {
+    // A check reading `response.text` should never have to handle two shapes.
+    handler = () => ({ status: 204, body: "" });
+
+    const response = await send({});
+
+    expect(response.text).toBe("");
+  });
+
+  it("does not throw on a body that is not valid UTF-8", async () => {
+    // `text()` replaces malformed sequences rather than rejecting, which is the behaviour worth
+    // pinning: a binary response must not fail a run that never looks at the body.
+    handler = () => ({ status: 200, bytes: Buffer.from([0xff, 0xfe, 0x00, 0x41]) });
+
+    const response = await send({});
+
+    expect(response.status).toBe(200);
+    expect(typeof response.text).toBe("string");
+  });
+
   it("treats a non-2xx as a response, not a failure", async () => {
     // A 500 is a perfectly good response to time — the target answered. Only a transport-level
     // failure is kept out of the latency percentiles, and turning an error status into a rejection
     // would silently delete the slowest, most interesting samples in a run.
     handler = () => ({ status: 500 });
 
-    await expect(send({})).resolves.toEqual({ status: 500 });
+    await expect(send({})).resolves.toMatchObject({ status: 500 });
   });
 
   it("does not follow redirects, and reports the 3xx it actually got", async () => {
