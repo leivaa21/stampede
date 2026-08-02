@@ -237,6 +237,65 @@ describe("renderMarkdownReport", () => {
     );
   });
 
+  it("prints the checks table the contract asked for by name", () => {
+    const text = render(
+      summaryOf(
+        scenario({
+          checks: {
+            oneWinnerOrConflict: { passed: 500, failed: 0 },
+            noDoubleSell: { passed: 480, failed: 20 },
+          },
+        }),
+      ),
+    );
+
+    expect(text).toContain("|  | check | passed | failed |");
+    expect(text).toContain("| PASS | oneWinnerOrConflict | 500 | 0 |");
+    // Bold, so a failure survives a skim of a pasted table.
+    expect(text).toContain("| **FAIL** | noDoubleSell | 480 | 20 |");
+  });
+
+  it("prints counters and recorded distributions when a scenario has them", () => {
+    const text = render(
+      summaryOf(
+        scenario({
+          counters: { reserved201: 1 },
+          trends: {
+            behindMs: {
+              count: 3,
+              minMs: 1,
+              maxMs: 40,
+              meanMs: 20,
+              p50Ms: 18,
+              p95Ms: 38,
+              p99Ms: 39,
+              p999Ms: 40,
+              overflowCount: 0,
+              saturated: false,
+              isLowerBound: false,
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(text).toContain("| counter | total |");
+    expect(text).toContain("| reserved201 | 1 |");
+    expect(text).toContain("| recorded | p50 | p99 | max |");
+    expect(text).toContain("| behindMs | 18.0ms | 39.0ms | 40.0ms |");
+  });
+
+  it("omits the tables entirely when a scenario declared none", () => {
+    // An empty table would read as "checked, found nothing" rather than "asserted nothing".
+    expect(render(summaryOf(scenario()))).not.toContain("| check | passed |");
+  });
+
+  it("says when the assertions themselves are broken", () => {
+    expect(render(summaryOf(scenario({ brokenObservations: 3 })))).toContain(
+      "**3 broken observations**",
+    );
+  });
+
   it("gives each scenario its own section", () => {
     const text = render(summaryOf(scenario({ name: "reads" }), scenario({ name: "writes" })));
 

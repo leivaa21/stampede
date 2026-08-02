@@ -89,6 +89,19 @@ const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonl
     `    p50 ${ms(scenario.latencyMs?.p50Ms)} · p99 ${ms(scenario.latencyMs?.p99Ms)} · queued p99 ${ms(scenario.scheduledLatencyMs?.p99Ms)}`,
   );
 
+  // Only the failing ones, and only while they are failing. Waiting for the summary to reveal that
+  // every response has been failing `noDoubleSell` for eight minutes is the same mistake as hiding
+  // drops, which this file already refuses (D2-05).
+  const failing = Object.entries(scenario.checks).filter(([, tally]) => tally.failed > 0);
+  if (failing.length > 0) {
+    lines.push(
+      `    ✗ ${failing.map(([name, tally]) => `${name} ${String(tally.failed)}`).join(" · ")}`,
+    );
+  }
+  if (scenario.brokenObservations > 0) {
+    lines.push(`    ⚠ ${String(scenario.brokenObservations)} broken observations`);
+  }
+
   return lines;
 };
 

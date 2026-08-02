@@ -155,6 +155,56 @@ describe("renderSummary", () => {
     expect(renderSummary(summaryOf(scenario()))).toContain("peak in flight ≤ 40");
   });
 
+  it("prints a check even when it passed, so an asserting run does not look like a silent one", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ checks: { oneWinnerOrConflict: { passed: 500, failed: 0 } } })),
+    );
+
+    expect(text).toContain("check       PASS  oneWinnerOrConflict");
+  });
+
+  it("shows how many responses failed a check, not just that one did", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ checks: { noDoubleSell: { passed: 480, failed: 20 } } })),
+    );
+
+    expect(text).toContain("FAIL 20/500  noDoubleSell");
+  });
+
+  it("prints counters and recorded distributions", () => {
+    const text = renderSummary(
+      summaryOf(
+        scenario({
+          counters: { reserved201: 1 },
+          trends: {
+            behindMs: {
+              count: 3,
+              minMs: 1,
+              maxMs: 40,
+              meanMs: 20,
+              p50Ms: 18,
+              p95Ms: 38,
+              p99Ms: 39,
+              p999Ms: 40,
+              overflowCount: 0,
+              saturated: false,
+              isLowerBound: false,
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(text).toContain("counter     reserved201 = 1");
+    expect(text).toContain("recorded    behindMs");
+  });
+
+  it("warns when an assertion is broken rather than the target", () => {
+    expect(renderSummary(summaryOf(scenario({ brokenObservations: 4 })))).toContain(
+      "4 broken observations",
+    );
+  });
+
   it("keeps multiple scenarios separate and named", () => {
     const text = renderSummary(
       summaryOf(scenario({ name: "reads" }), scenario({ name: "writes" })),

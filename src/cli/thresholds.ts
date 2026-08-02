@@ -51,6 +51,26 @@ const adviceFor = (scenario: RunSummary["scenarios"][number]): string => {
   return "check the target is reachable.";
 };
 
+/**
+ * A scenario whose *assertions* are broken, rather than whose target is.
+ *
+ * D2-04: a check that threw or returned a non-boolean is a bug in the claim, so the run fails —
+ * but on the run-failed code, with the assertion named. Reporting it as a violated threshold would
+ * blame the target for a typo, which is the confusion the exit-code contract exists to prevent.
+ */
+export const findBrokenObservations = (summary: RunSummary): string | undefined => {
+  for (const scenario of summary.scenarios) {
+    if (scenario.brokenObservations > 0) {
+      return (
+        `scenario "${scenario.name}" had ${String(scenario.brokenObservations)} broken observations — ` +
+        `a check or onResponse threw, or a check returned something other than true/false. ` +
+        `The run's numbers are real, but at least one of its claims is not.`
+      );
+    }
+  }
+  return undefined;
+};
+
 export const findUnmeasuredScenario = (summary: RunSummary): string | undefined => {
   for (const scenario of summary.scenarios) {
     if (scenario.scheduledCount > 0 && scenario.responseCount === 0) {

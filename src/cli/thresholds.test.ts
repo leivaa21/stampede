@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
-import { evaluateThresholds, findUnmeasuredScenario } from "./thresholds.ts";
+import {
+  evaluateThresholds,
+  findBrokenObservations,
+  findUnmeasuredScenario,
+} from "./thresholds.ts";
 
 const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary => ({
   name: "reads",
@@ -72,6 +76,22 @@ describe("findUnmeasuredScenario", () => {
   });
 });
 
+describe("findBrokenObservations", () => {
+  it("says nothing when every claim held together", () => {
+    expect(findBrokenObservations(summaryOf(scenario()))).toBeUndefined();
+  });
+
+  it("fails the run when a check threw, naming the scenario", () => {
+    // D2-04: the measurements are real, but at least one claim about them is not — and that is a
+    // different sentence from "the target violated an invariant".
+    const message = findBrokenObservations(summaryOf(scenario({ brokenObservations: 7 })));
+
+    expect(message).toContain('"reads"');
+    expect(message).toContain("7 broken observations");
+    expect(message).toContain("at least one of its claims is not");
+  });
+});
+
 describe("evaluateThresholds", () => {
   const summary = summaryOf(scenario());
 
@@ -87,6 +107,30 @@ describe("evaluateThresholds", () => {
     expect(verdict.violated).toEqual([]);
     expect(verdict.broken).toEqual([]);
     expect(verdict.results.every((r) => r.held)).toBe(true);
+  });
+
+  it("lets a threshold read a scenario's own counters and checks", () => {
+    // D2-03, and the shape open-ticket's contract run 1 is written in.
+    const verdict = evaluateThresholds(
+      [
+        {
+          name: "exactly one buyer wins",
+          assert: (s) => s.scenarios[0]?.counters.reserved201 === 1,
+        },
+        {
+          name: "no double sells",
+          assert: (s) => s.scenarios[0]?.checks.noDoubleSell?.failed === 0,
+        },
+      ],
+      summaryOf(
+        scenario({
+          counters: { reserved201: 1 },
+          checks: { noDoubleSell: { passed: 500, failed: 0 } },
+        }),
+      ),
+    );
+
+    expect(verdict.violated).toEqual([]);
   });
 
   it("names the claim that broke, not the expression", () => {

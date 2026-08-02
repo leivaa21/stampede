@@ -103,6 +103,22 @@ describe("runFromConfig", () => {
     expect(report.failure).toContain("double sell");
   }, 30_000);
 
+  it("still evaluates thresholds when teardown failed, so both halves are reported", async () => {
+    // Both land on exit 1, so returning early bought nothing and cost the reader the specific
+    // half: "the seat sold twice" is the symptom; the named threshold is the claim.
+    const report = await runFromConfig({
+      configPath: configFor({
+        url: target.url,
+        teardown: `teardown: async () => { throw new Error("double sell"); },`,
+        thresholds: `thresholds: [{ name: "impossible", assert: () => false }],`,
+      }),
+    });
+
+    expect(report.exitCode).toBe(ExitCode.ThresholdViolated);
+    expect(report.failure).toContain("double sell");
+    expect(report.verdict?.violated).toEqual(["impossible"]);
+  }, 30_000);
+
   it("runs teardown after the storm, not before it", async () => {
     // The ordering *is* the milestone's argument, so it is asserted from inside the config: teardown
     // asks the target how many requests it has seen, and throws if the storm has not happened yet.

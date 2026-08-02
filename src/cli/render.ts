@@ -74,6 +74,29 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
     ].filter((note): note is string => note !== undefined),
   );
 
+  // Checks are the reason this tool exists, so they print even when they all passed — a run that
+  // asserted something and a run that asserted nothing must not look the same.
+  for (const [name, tally] of Object.entries(scenario.checks)) {
+    const verdict =
+      tally.failed === 0
+        ? "PASS"
+        : `FAIL ${String(tally.failed)}/${String(tally.passed + tally.failed)}`;
+    lines.push(`    check       ${verdict}  ${name}`);
+  }
+  for (const [name, value] of Object.entries(scenario.counters)) {
+    lines.push(`    counter     ${name} = ${String(value)}`);
+  }
+  for (const [name, trend] of Object.entries(scenario.trends)) {
+    lines.push(
+      `    recorded    ${name}  p50 ${ms(trend.p50Ms)} · p99 ${ms(trend.p99Ms)} · max ${ms(trend.maxMs)}`,
+    );
+  }
+  if (scenario.brokenObservations > 0) {
+    lines.push(
+      `    ⚠ ${String(scenario.brokenObservations)} broken observations — a check threw or returned a non-boolean`,
+    );
+  }
+
   return lines;
 };
 

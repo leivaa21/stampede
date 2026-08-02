@@ -190,7 +190,8 @@ export default defineConfig({
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("the invariant did not hold");
-    // The verdict block is skipped entirely, so "0 threshold(s) violated" never appears.
+    // Thresholds are evaluated even after a teardown failure, so the verdict exists — but with
+    // nothing violated, "0 threshold(s) violated" would say nothing while looking like it does.
     expect(result.stderr).not.toContain("threshold(s) violated");
   }, 30_000);
 });

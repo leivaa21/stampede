@@ -3,7 +3,12 @@ import { loadConfig } from "../config/load.ts";
 import { drainTimeoutMsFor, maxInFlightFor, workerCountFor } from "../config/to-run.ts";
 import type { RunSummary } from "../engine/run-summary.ts";
 import { runPool } from "../engine/worker-pool.ts";
-import { evaluateThresholds, findUnmeasuredScenario, type Verdict } from "./thresholds.ts";
+import {
+  evaluateThresholds,
+  findBrokenObservations,
+  findUnmeasuredScenario,
+  type Verdict,
+} from "./thresholds.ts";
 
 /**
  * One `stampede run`, from a config path to a verdict.
@@ -115,23 +120,27 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
     return { ...failed(unmeasured, settings), summary, supersededSnapshots };
   }
 
+  // Before the thresholds too: a run whose checks are broken can still be measured, but it cannot
+  // be judged — and saying so is different from saying the target failed.
+  const broken = findBrokenObservations(summary);
+  if (broken !== undefined) {
+    return { ...failed(broken, settings), summary, supersededSnapshots };
+  }
+
   // The invariant is proven *after* the storm — this is the line D1-06 exists for. A throw here is
   // a violated claim, not a crashed tool, so it lands on exit 1 with the rest of them.
+  let teardownFailure: string | undefined;
   if (config.teardown !== undefined) {
     try {
       await config.teardown(setupState);
     } catch (error: unknown) {
-      return {
-        exitCode: ExitCode.ThresholdViolated,
-        summary,
-        verdict: undefined,
-        failure: `teardown() failed — the invariant did not hold after the run: ${messageOf(error)}`,
-        supersededSnapshots,
-        ...settings,
-      };
+      teardownFailure = `teardown() failed — the invariant did not hold after the run: ${messageOf(error)}`;
     }
   }
 
+  // Evaluated even when teardown failed. Both land on exit 1, so returning early bought nothing
+  // and cost the reader the more specific half: "the seat sold twice" is the symptom, and
+  // "`exactly one buyer wins` — reserved201 was 500" is the claim that names it.
   const verdict = evaluateThresholds(config.thresholds ?? [], summary);
   if (verdict.broken.length > 0) {
     return {
@@ -145,10 +154,13 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
   }
 
   return {
-    exitCode: verdict.violated.length > 0 ? ExitCode.ThresholdViolated : ExitCode.Ok,
+    exitCode:
+      teardownFailure !== undefined || verdict.violated.length > 0
+        ? ExitCode.ThresholdViolated
+        : ExitCode.Ok,
     summary,
     verdict,
-    failure: undefined,
+    failure: teardownFailure,
     supersededSnapshots,
     ...settings,
   };

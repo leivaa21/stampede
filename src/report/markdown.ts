@@ -119,12 +119,40 @@ const scenarioSection = (scenario: ScenarioRunSummary): string => {
     saturationNote("as queued", scenario.scheduledLatencyMs),
   ].filter((note): note is string => note !== undefined);
 
+  const checkRows = Object.entries(scenario.checks).map(([name, tally]) => [
+    tally.failed === 0 ? "PASS" : "**FAIL**",
+    cell(name),
+    String(tally.passed),
+    String(tally.failed),
+  ]);
+  const counterRows = Object.entries(scenario.counters).map(([name, value]) => [
+    cell(name),
+    String(value),
+  ]);
+  const trendRows = Object.entries(scenario.trends).map(([name, trend]) => [
+    cell(name),
+    ms(trend.p50Ms),
+    ms(trend.p99Ms),
+    ms(trend.maxMs),
+  ]);
+
   return [
     `### ${cell(scenario.name)}`,
     "",
     table(["", ""], facts),
     "",
     percentileTable(scenario),
+    // The checks table the contract asked for by name. Printed whenever a scenario declared any,
+    // because "every check passed" and "no checks were declared" must not render identically.
+    ...(checkRows.length > 0 ? ["", table(["", "check", "passed", "failed"], checkRows)] : []),
+    ...(counterRows.length > 0 ? ["", table(["counter", "total"], counterRows)] : []),
+    ...(trendRows.length > 0 ? ["", table(["recorded", "p50", "p99", "max"], trendRows)] : []),
+    ...(scenario.brokenObservations > 0
+      ? [
+          "",
+          `> ⚠ **${String(scenario.brokenObservations)} broken observations** — a check threw or returned a non-boolean. The measurements are real; at least one claim about them is not.`,
+        ]
+      : []),
     // Blank `>` between notes, or GitHub merges adjacent blockquote lines into one paragraph and
     // the two warnings run together into a wall of text.
     ...(notes.length > 0 ? ["", notes.join("\n>\n")] : []),

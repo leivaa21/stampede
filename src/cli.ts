@@ -143,7 +143,10 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
     err(`stampede: ${report.failure}`);
   }
 
-  if (report.exitCode === ExitCode.ThresholdViolated && report.verdict !== undefined) {
+  // Only when something was actually violated. Thresholds are now evaluated even after a teardown
+  // failure — so a run that failed *only* in teardown has a defined verdict with nothing in it,
+  // and "0 threshold(s) violated" would be a line that says nothing while looking like it does.
+  if (report.verdict !== undefined && report.verdict.violated.length > 0) {
     err(`stampede: ${String(report.verdict.violated.length)} threshold(s) violated`);
   }
   return report.exitCode;
