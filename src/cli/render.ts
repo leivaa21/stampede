@@ -125,9 +125,15 @@ export const renderSummary = (summary: RunSummary): string =>
     ...summary.scenarios.flatMap((scenario) => [...scenarioLines(scenario), ""]),
   ].join("\n");
 
-export const renderVerdict = (verdict: Verdict): string => {
+/**
+ * @param runFailed whether anything else already went wrong, which changes what "no thresholds"
+ * means. A run that failed in `teardown` now reaches here with an *empty* verdict rather than none,
+ * and "nothing was asserted about this run" printed one line above "teardown() failed — double
+ * sell: 2 sold" is the same false reassurance the report refuses to publish.
+ */
+export const renderVerdict = (verdict: Verdict, runFailed = false): string => {
   if (verdict.results.length === 0) {
-    return "no thresholds declared — nothing was asserted about this run\n";
+    return runFailed ? "" : "no thresholds declared — nothing was asserted about this run\n";
   }
   const lines = verdict.results.map((result) => {
     if (result.error !== undefined) {

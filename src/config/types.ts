@@ -96,10 +96,17 @@ export interface StampedeConfig<TSetup = undefined> {
    * assert exactly one seat sold. Throwing here fails the run with exit 1, like a violated
    * threshold — because that is what it is.
    *
-   * **An assertion hook, not a cleanup hook.** It does not run when the run itself failed: a
-   * teardown written to assert would otherwise report "the invariant did not hold" about a storm
-   * that never happened, and mask the real reason. Anything that must be cleaned up regardless
-   * belongs in the harness around `stampede`, not here.
+   * **An assertion hook, not a cleanup hook.** It does not run when the load could not be generated
+   * at all — a config that would not load, a `setup()` that threw, a scenario that recorded no
+   * responses — because a teardown written to assert would report "the invariant did not hold"
+   * about a storm that never happened, and mask the real reason.
+   *
+   * It *does* run when the storm happened and something else about the run was broken: a check that
+   * threw, a metric name that was refused. Those exit 2, but the requests were real and so is
+   * whatever they did to the target, so the invariant is still worth asking about — and its answer
+   * is reported alongside the other reasons rather than instead of them.
+   *
+   * Anything that must be cleaned up regardless belongs in the harness around `stampede`, not here.
    */
   readonly teardown?: (setupState: TSetup) => void | Promise<void>;
   /** At least one. Several run concurrently, each with its own metrics (D1-05). */

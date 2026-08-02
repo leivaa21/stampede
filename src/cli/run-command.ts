@@ -33,8 +33,16 @@ export interface RunReport {
   readonly exitCode: ExitCodeValue;
   readonly summary: RunSummary | undefined;
   readonly verdict: Verdict | undefined;
-  /** Why the run failed, when it did. Already phrased for a human. */
-  readonly failure: string | undefined;
+  /**
+   * Why the run did not come out clean — **one reason per entry**, each already phrased for a
+   * human, empty when nothing went wrong.
+   *
+   * A list rather than a joined string because every surface formats it differently and only the
+   * producer knows where one reason ends. Joined with `\n` it met the report's table-cell escaping,
+   * which flattens newlines, and four reasons became a single 700-character paragraph with the
+   * double sell buried at the end of a sentence about cardinality caps.
+   */
+  readonly failures: readonly string[];
   readonly supersededSnapshots: number;
   /** What the run was actually configured as — the report's provenance. */
   readonly workerCount: number;
@@ -62,7 +70,7 @@ const failed = (failure: string, settings: RunSettings): RunReport => ({
   exitCode: ExitCode.RunFailed,
   summary: undefined,
   verdict: undefined,
-  failure,
+  failures: [failure],
   supersededSnapshots: 0,
   ...settings,
 });
@@ -166,7 +174,7 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
       exitCode: ExitCode.RunFailed,
       summary,
       verdict,
-      failure: failures.join("\n"),
+      failures,
       supersededSnapshots,
       ...settings,
     };
@@ -177,7 +185,7 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
       failures.length > 0 || verdict.violated.length > 0 ? ExitCode.ThresholdViolated : ExitCode.Ok,
     summary,
     verdict,
-    failure: teardownFailure,
+    failures,
     supersededSnapshots,
     ...settings,
   };

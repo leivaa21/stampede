@@ -9,7 +9,7 @@ import { cell, plain } from "./format.ts";
  * `metrics/validate.ts`'s own worked example, which means a *target* can choose a string this tool
  * writes into a terminal, a CI log, and a markdown file someone pastes into a README.
  *
- * Written with ``-style escapes rather than the literal bytes: an invisible character in a
+ * Written with named constants rather than the literal bytes: an invisible character in a
  * test is a test nobody can read, and this is a file a stranger will want to understand quickly.
  */
 

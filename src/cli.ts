@@ -111,7 +111,7 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
           workerCount: report.workerCount,
           maxInFlight: report.maxInFlight,
           drainTimeoutMs: report.drainTimeoutMs,
-          failure: report.failure,
+          failures: report.failures,
           supersededSnapshots: report.supersededSnapshots,
           generatedAt: new Date(),
         }),
@@ -137,10 +137,12 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
     );
   }
   if (report.verdict !== undefined) {
-    out(renderVerdict(report.verdict));
+    out(renderVerdict(report.verdict, report.failures.length > 0));
   }
-  if (report.failure !== undefined) {
-    err(`stampede: ${report.failure}`);
+  // One prefixed line per reason. Joined into a single string they lost their `stampede: ` prefix
+  // from the second reason on, so three of four reasons read as stray output in a CI log.
+  for (const failure of report.failures) {
+    err(`stampede: ${failure}`);
   }
 
   // Only when something was actually violated. Thresholds are now evaluated even after a teardown

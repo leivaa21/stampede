@@ -70,7 +70,7 @@ const context: ReportContext = {
   workerCount: 4,
   maxInFlight: 500,
   drainTimeoutMs: 30_000,
-  failure: undefined,
+  failures: [],
   supersededSnapshots: 0,
   generatedAt: new Date("2026-07-31T12:00:00.000Z"),
 };
@@ -381,17 +381,51 @@ describe("renderMarkdownReport", () => {
 
   it("leads with FAILED, and does not claim the run asserted nothing", () => {
     // The worst artefact this tool could produce: a green-looking table published for a run whose
-    // invariant broke. A teardown failure returns `verdict: undefined`, which used to render as
-    // "no thresholds were declared — this run measured, but asserted nothing".
+    // invariant broke.
     const text = renderMarkdownReport(summaryOf(scenario()), undefined, {
       ...context,
-      failure: "teardown() failed — the invariant did not hold after the run: double sell",
+      failures: ["teardown() failed — the invariant did not hold after the run: double sell"],
     });
 
     expect(text).toContain("**FAILED** — teardown() failed");
     expect(text).toContain("double sell");
     expect(text).not.toContain("asserted nothing");
-    expect(text).toContain("Not evaluated — the run failed first");
+  });
+
+  it("does not claim a failed run asserted nothing when its verdict is merely empty", () => {
+    // The shape the CLI really emits on the teardown path: thresholds *are* evaluated now, so a
+    // config that declared none gets an empty verdict rather than no verdict. Keying the sentence
+    // on `verdict === undefined` published "this run measured, but asserted nothing" directly
+    // under "**FAILED** — double sell: 2 sold".
+    const text = renderMarkdownReport(
+      summaryOf(scenario()),
+      { results: [], violated: [], broken: [] },
+      { ...context, failures: ["teardown() failed — double sell: 2 sold"] },
+    );
+
+    expect(text).toContain("double sell: 2 sold");
+    expect(text).not.toContain("asserted nothing");
+  });
+
+  it("lists several failures rather than running them into one paragraph", () => {
+    // `cell()` flattens newlines, so a joined failure string became a single 700-character
+    // sentence with the double sell buried at the end of a clause about cardinality caps.
+    const text = renderMarkdownReport(
+      summaryOf(scenario()),
+      { results: [], violated: [], broken: [] },
+      {
+        ...context,
+        failures: [
+          "a threshold predicate threw: throws",
+          'scenario "reads" had 600 broken observations — a check threw',
+          "teardown() failed — double sell: 2 sold",
+        ],
+      },
+    );
+
+    expect(text).toContain("**FAILED** — several things went wrong:");
+    expect(text).toContain("- teardown() failed — double sell: 2 sold");
+    expect(text).toContain("- a threshold predicate threw: throws");
   });
 
   it("leads with FAILED when a threshold was violated", () => {

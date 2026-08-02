@@ -75,13 +75,16 @@ Every buyer above wants **the same seat**. To give each one a seat of their own,
 ordinal — it is the **run's**, not the worker's, so four threads still produce 500 distinct seats:
 
 ```ts
+import { constantRate, defineConfig } from "@leivaa21/stampede";
+
 scenarios: {
   hotShow: {
     profile: constantRate({ ratePerSecond: 250, durationMs: 2_000 }),
+    // `ordinal % length`, so a run longer than the seat list wraps instead of sending `undefined`.
     request: ({ showId, seatIds }, ordinal) => ({
       method: "POST",
       url: `http://localhost:5210/shows/${showId}/reservations`,
-      body: { seatIds: [seatIds[ordinal]] },
+      body: { seatIds: [seatIds[ordinal % seatIds.length]] },
     }),
     checks: { created: (res) => res.status === 201 },
   },
@@ -205,7 +208,7 @@ fool an independent observer.
 
 **M1 is complete.** Mergeable metrics core · open-loop engine · worker pool · TS config loading ·
 real HTTP transport · `stampede run` with setup/teardown, thresholds and exit codes · markdown
-report · live dashboard. **401 tests**, zero known vulnerabilities, gate two green.
+report · live dashboard. **499 tests**, zero known vulnerabilities, gate two green.
 
 **Not published to npm yet.** Install from source; `@leivaa21/stampede` is reserved.
 

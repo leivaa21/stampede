@@ -99,8 +99,8 @@ describe("runFromConfig", () => {
     });
 
     expect(report.exitCode).toBe(ExitCode.ThresholdViolated);
-    expect(report.failure).toContain("the invariant did not hold");
-    expect(report.failure).toContain("double sell");
+    expect(report.failures.join(" ")).toContain("the invariant did not hold");
+    expect(report.failures.join(" ")).toContain("double sell");
   }, 30_000);
 
   it("still evaluates thresholds when teardown failed, so both halves are reported", async () => {
@@ -115,7 +115,7 @@ describe("runFromConfig", () => {
     });
 
     expect(report.exitCode).toBe(ExitCode.ThresholdViolated);
-    expect(report.failure).toContain("double sell");
+    expect(report.failures.join(" ")).toContain("double sell");
     expect(report.verdict?.violated).toEqual(["impossible"]);
   }, 30_000);
 
@@ -140,8 +140,8 @@ describe("runFromConfig", () => {
     const report = await runFromConfig({ configPath });
 
     expect(report.exitCode).toBe(ExitCode.RunFailed);
-    expect(report.failure).toContain("broken observations");
-    expect(report.failure).toContain("double sell: 2 sold");
+    expect(report.failures.join(" ")).toContain("broken observations");
+    expect(report.failures.join(" ")).toContain("double sell: 2 sold");
   }, 30_000);
 
   it("reports every reason a run failed, not only the first", async () => {
@@ -161,8 +161,34 @@ describe("runFromConfig", () => {
     const report = await runFromConfig({ configPath });
 
     expect(report.exitCode).toBe(ExitCode.RunFailed);
-    expect(report.failure).toContain("a threshold predicate threw");
-    expect(report.failure).toContain("broken observations");
+    expect(report.failures.join(" ")).toContain("a threshold predicate threw");
+    expect(report.failures.join(" ")).toContain("broken observations");
+  }, 30_000);
+
+  it("fails with exit 2 when a config asked for more metric names than the caps allow", async () => {
+    // A counter per seat is a cardinality bomb, and it reaches the cap legitimately. The refused
+    // names are missing *entirely*, so a threshold reading one gets a confident 0 and reports a
+    // violation the target never caused — this has to fail the run rather than pass quietly.
+    const configPath = writeConfig(`let seen = 0;
+export default defineConfig({
+  setup: () => ({ url: ${JSON.stringify(target.url)} }),
+  scenarios: {
+    reads: {
+      profile: burst({ count: 600 }),
+      request: (s) => ({ url: s.url }),
+      onResponse: (r, record) => { seen += 1; record.count("seat-" + String(seen)); },
+    },
+  },
+  workers: 1,
+});
+`);
+
+    const report = await runFromConfig({ configPath });
+
+    expect(report.exitCode).toBe(ExitCode.RunFailed);
+    expect(report.failures.join(" ")).toContain("refused");
+    expect(report.failures.join(" ")).toContain("cardinality bomb");
+    expect(report.summary?.scenarios[0]?.refusedRecordings).toBeGreaterThan(0);
   }, 30_000);
 
   it("runs teardown after the storm, not before it", async () => {
@@ -182,7 +208,7 @@ describe("runFromConfig", () => {
     });
 
     expect(report.exitCode).toBe(ExitCode.Ok);
-    expect(report.failure).toBeUndefined();
+    expect(report.failures).toEqual([]);
   }, 30_000);
 
   it("fails with exit 2 when nothing could be measured", async () => {
@@ -191,7 +217,7 @@ describe("runFromConfig", () => {
     });
 
     expect(report.exitCode).toBe(ExitCode.RunFailed);
-    expect(report.failure).toContain("recorded no responses");
+    expect(report.failures.join(" ")).toContain("recorded no responses");
   }, 30_000);
 
   it("fails with exit 2 when setup itself throws", async () => {
@@ -203,8 +229,8 @@ describe("runFromConfig", () => {
     const report = await runFromConfig({ configPath });
 
     expect(report.exitCode).toBe(ExitCode.RunFailed);
-    expect(report.failure).toContain("setup() failed");
-    expect(report.failure).toContain("could not seed the show");
+    expect(report.failures.join(" ")).toContain("setup() failed");
+    expect(report.failures.join(" ")).toContain("could not seed the show");
   }, 30_000);
 
   it("fails with exit 2 when a threshold predicate throws", async () => {
@@ -225,7 +251,7 @@ describe("runFromConfig", () => {
     const report = await runFromConfig({ configPath: "/nowhere/scenarios.ts" });
 
     expect(report.exitCode).toBe(ExitCode.RunFailed);
-    expect(report.failure).toContain("No config file at");
+    expect(report.failures.join(" ")).toContain("No config file at");
   }, 30_000);
 
   it("lets --workers override what the config asked for", async () => {

@@ -151,129 +151,67 @@ const assertOptionalNumber = (
 };
 
 /**
- * Checks the shape of a loaded config before a single request goes out.
+ * The assertion surface a scenario declares: named checks, and the observer that feeds counters.
  *
- * Everything here is config-derived, so it **throws at startup** rather than being refused and
- * counted — the same config fails identically on every run, and a mistake found before the load
- * starts costs nothing, while the same mistake found twenty minutes in costs the run.
+ * Split out of `assertConfigShape` when it passed the workspace's ~200-line signal. Each of these
+ * rejections exists because the mistake it catches type-checks perfectly and fails silently at
+ * runtime — which is why they are startup errors and not something a reader has to notice in a
+ * report twenty minutes later.
  */
-export const assertConfigShape: (
-  value: unknown,
+const assertObservers = (
+  scenario: Record<string, unknown>,
+  name: string,
   configPath: string,
-) => asserts value is StampedeConfig<unknown> = (value, configPath) => {
-  if (!isRecord(value)) {
-    throw new ConfigLoadError(`${configPath} must export a config object`);
-  }
-  const { scenarios, setup, teardown, thresholds } = value;
-  if (!isRecord(scenarios)) {
-    throw new ConfigLoadError(`${configPath} must declare a \`scenarios\` object`);
-  }
-  const names = Object.keys(scenarios);
-  if (names.length === 0) {
-    throw new ConfigLoadError(`${configPath} declares no scenarios — a run needs at least one`);
-  }
-  if (names.length > MAX_DISTINCT_SCENARIOS) {
-    throw new ConfigLoadError(
-      `${configPath} declares ${String(names.length)} scenarios; the limit is ${String(MAX_DISTINCT_SCENARIOS)}`,
-    );
-  }
-  for (const name of names) {
-    assertName(name, "scenario", configPath);
-    const scenario = scenarios[name];
-    if (!isRecord(scenario)) {
-      throw new ConfigLoadError(`${configPath}: scenario "${name}" must be an object`);
-    }
-    if (typeof scenario.request !== "function") {
+): void => {
+  const { checks, onResponse } = scenario;
+  if (checks !== undefined) {
+    if (!isRecord(checks)) {
       throw new ConfigLoadError(
-        `${configPath}: scenario "${name}" needs a \`request\` function — it receives your setup state and returns the request to send`,
+        `${configPath}: scenario "${name}" has \`checks\` that is not an object of named predicates`,
       );
     }
-    const { profile } = scenario;
-    if (!isRecord(profile) || typeof profile.instants !== "function") {
+    // Each check reserves a counter slot for its broken tally, from the same budget the user's
+    // own counters draw on. Left unbounded, a config could starve itself and then be told its
+    // counters were the problem.
+    if (Object.keys(checks).length > MAX_CHECKS_PER_SCENARIO) {
       throw new ConfigLoadError(
-        `${configPath}: scenario "${name}" needs a \`profile\` — use constantRate(), ramp(), burst() or stages()`,
+        `${configPath}: scenario "${name}" declares ${String(Object.keys(checks).length)} checks; the limit is ${String(MAX_CHECKS_PER_SCENARIO)}`,
       );
     }
-    // A hand-built `{ instants }` would otherwise be typed as an ArrivalProfile and reach
-    // `shardProfile` as NaN, surfacing inside a worker as a number the user never wrote.
-    if (!Number.isSafeInteger(profile.count) || Number(profile.count) < 0) {
-      throw new ConfigLoadError(
-        `${configPath}: scenario "${name}" has a profile with no valid \`count\` — build it with constantRate(), ramp(), burst() or stages()`,
-      );
-    }
-    if (!Number.isFinite(profile.durationMs) || Number(profile.durationMs) < 0) {
-      throw new ConfigLoadError(
-        `${configPath}: scenario "${name}" has a profile with no valid \`durationMs\``,
-      );
-    }
-    const { checks, onResponse } = scenario;
-    if (checks !== undefined) {
-      if (!isRecord(checks)) {
+    for (const [checkName, predicate] of Object.entries(checks)) {
+      // Named here rather than left to fail per response: a check is a claim, and a claim with
+      // no predicate is a claim nobody is making.
+      assertName(checkName, "check", configPath);
+      if (typeof predicate !== "function") {
         throw new ConfigLoadError(
-          `${configPath}: scenario "${name}" has \`checks\` that is not an object of named predicates`,
+          `${configPath}: check "${checkName}" in scenario "${name}" must be a function taking a response`,
         );
       }
-      // Each check reserves a counter slot for its broken tally, from the same budget the user's
-      // own counters draw on. Left unbounded, a config could starve itself and then be told its
-      // counters were the problem.
-      if (Object.keys(checks).length > MAX_CHECKS_PER_SCENARIO) {
+      // A broken check is attributed by a counter derived from its name, and the metrics
+      // registry *silently refuses* a name over the limit rather than throwing — so a check
+      // named right up to the limit would lose its attribution at exactly the moment someone
+      // needed it. Budgeted here, where the name can still be changed.
+      if (brokenCheckCounter(checkName).length > MAX_METRIC_NAME_LENGTH) {
         throw new ConfigLoadError(
-          `${configPath}: scenario "${name}" declares ${String(Object.keys(checks).length)} checks; the limit is ${String(MAX_CHECKS_PER_SCENARIO)}`,
+          `${configPath}: check name "${checkName}" is too long — a check name may be at most ` +
+            `${String(MAX_METRIC_NAME_LENGTH - brokenCheckCounter("").length)} characters`,
         );
       }
-      for (const [checkName, predicate] of Object.entries(checks)) {
-        // Named here rather than left to fail per response: a check is a claim, and a claim with
-        // no predicate is a claim nobody is making.
-        assertName(checkName, "check", configPath);
-        if (typeof predicate !== "function") {
-          throw new ConfigLoadError(
-            `${configPath}: check "${checkName}" in scenario "${name}" must be a function taking a response`,
-          );
-        }
-        // A broken check is attributed by a counter derived from its name, and the metrics
-        // registry *silently refuses* a name over the limit rather than throwing — so a check
-        // named right up to the limit would lose its attribution at exactly the moment someone
-        // needed it. Budgeted here, where the name can still be changed.
-        if (brokenCheckCounter(checkName).length > MAX_METRIC_NAME_LENGTH) {
-          throw new ConfigLoadError(
-            `${configPath}: check name "${checkName}" is too long — a check name may be at most ` +
-              `${String(MAX_METRIC_NAME_LENGTH - brokenCheckCounter("").length)} characters`,
-          );
-        }
-        assertNotAsync(predicate, `check "${checkName}" in scenario "${name}"`, configPath);
-      }
+      assertNotAsync(predicate, `check "${checkName}" in scenario "${name}"`, configPath);
     }
-    if (onResponse !== undefined) {
-      if (typeof onResponse !== "function") {
-        throw new ConfigLoadError(
-          `${configPath}: scenario "${name}" has an \`onResponse\` that is not a function`,
-        );
-      }
-      assertNotAsync(onResponse, `\`onResponse\` in scenario "${name}"`, configPath);
-    }
-    // A scenario that schedules nothing would sail past the "recorded no responses" guard — it
-    // dispatched nothing, so nothing failed — and reach the thresholds with `latencyMs` undefined,
-    // where `(s.p99 ?? 0) < 250` passes. A green CI job for a load test that sent zero requests is
-    // the exact lie D1-06 exists to prevent, reached through a different door. Rates that round
-    // down are the usual cause: 2/s for 100ms is 0.2 requests, floored to none.
-    if (profile.count === 0) {
+  }
+  if (onResponse !== undefined) {
+    if (typeof onResponse !== "function") {
       throw new ConfigLoadError(
-        `${configPath}: scenario "${name}" schedules 0 requests over ${String(profile.durationMs)}ms — ` +
-          `a rate that rounds down to nothing, most likely. Raise the rate or lengthen the duration.`,
+        `${configPath}: scenario "${name}" has an \`onResponse\` that is not a function`,
       );
     }
+    assertNotAsync(onResponse, `\`onResponse\` in scenario "${name}"`, configPath);
   }
-  assertOptionalNumber(value.workers, "workers", configPath, true);
-  assertOptionalNumber(value.maxInFlight, "maxInFlight", configPath, true);
-  assertOptionalNumber(value.drainTimeoutMs, "drainTimeoutMs", configPath, false);
-  for (const [key, fn] of [
-    ["setup", setup],
-    ["teardown", teardown],
-  ] as const) {
-    if (fn !== undefined && typeof fn !== "function") {
-      throw new ConfigLoadError(`\`${key}\` must be a function if present`);
-    }
-  }
+};
+
+/** Threshold names are what a failing CI job prints, so they are validated like identifiers. */
+const assertThresholds = (thresholds: unknown, configPath: string): void => {
   if (thresholds !== undefined) {
     if (!Array.isArray(thresholds)) {
       throw new ConfigLoadError("`thresholds` must be an array");
@@ -320,4 +258,97 @@ export const loadConfig = async (configPath: string): Promise<StampedeConfig<unk
   }
   assertConfigShape(exported, configPath);
   return exported;
+};
+
+/** One scenario: when it dispatches, what it sends, and what it claims about the answers. */
+const assertScenario = (
+  scenarios: Record<string, unknown>,
+  name: string,
+  configPath: string,
+): void => {
+  assertName(name, "scenario", configPath);
+  const scenario = scenarios[name];
+  if (!isRecord(scenario)) {
+    throw new ConfigLoadError(`${configPath}: scenario "${name}" must be an object`);
+  }
+  if (typeof scenario.request !== "function") {
+    throw new ConfigLoadError(
+      `${configPath}: scenario "${name}" needs a \`request\` function — it receives your setup state and returns the request to send`,
+    );
+  }
+  const { profile } = scenario;
+  if (!isRecord(profile) || typeof profile.instants !== "function") {
+    throw new ConfigLoadError(
+      `${configPath}: scenario "${name}" needs a \`profile\` — use constantRate(), ramp(), burst() or stages()`,
+    );
+  }
+  // A hand-built `{ instants }` would otherwise be typed as an ArrivalProfile and reach
+  // `shardProfile` as NaN, surfacing inside a worker as a number the user never wrote.
+  if (!Number.isSafeInteger(profile.count) || Number(profile.count) < 0) {
+    throw new ConfigLoadError(
+      `${configPath}: scenario "${name}" has a profile with no valid \`count\` — build it with constantRate(), ramp(), burst() or stages()`,
+    );
+  }
+  if (!Number.isFinite(profile.durationMs) || Number(profile.durationMs) < 0) {
+    throw new ConfigLoadError(
+      `${configPath}: scenario "${name}" has a profile with no valid \`durationMs\``,
+    );
+  }
+  assertObservers(scenario, name, configPath);
+
+  // A scenario that schedules nothing would sail past the "recorded no responses" guard — it
+  // dispatched nothing, so nothing failed — and reach the thresholds with `latencyMs` undefined,
+  // where `(s.p99 ?? 0) < 250` passes. A green CI job for a load test that sent zero requests is
+  // the exact lie D1-06 exists to prevent, reached through a different door. Rates that round
+  // down are the usual cause: 2/s for 100ms is 0.2 requests, floored to none.
+  if (profile.count === 0) {
+    throw new ConfigLoadError(
+      `${configPath}: scenario "${name}" schedules 0 requests over ${String(profile.durationMs)}ms — ` +
+        `a rate that rounds down to nothing, most likely. Raise the rate or lengthen the duration.`,
+    );
+  }
+};
+
+/**
+ * Checks the shape of a loaded config before a single request goes out.
+ *
+ * Everything here is config-derived, so it **throws at startup** rather than being refused and
+ * counted — the same config fails identically on every run, and a mistake found before the load
+ * starts costs nothing, while the same mistake found twenty minutes in costs the run.
+ */
+export const assertConfigShape: (
+  value: unknown,
+  configPath: string,
+) => asserts value is StampedeConfig<unknown> = (value, configPath) => {
+  if (!isRecord(value)) {
+    throw new ConfigLoadError(`${configPath} must export a config object`);
+  }
+  const { scenarios, setup, teardown, thresholds } = value;
+  if (!isRecord(scenarios)) {
+    throw new ConfigLoadError(`${configPath} must declare a \`scenarios\` object`);
+  }
+  const names = Object.keys(scenarios);
+  if (names.length === 0) {
+    throw new ConfigLoadError(`${configPath} declares no scenarios — a run needs at least one`);
+  }
+  if (names.length > MAX_DISTINCT_SCENARIOS) {
+    throw new ConfigLoadError(
+      `${configPath} declares ${String(names.length)} scenarios; the limit is ${String(MAX_DISTINCT_SCENARIOS)}`,
+    );
+  }
+  for (const name of names) {
+    assertScenario(scenarios, name, configPath);
+  }
+  assertOptionalNumber(value.workers, "workers", configPath, true);
+  assertOptionalNumber(value.maxInFlight, "maxInFlight", configPath, true);
+  assertOptionalNumber(value.drainTimeoutMs, "drainTimeoutMs", configPath, false);
+  for (const [key, fn] of [
+    ["setup", setup],
+    ["teardown", teardown],
+  ] as const) {
+    if (fn !== undefined && typeof fn !== "function") {
+      throw new ConfigLoadError(`\`${key}\` must be a function if present`);
+    }
+  }
+  assertThresholds(thresholds, configPath);
 };

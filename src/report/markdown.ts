@@ -22,7 +22,8 @@ export interface ReportContext {
   readonly maxInFlight: number;
   readonly drainTimeoutMs: number;
   /** Non-zero means the run did not pass; the text is what went wrong. */
-  readonly failure: string | undefined;
+  /** One reason per entry — see `RunReport.failures`. Empty when the run came out clean. */
+  readonly failures: readonly string[];
   /** Snapshots discarded for arriving out of order — zero in normal operation. */
   readonly supersededSnapshots: number;
   /** Passed in rather than read here, so the report is a pure function and tests can fix it. */
@@ -174,26 +175,22 @@ const scenarioSection = (scenario: ScenarioRunSummary): string => {
 
 const verdictSection = (
   verdict: Verdict | undefined,
-  failure: string | undefined,
+  failures: readonly string[],
 ): readonly string[] => {
+  // Two very different situations that must not share a sentence, and the difference is whether
+  // anything went wrong — not whether a verdict object exists. A run that failed in `teardown` now
+  // carries an *empty* verdict rather than none, so keying on `verdict === undefined` published
+  // "this run measured, but asserted nothing" directly beneath "**FAILED** — double sell: 2 sold".
+  const nothingAsserted =
+    failures.length === 0
+      ? "_No thresholds were declared — this run measured, but asserted nothing._"
+      : "_Not evaluated, or evaluated and beside the point — the run failed. See the verdict above._";
+
   if (verdict === undefined) {
-    // Two very different situations that must not share a sentence. A run that failed before its
-    // thresholds could be evaluated is not a run that declared none — saying "asserted nothing"
-    // there publishes a clean-looking table for a run whose invariant broke.
-    return [
-      "### Thresholds",
-      "",
-      failure === undefined
-        ? "_No thresholds were declared — this run measured, but asserted nothing._"
-        : "_Not evaluated — the run failed first. See the verdict above._",
-    ];
+    return ["### Thresholds", "", nothingAsserted];
   }
   if (verdict.results.length === 0) {
-    return [
-      "### Thresholds",
-      "",
-      "_No thresholds were declared — this run measured, but asserted nothing._",
-    ];
+    return ["### Thresholds", "", nothingAsserted];
   }
   return [
     "### Thresholds",
@@ -210,12 +207,34 @@ const verdictSection = (
   ];
 };
 
+/**
+ * The verdict line, and the reasons under it — one bullet each, never one paragraph.
+ *
+ * `cell()` is table-cell escaping, and running a multi-reason failure through it flattened every
+ * newline into a space: four reasons became a 700-character sentence with the double sell buried
+ * at the end of a clause about cardinality caps, in the artifact designed to be pasted into a
+ * README. One reason still reads as a headline; several read as a list.
+ */
+const failureHeadline = (failures: readonly string[], verdict: Verdict | undefined): string => {
+  if (failures.length === 0) {
+    return `**FAILED** — ${String(verdict?.violated.length ?? 0)} threshold(s) violated`;
+  }
+  if (failures.length === 1) {
+    return `**FAILED** — ${cell(failures[0] ?? "")}`;
+  }
+  return [
+    "**FAILED** — several things went wrong:",
+    "",
+    ...failures.map((f) => `- ${cell(f)}`),
+  ].join("\n");
+};
+
 export const renderMarkdownReport = (
   summary: RunSummary,
   verdict: Verdict | undefined,
   context: ReportContext,
 ): string => {
-  const failed = context.failure !== undefined || (verdict?.violated.length ?? 0) > 0;
+  const failed = context.failures.length > 0 || (verdict?.violated.length ?? 0) > 0;
 
   return [
     "## Load test",
@@ -223,7 +242,7 @@ export const renderMarkdownReport = (
     // The verdict first, in bold, before any number. A reader skimming a pasted table has to learn
     // that the run failed before they read a percentile from it.
     failed
-      ? `**FAILED** — ${cell(context.failure ?? `${String(verdict?.violated.length ?? 0)} threshold(s) violated`)}`
+      ? failureHeadline(context.failures, verdict)
       : "**PASSED** — every declared threshold held.",
     "",
     // Two spaces end the line: GitHub collapses a single newline, which would run the provenance
@@ -241,7 +260,7 @@ export const renderMarkdownReport = (
       : []),
     "",
     ...summary.scenarios.flatMap((scenario) => [scenarioSection(scenario), ""]),
-    ...verdictSection(verdict, context.failure),
+    ...verdictSection(verdict, context.failures),
     "",
   ].join("\n");
 };

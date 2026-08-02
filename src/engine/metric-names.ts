@@ -118,7 +118,16 @@ const ENGINE_METRIC_KINDS: Readonly<Record<keyof typeof EngineMetric, "counter" 
  *
  * Reserving a slot each costs nine names out of 512 and makes `known.has(name)` permanently true,
  * which is the only thing the cardinality rule looks at.
+ *
+ * Seven of the nine are pinned by tests that fail when the name is dropped. `dispatched` and
+ * `responses` are not, and cannot be: both are incremented before any user-chosen name can exist in
+ * a scenario's map, so they are unstarvable by construction. They are reserved anyway rather than
+ * carved out, because "which engine counters happen to fire first" is not a property worth encoding
+ * — it would change the moment the dispatch loop is reordered.
  */
-export const ENGINE_COUNTERS: readonly string[] = Object.entries(ENGINE_METRIC_KINDS)
-  .filter(([, kind]) => kind === "counter")
-  .map(([key]) => EngineMetric[key as keyof typeof EngineMetric]);
+export const ENGINE_COUNTERS: readonly string[] = Object.keys(ENGINE_METRIC_KINDS)
+  .filter(
+    (key): key is keyof typeof EngineMetric =>
+      ENGINE_METRIC_KINDS[key as keyof typeof EngineMetric] === "counter",
+  )
+  .map((key) => EngineMetric[key]);

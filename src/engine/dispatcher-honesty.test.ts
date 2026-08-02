@@ -14,13 +14,13 @@ import {
 import { burst, constantRate } from "./arrival-profiles.ts";
 import type { Transport, TransportResponse } from "./ports.ts";
 
+import { EngineMetric } from "./metric-names.ts";
 /** The reference target's answer, when it is answering. */
 const okResponse = (): TransportResponse => ({
   status: 200,
   headers: {},
   text: JSON.stringify({ ok: true }),
 });
-import { EngineMetric } from "./metric-names.ts";
 
 /**
  * The guards that make this a measuring instrument rather than a benchmark generator.
@@ -280,9 +280,12 @@ describe("user code cannot starve the engine's own bookkeeping", () => {
     // 600 good responses fill the map; every one after breaks the predicate. Losing the per-name
     // counter here publishes `PASS parsesBody 600 / 0 / 0` for a run in which 400 responses broke
     // it outright — and losing the total publishes exit 0 for the same run.
-    expect(reads.checks.parsesBody?.broken).toBe(reads.responseCount - 600);
+    // Pinned against a constant, not against `responseCount`: `expect(x).toBe(responseCount - 600)`
+    // decays into `expect(0).toBe(0)` the day a tighter drain lets fewer than 600 responses land.
+    expect(reads.responseCount).toBe(1_000);
     expect(reads.checks.parsesBody?.passed).toBe(600);
-    expect(reads.brokenObservations).toBe(reads.responseCount - 600);
+    expect(reads.checks.parsesBody?.broken).toBe(400);
+    expect(reads.brokenObservations).toBe(400);
   });
 });
 
