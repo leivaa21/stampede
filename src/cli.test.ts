@@ -193,5 +193,38 @@ export default defineConfig({
     // Thresholds are evaluated even after a teardown failure, so the verdict exists — but with
     // nothing violated, "0 threshold(s) violated" would say nothing while looking like it does.
     expect(result.stderr).not.toContain("threshold(s) violated");
+    // And the run must not be told it asserted nothing on the line above its own double sell.
+    expect(result.stdout).not.toContain("asserted nothing");
+  }, 30_000);
+
+  it("prints one prefixed line per reason when several things went wrong", async () => {
+    // Joined into one string, every reason after the first lost its `stampede: ` prefix and read
+    // as stray output in a CI log — and the reasons ran together into one paragraph.
+    const result = await runCli([
+      "run",
+      writeConfig(`export default defineConfig({
+  setup: () => ({ url: ${JSON.stringify(target.url)} }),
+  scenarios: {
+    reads: {
+      profile: burst({ count: 8 }),
+      request: (s) => ({ url: s.url }),
+      checks: { parsesBody: (r) => JSON.parse("not json").ok },
+    },
+  },
+  teardown: async () => { throw new Error("double sell: 2 sold"); },
+  workers: 1,
+  maxInFlight: 16,
+  drainTimeoutMs: 3000,
+});`),
+    ]);
+
+    const prefixed = result.stderr.split("\n").filter((line) => line.startsWith("stampede: "));
+
+    expect(result.status).toBe(2);
+    expect(prefixed).toHaveLength(2);
+    expect(prefixed.some((line) => line.includes("broken observations"))).toBe(true);
+    // The double sell is the thing the tool exists to find. It must not be buried inside another
+    // reason's sentence, and it must not be dropped for arriving second.
+    expect(prefixed.some((line) => line.includes("double sell: 2 sold"))).toBe(true);
   }, 30_000);
 });

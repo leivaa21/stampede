@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { HELP, parseArgs } from "./cli/args.ts";
 import { renderSummary, renderVerdict } from "./cli/render.ts";
+import { plain } from "./report/format.ts";
 import { ExitCode, runFromConfig, type ExitCodeValue } from "./cli/run-command.ts";
 import { guardTerminal } from "./cli/signals.ts";
 import { renderMarkdownReport } from "./report/markdown.ts";
@@ -142,7 +143,7 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
   // One prefixed line per reason. Joined into a single string they lost their `stampede: ` prefix
   // from the second reason on, so three of four reasons read as stray output in a CI log.
   for (const failure of report.failures) {
-    err(`stampede: ${failure}`);
+    err(`stampede: ${plain(failure)}`);
   }
 
   // Only when something was actually violated. Thresholds are now evaluated even after a teardown

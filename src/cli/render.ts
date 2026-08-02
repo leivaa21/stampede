@@ -131,15 +131,18 @@ export const renderSummary = (summary: RunSummary): string =>
  * and "nothing was asserted about this run" printed one line above "teardown() failed — double
  * sell: 2 sold" is the same false reassurance the report refuses to publish.
  */
-export const renderVerdict = (verdict: Verdict, runFailed = false): string => {
+export const renderVerdict = (verdict: Verdict, runFailed: boolean): string => {
   if (verdict.results.length === 0) {
     return runFailed ? "" : "no thresholds declared — nothing was asserted about this run\n";
   }
   const lines = verdict.results.map((result) => {
     if (result.error !== undefined) {
-      return `  BROKEN  ${result.name} — ${result.error}`;
+      // `plain` on both: the name is config-derived, but a predicate's message routinely carries
+      // target text — `throw new Error(await res.text())` in a teardown is the obvious case — and
+      // this string goes to a terminal and a CI log.
+      return `  BROKEN  ${plain(result.name)} — ${plain(result.error)}`;
     }
-    return `  ${result.held ? "PASS  " : "FAIL  "}  ${result.name}`;
+    return `  ${result.held ? "PASS  " : "FAIL  "}  ${plain(result.name)}`;
   });
   return ["thresholds", ...lines, ""].join("\n");
 };

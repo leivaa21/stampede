@@ -268,25 +268,33 @@ describe("renderSummary", () => {
 
 describe("renderVerdict", () => {
   it("marks a held claim PASS and a violated one FAIL, by name", () => {
-    const text = renderVerdict({
-      results: [
-        { name: "exactly one buyer wins", held: true, error: undefined },
-        { name: "p99 under 250ms", held: false, error: undefined },
-      ],
-      violated: ["p99 under 250ms"],
-      broken: [],
-    });
+    const text = renderVerdict(
+      {
+        results: [
+          { name: "exactly one buyer wins", held: true, error: undefined },
+          { name: "p99 under 250ms", held: false, error: undefined },
+        ],
+        violated: ["p99 under 250ms"],
+        broken: [],
+      },
+      false,
+    );
 
     expect(text).toContain("PASS    exactly one buyer wins");
     expect(text).toContain("FAIL    p99 under 250ms");
   });
 
   it("distinguishes a broken predicate from a failed one", () => {
-    const text = renderVerdict({
-      results: [{ name: "reaches into nothing", held: false, error: "cannot read x of undefined" }],
-      violated: [],
-      broken: ["reaches into nothing"],
-    });
+    const text = renderVerdict(
+      {
+        results: [
+          { name: "reaches into nothing", held: false, error: "cannot read x of undefined" },
+        ],
+        violated: [],
+        broken: ["reaches into nothing"],
+      },
+      false,
+    );
 
     expect(text).toContain("BROKEN  reaches into nothing");
     expect(text).toContain("cannot read x of undefined");
@@ -294,8 +302,39 @@ describe("renderVerdict", () => {
   });
 
   it("says plainly when a run asserted nothing at all", () => {
-    expect(renderVerdict({ results: [], violated: [], broken: [] })).toContain(
+    expect(renderVerdict({ results: [], violated: [], broken: [] }, false)).toContain(
       "nothing was asserted",
     );
+  });
+
+  it("says nothing about thresholds when the run already failed for another reason", () => {
+    // The round-three defect, on the surface it originally shipped on: "nothing was asserted about
+    // this run" printed one line above "teardown() failed — double sell: 2 sold" is the same false
+    // reassurance the report refuses to publish. An empty verdict is what a run that declared no
+    // thresholds now carries — thresholds are evaluated even after a teardown failure.
+    expect(renderVerdict({ results: [], violated: [], broken: [] }, true)).toBe("");
+  });
+
+  it("still says so when nothing went wrong and nothing was asserted", () => {
+    // The other half: a clean run that declared no thresholds must not look like a proven one.
+    expect(renderVerdict({ results: [], violated: [], broken: [] }, false)).toContain(
+      "nothing was asserted about this run",
+    );
+  });
+
+  it("cannot have a threshold's own error rewrite the terminal", () => {
+    // `throw new Error(await res.text())` in a teardown or a predicate is ordinary, and it puts
+    // target-chosen bytes straight into a CI log.
+    const text = renderVerdict(
+      {
+        results: [{ name: "claim", held: false, error: "\u001b[2Kfake\rPASS" }],
+        violated: [],
+        broken: ["claim"],
+      },
+      false,
+    );
+
+    expect(text).not.toContain("\u001b");
+    expect(text).not.toContain("\r");
   });
 });

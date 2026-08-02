@@ -176,10 +176,14 @@ export default defineConfig({
     reads: {
       profile: burst({ count: 600 }),
       request: (s) => ({ url: s.url }),
+      // Per *worker*, unlike \`request\`: this counter is only ever read by the worker that owns it,
+      // and the run is single-threaded so the names are 1..600.
       onResponse: (r, record) => { seen += 1; record.count("seat-" + String(seen)); },
     },
   },
   workers: 1,
+  maxInFlight: 1000,
+  drainTimeoutMs: 3000,
 });
 `);
 

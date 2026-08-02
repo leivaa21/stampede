@@ -21,7 +21,6 @@ export interface ReportContext {
   readonly workerCount: number;
   readonly maxInFlight: number;
   readonly drainTimeoutMs: number;
-  /** Non-zero means the run did not pass; the text is what went wrong. */
   /** One reason per entry — see `RunReport.failures`. Empty when the run came out clean. */
   readonly failures: readonly string[];
   /** Snapshots discarded for arriving out of order — zero in normal operation. */
@@ -184,10 +183,17 @@ const verdictSection = (
   const nothingAsserted =
     failures.length === 0
       ? "_No thresholds were declared — this run measured, but asserted nothing._"
-      : "_Not evaluated, or evaluated and beside the point — the run failed. See the verdict above._";
+      : "_None were declared, and the run failed for the reasons above._";
 
   if (verdict === undefined) {
-    return ["### Thresholds", "", nothingAsserted];
+    // No verdict at all: the run failed before thresholds could be evaluated.
+    return [
+      "### Thresholds",
+      "",
+      failures.length === 0
+        ? "_No thresholds were declared — this run measured, but asserted nothing._"
+        : "_Not evaluated — the run failed first. See the verdict above._",
+    ];
   }
   if (verdict.results.length === 0) {
     return ["### Thresholds", "", nothingAsserted];
