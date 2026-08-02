@@ -27,6 +27,10 @@ export interface FixtureSetupState {
    * identical to a working one.
    */
   readonly failOnShard?: number;
+  /** Declare a check that always passes, one that always fails, and one that throws. */
+  readonly withChecks?: boolean;
+  /** Count one `seen` per response, so the pool tests can prove counters merge across threads. */
+  readonly withCounter?: boolean;
 }
 
 const assignment = workerData as
@@ -47,6 +51,24 @@ if (state.failOnShard !== undefined && state.failOnShard === assignment?.shardIn
 export default defineConfig<FixtureSetupState>({
   scenarios: {
     reads: {
+      ...(state.withChecks === true
+        ? {
+            checks: {
+              alwaysPasses: () => true,
+              alwaysFails: () => false,
+              alwaysThrows: (): boolean => {
+                throw new Error("a broken check");
+              },
+            },
+          }
+        : {}),
+      ...(state.withCounter === true
+        ? {
+            onResponse: (_response: unknown, record: { count: (name: string) => void }): void => {
+              record.count("seen");
+            },
+          }
+        : {}),
       profile:
         state.kind === "burst"
           ? burst({ count: state.count })

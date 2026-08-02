@@ -1,4 +1,9 @@
-import type { HistogramSummary, MetricsRegistry, TrendSummary } from "../metrics/index.ts";
+import type {
+  HistogramSummary,
+  MetricsRegistry,
+  ScenarioMetrics,
+  TrendSummary,
+} from "../metrics/index.ts";
 import { EngineMetric } from "./metric-names.ts";
 
 /**
@@ -89,6 +94,25 @@ export interface ScenarioRunSummary {
   readonly scheduledLatencyMs: LatencySummary | undefined;
   /** Scheduled instant → send. The generator's own backlog. */
   readonly scheduleLagMs: TrendSummary | undefined;
+  /**
+   * The scenario's own counters, by name — whatever `onResponse` incremented.
+   *
+   * Per scenario and only per scenario (D2-03). A merged top-level view would mean a
+   * `reserved201` in the write scenario and one in the read scenario silently adding together,
+   * which is the class of quiet wrongness this repo refuses everywhere else.
+   */
+  readonly counters: Readonly<Record<string, number>>;
+  /** The scenario's checks, by name, as pass/fail tallies. */
+  readonly checks: Readonly<Record<string, { readonly passed: number; readonly failed: number }>>;
+  /** Distributions `onResponse` recorded — contract run 4's `behindMs` lands here. */
+  readonly trends: Readonly<Record<string, TrendSummary>>;
+  /**
+   * Checks whose predicate threw or returned a non-boolean, plus `onResponse` callbacks that threw.
+   *
+   * Non-zero means an *assertion* is broken, not that the target is — so the run fails, but with
+   * the check named rather than the system blamed (D2-04).
+   */
+  readonly brokenObservations: number;
 }
 
 export interface RunSummary {
@@ -123,6 +147,50 @@ export interface RunProgress {
 const ratePerSecond = (count: number, spanMs: number): number | undefined =>
   spanMs <= 0 ? undefined : (count * MS_PER_SECOND) / spanMs;
 
+/**
+ * The engine records its own metrics into the same namespace the user does, prefixed `stampede.`.
+ *
+ * Projecting them into a threshold-facing summary would put `s.counters["stampede.dropped"]` next
+ * to the user's own names — a surface where a rename inside the engine silently changes what a
+ * user's threshold reads. Engine metrics have named fields on the summary already; the user's keep
+ * the map.
+ */
+const isUserMetric = (name: string): boolean => !name.startsWith("stampede.");
+
+const userCounters = (recorded: ScenarioMetrics | undefined): Readonly<Record<string, number>> =>
+  Object.freeze(
+    Object.fromEntries(
+      [...(recorded?.counters.names ?? [])]
+        .filter(isUserMetric)
+        .map((name) => [name, recorded?.counters.get(name) ?? 0]),
+    ),
+  );
+
+const userChecks = (
+  recorded: ScenarioMetrics | undefined,
+): Readonly<Record<string, { readonly passed: number; readonly failed: number }>> =>
+  Object.freeze(
+    Object.fromEntries(
+      [...(recorded?.checks.names ?? [])].map((name) => [
+        name,
+        Object.freeze({ ...(recorded?.checks.get(name) ?? { passed: 0, failed: 0 }) }),
+      ]),
+    ),
+  );
+
+const userTrends = (
+  recorded: ScenarioMetrics | undefined,
+): Readonly<Record<string, TrendSummary>> => {
+  const entries: [string, TrendSummary][] = [];
+  for (const name of recorded?.trendNames ?? []) {
+    const summary = isUserMetric(name) ? recorded?.findTrend(name)?.summaryMs() : undefined;
+    if (summary !== undefined) {
+      entries.push([name, summary]);
+    }
+  }
+  return Object.freeze(Object.fromEntries(entries));
+};
+
 const summariseScenario = (
   progress: ScenarioProgress,
   metrics: MetricsRegistry,
@@ -156,6 +224,12 @@ const summariseScenario = (
             dispatchedCount,
             Math.max(progress.requestedDurationMs, progress.lastDispatchElapsedMs ?? 0),
           ),
+    counters: userCounters(recorded),
+    checks: userChecks(recorded),
+    trends: userTrends(recorded),
+    brokenObservations:
+      (recorded?.counters.get(EngineMetric.brokenChecks) ?? 0) +
+      (recorded?.counters.get(EngineMetric.brokenObservers) ?? 0),
     latencyMs: toLatencySummary(recorded?.findHistogram(EngineMetric.latency)?.summary()),
     scheduledLatencyMs: toLatencySummary(
       recorded?.findHistogram(EngineMetric.scheduledLatency)?.summary(),

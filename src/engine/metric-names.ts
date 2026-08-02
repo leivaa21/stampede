@@ -38,4 +38,14 @@ export const EngineMetric = {
   errors: "stampede.errors",
   /** Counter: requests still outstanding when the run stopped waiting. */
   abandoned: "stampede.abandoned",
+  /**
+   * Checks whose predicate threw, or returned something that is not a boolean.
+   *
+   * Counted rather than recorded individually: a check that throws on every response would fill a
+   * run with a run's worth of identical strings, and what a reader needs is the check's *name* and
+   * the fact that it is broken — not five thousand copies of the same stack.
+   */
+  brokenChecks: "stampede.brokenChecks",
+  /** `onResponse` callbacks that threw. Same reasoning as `brokenChecks`. */
+  brokenObservers: "stampede.brokenObservers",
 } as const;

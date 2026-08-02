@@ -1,5 +1,6 @@
 import type { ArrivalProfile } from "../engine/arrival-profiles.ts";
 import type { HttpRequestSpec } from "../engine/http-transport.ts";
+import type { TransportResponse } from "../engine/ports.ts";
 import type { RunSummary } from "../engine/run-summary.ts";
 
 /**
@@ -29,6 +30,48 @@ export interface ScenarioConfig<TSetup> {
    * later milestone; `schedule-split.ts` documents how that ordinal is recovered when it lands.
    */
   readonly request: (setupState: TSetup) => HttpRequestSpec;
+  /**
+   * Named predicates over a response, counted pass/fail and reported as a row.
+   *
+   * This is what makes stampede an assertion tool rather than a benchmarker: "exactly one 201
+   * among 500 racers" is a claim about a *run*, and it starts here, one response at a time.
+   *
+   * The **name** is what the report and a failing CI job print, so name the claim rather than the
+   * expression — `oneWinnerOrConflict` beats `status2xxOr409`.
+   *
+   * A predicate returning `false` is a failure and the point of the feature. A predicate that
+   * *throws* is a **broken check** (D2-04): counted separately, the run continues, and the run
+   * fails at the end with the check named — a bug in an assertion must not be reported as the
+   * target violating an invariant.
+   */
+  readonly checks?: Readonly<Record<string, (response: TransportResponse) => boolean>>;
+  /**
+   * Runs once per response, for counters and trends a check cannot express.
+   *
+   * A check answers yes or no. This is for everything else: counting how many buyers got a 201,
+   * recording the `behindMs` a projection reported, tallying an optimistic-retry header. Runs on
+   * the worker's hot path, so keep it cheap — and like a check, a throw here is counted and named
+   * rather than allowed to end the run.
+   */
+  readonly onResponse?: (response: TransportResponse, record: ResponseRecorder) => void;
+}
+
+/**
+ * What `onResponse` records into.
+ *
+ * Deliberately narrow: increment a counter, record a number. Both are merged across worker threads
+ * by `metrics/`, which is the only reason a claim about a whole run can be made at all.
+ */
+export interface ResponseRecorder {
+  /** Adds to a named counter for this scenario. `by` defaults to 1. */
+  readonly count: (name: string, by?: number) => void;
+  /**
+   * Records a number into a named distribution for this scenario — percentiles, not just a total.
+   *
+   * Milliseconds by name, because that is what every distribution in this tool is measured in and
+   * a unitless one would be the first number nobody could interpret.
+   */
+  readonly recordMs: (name: string, valueMs: number) => void;
 }
 
 /**

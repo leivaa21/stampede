@@ -113,6 +113,48 @@ describe("live progress from a pooled run", () => {
   }, 30_000);
 });
 
+describe("checks and counters across real threads", () => {
+  it("merges check tallies from every worker into one run's claim", async () => {
+    // The claim "exactly one 201 among 500 racers" is about a *run*, and a run is spread over
+    // threads. metrics/ proves the merge in isolation; this proves it through the user-facing path.
+    const outcome = await runPool({
+      modulePath: FIXTURE,
+      workerCount: 4,
+      // Above the burst size deliberately: a check only runs on a *response*, so a run that drops
+      // requests would report fewer checks than requests and the test would be measuring the cap.
+      maxInFlight: 200,
+      drainTimeoutMs: 2_000,
+      snapshotIntervalMs: 25,
+      setupState: { kind: "burst", count: 80, url: target.url, withChecks: true },
+    });
+
+    const reads = outcome.summary.scenarios[0];
+    expect(reads?.checks.alwaysPasses).toEqual({ passed: 80, failed: 0 });
+    expect(reads?.checks.alwaysFails).toEqual({ passed: 0, failed: 80 });
+    // A check that throws is counted once per response and its tally reads as failed, so a run
+    // cannot look clean because an assertion was broken.
+    expect(reads?.brokenObservations).toBe(80);
+  }, 30_000);
+
+  it("merges a user counter to exactly the response count", async () => {
+    const outcome = await runPool({
+      modulePath: FIXTURE,
+      workerCount: 4,
+      maxInFlight: 300,
+      drainTimeoutMs: 2_000,
+      snapshotIntervalMs: 25,
+      setupState: { kind: "burst", count: 120, url: target.url, withCounter: true },
+    });
+
+    const reads = outcome.summary.scenarios[0];
+    expect(reads?.counters.seen).toBe(120);
+    expect(reads?.responseCount).toBe(120);
+    // The engine's own metrics stay off the user's map — a rename inside the engine must not
+    // silently change what a user's threshold reads.
+    expect(Object.keys(reads?.counters ?? {})).toEqual(["seen"]);
+  }, 30_000);
+});
+
 describe("parseWorkerMessage", () => {
   const snapshot = { scenarios: new Map(), sequence: 1 };
   const progress = { elapsedMs: 10, maxObservedInFlight: 2, scenarios: [] };

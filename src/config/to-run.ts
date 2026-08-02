@@ -82,6 +82,8 @@ export const scenariosFrom = (
     // Built once per scenario, here, rather than per dispatch: the engine's request is one value
     // for the whole scenario today. When per-request variation lands this is the line that changes.
     request: assertRequestShape(scenario.request(setupState), name),
+    checks: scenario.checks,
+    onResponse: scenario.onResponse,
   }));
 
 export const workerCountFor = (config: StampedeConfig<unknown>): number =>

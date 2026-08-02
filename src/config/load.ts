@@ -175,6 +175,29 @@ export const assertConfigShape: (
     // where `(s.p99 ?? 0) < 250` passes. A green CI job for a load test that sent zero requests is
     // the exact lie D1-06 exists to prevent, reached through a different door. Rates that round
     // down are the usual cause: 2/s for 100ms is 0.2 requests, floored to none.
+    const { checks, onResponse } = scenario;
+    if (checks !== undefined) {
+      if (!isRecord(checks)) {
+        throw new ConfigLoadError(
+          `${configPath}: scenario "${name}" has \`checks\` that is not an object of named predicates`,
+        );
+      }
+      for (const [checkName, predicate] of Object.entries(checks)) {
+        // Named here rather than left to fail per response: a check is a claim, and a claim with
+        // no predicate is a claim nobody is making.
+        assertName(checkName, "check", configPath);
+        if (typeof predicate !== "function") {
+          throw new ConfigLoadError(
+            `${configPath}: check "${checkName}" in scenario "${name}" must be a function taking a response`,
+          );
+        }
+      }
+    }
+    if (onResponse !== undefined && typeof onResponse !== "function") {
+      throw new ConfigLoadError(
+        `${configPath}: scenario "${name}" has an \`onResponse\` that is not a function`,
+      );
+    }
     if (profile.count === 0) {
       throw new ConfigLoadError(
         `${configPath}: scenario "${name}" schedules 0 requests over ${String(profile.durationMs)}ms — ` +
