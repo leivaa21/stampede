@@ -3,6 +3,7 @@ import type { RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 import {
   evaluateThresholds,
   findBrokenObservations,
+  findRefusedRecordings,
   findUnmeasuredScenario,
 } from "./thresholds.ts";
 
@@ -24,6 +25,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   checks: {},
   trends: {},
   brokenObservations: 0,
+  refusedRecordings: 0,
   ...over,
 });
 
@@ -68,12 +70,65 @@ describe("findUnmeasuredScenario", () => {
     ).toBeUndefined();
   });
 
+  it("blames request(), not the target, when the config could not build anything", () => {
+    // "check the target is reachable" for a `request()` that threw on every ordinal sends someone
+    // to inspect a server that was never asked. Nothing was sent; the config is the only suspect.
+    expect(
+      findUnmeasuredScenario(
+        summaryOf(
+          scenario({
+            scheduledCount: 10,
+            dispatchedCount: 0,
+            responseCount: 0,
+            requestErrorCount: 10,
+          }),
+        ),
+      ),
+    ).toContain("fix `request()` in the config");
+  });
+
+  it("does not blame request() when only a few builds failed", () => {
+    // The boundary matters in both directions: one failed build in a million must not print
+    // "every request threw while being built", which would be flatly false.
+    const message = findUnmeasuredScenario(
+      summaryOf(
+        scenario({
+          scheduledCount: 1_000,
+          dispatchedCount: 999,
+          responseCount: 0,
+          errorCount: 999,
+          requestErrorCount: 1,
+        }),
+      ),
+    );
+
+    expect(message).toContain("target is reachable");
+    expect(message).not.toContain("fix `request()`");
+  });
+
   it("names the first broken scenario when several ran", () => {
     expect(
       findUnmeasuredScenario(
         summaryOf(scenario({ name: "writes", responseCount: 0, errorCount: 10 }), scenario()),
       ),
     ).toContain('"writes"');
+  });
+});
+
+describe("findRefusedRecordings", () => {
+  it("says nothing when every recording was accepted", () => {
+    expect(findRefusedRecordings(summaryOf(scenario()))).toBeUndefined();
+  });
+
+  it("fails the run when names were refused, because the missing ones read as zero", () => {
+    // `metrics/validate.ts`: a refusal nobody counts is a silent hole in the numbers. A threshold
+    // reading a counter that never got a slot reads a confident 0 and reports a violation the
+    // target never caused.
+    const message = findRefusedRecordings(summaryOf(scenario({ refusedRecordings: 88 })));
+
+    expect(message).toContain('"reads"');
+    expect(message).toContain("88 recordings");
+    expect(message).toContain("cardinality bomb");
   });
 });
 

@@ -32,6 +32,21 @@ export const rate = (value: number | undefined, direction: "requested" | "achiev
 };
 
 /**
+ * Strips control characters from a string that may have come from the target.
+ *
+ * Counter and trend names can be built from response data — `record.count(res.headers["x-request-id"])`
+ * is `metrics/validate.ts`'s own worked example — which means a target controls a string this tool
+ * writes to a terminal and into a CI log. ANSI escapes there can rewrite lines already printed,
+ * hide output, or emit a fake verdict; a `\r` alone is enough to overwrite the line above it. A
+ * load tester whose report a hostile target can edit is not evidence of anything.
+ *
+ * Replaced with a space rather than removed, so `a\u0000b` cannot become the name `ab` and quietly
+ * collide with a different metric.
+ */
+// eslint-disable-next-line no-control-regex
+export const plain = (text: string): string => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+
+/**
  * Makes a user-supplied string safe to put in a markdown table cell.
  *
  * Scenario names, threshold names and predicate error messages are all free text, and they go into
@@ -39,8 +54,7 @@ export const rate = (value: number | undefined, direction: "requested" | "achiev
  * *silently truncated published claim* — and a multi-line message (every `node:assert` failure is
  * one) ends the table entirely, taking every row below it with it.
  */
-export const cell = (text: string): string =>
-  text.replace(/\r?\n/g, " ").replace(/\|/g, "\\|").trim();
+export const cell = (text: string): string => plain(text).replace(/\|/g, "\\|").trim();
 
 /** The same, for a value going inside an inline code span, where a backtick would break out. */
 export const codeSpan = (text: string): string => `\`${text.replace(/`/g, "'")}\``;

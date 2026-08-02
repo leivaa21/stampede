@@ -6,6 +6,7 @@ import { runPool } from "../engine/worker-pool.ts";
 import {
   evaluateThresholds,
   findBrokenObservations,
+  findRefusedRecordings,
   findUnmeasuredScenario,
   type Verdict,
 } from "./thresholds.ts";
@@ -120,12 +121,13 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
     return { ...failed(unmeasured, settings), summary, supersededSnapshots };
   }
 
-  // Before the thresholds too: a run whose checks are broken can still be measured, but it cannot
-  // be judged — and saying so is different from saying the target failed.
-  const broken = findBrokenObservations(summary);
-  if (broken !== undefined) {
-    return { ...failed(broken, settings), summary, supersededSnapshots };
-  }
+  // Collected here, reported after the thresholds. These are runs whose *measurements* are real
+  // and whose *claims* are not, so unlike an unmeasured scenario there is a percentile table worth
+  // printing — and returning early would cost the reader the specific half of the story, the same
+  // trade the teardown path below already refuses.
+  const runFailures = [findBrokenObservations(summary), findRefusedRecordings(summary)].filter(
+    (failure): failure is string => failure !== undefined,
+  );
 
   // The invariant is proven *after* the storm — this is the line D1-06 exists for. A throw here is
   // a violated claim, not a crashed tool, so it lands on exit 1 with the rest of them.
@@ -142,12 +144,20 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
   // and cost the reader the more specific half: "the seat sold twice" is the symptom, and
   // "`exactly one buyer wins` — reserved201 was 500" is the claim that names it.
   const verdict = evaluateThresholds(config.thresholds ?? [], summary);
-  if (verdict.broken.length > 0) {
+  // Every reason the *run* failed, never only the first: one broken claim hiding behind another is
+  // how a second bug survives a fix for the first.
+  const failures = [
+    ...(verdict.broken.length > 0
+      ? [`a threshold predicate threw: ${verdict.broken.join(", ")}`]
+      : []),
+    ...runFailures,
+  ];
+  if (failures.length > 0) {
     return {
       exitCode: ExitCode.RunFailed,
       summary,
       verdict,
-      failure: `a threshold predicate threw: ${verdict.broken.join(", ")}`,
+      failure: failures.join("\n"),
       supersededSnapshots,
       ...settings,
     };

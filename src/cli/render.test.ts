@@ -44,6 +44,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   checks: {},
   trends: {},
   brokenObservations: 0,
+  refusedRecordings: 0,
   ...over,
 });
 
@@ -200,6 +201,53 @@ describe("renderSummary", () => {
 
     expect(text).toContain("counter     reserved201 = 1");
     expect(text).toContain("recorded    behindMs");
+  });
+
+  it("never prints PASS for a check that only ever broke", () => {
+    // D2-04's whole point, and the cell the argument is written about. Collapsing broken into PASS
+    // publishes a green claim nothing verified; collapsing it into FAIL accuses the target of an
+    // invariant violation that was a typo in the predicate.
+    const text = renderSummary(
+      summaryOf(
+        scenario({ checks: { oneWinnerOrConflict: { passed: 0, failed: 0, broken: 500 } } }),
+      ),
+    );
+
+    expect(text).toContain("BROKEN 500  oneWinnerOrConflict");
+    expect(text).not.toContain("PASS  oneWinnerOrConflict");
+  });
+
+  it("reports a real failure as FAIL, not as broken", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ checks: { noDoubleSell: { passed: 10, failed: 2, broken: 0 } } })),
+    );
+
+    expect(text).toContain("FAIL 2/12  noDoubleSell");
+  });
+
+  it("names requests the config could not build, so a shortfall always has a cause", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ scheduledCount: 100, dispatchedCount: 90, requestErrorCount: 10 })),
+    );
+
+    expect(text).toContain("10 not built (request() threw)");
+  });
+
+  it("says when recordings were refused, because the missing ones read as zero", () => {
+    const text = renderSummary(summaryOf(scenario({ refusedRecordings: 88 })));
+
+    expect(text).toContain("88 recordings refused");
+  });
+
+  it("cannot have its own output rewritten by the target", () => {
+    // A counter name can be built from response data, so a hostile target controls a string this
+    // writes to a CI log. `\r` alone overwrites the line above; an ANSI escape can print a verdict.
+    const text = renderSummary(
+      summaryOf(scenario({ counters: { "\u001b[2Kfake\rPASS everything": 1 } })),
+    );
+
+    expect(text).not.toContain("\u001b");
+    expect(text).not.toContain("\r");
   });
 
   it("warns when an assertion is broken rather than the target", () => {

@@ -44,10 +44,13 @@ const isThenable = (value: unknown): value is PromiseLike<unknown> =>
   value !== null &&
   typeof (value as { then?: unknown }).then === "function";
 
-const neutralise = (value: unknown): void => {
-  if (isThenable(value)) {
-    void Promise.resolve(value).catch(() => undefined);
+/** @returns whether a promise was swallowed, so the caller can count the observation broken. */
+const neutralise = (value: unknown): boolean => {
+  if (!isThenable(value)) {
+    return false;
   }
+  void Promise.resolve(value).catch(() => undefined);
+  return true;
 };
 
 /**
@@ -100,7 +103,7 @@ export const observeResponse = (
       } else {
         // Node strips the user's types without checking them, so nothing guarantees a boolean —
         // and `(r) => { r.status === 200 }`, braces instead of parens, returns `undefined`.
-        neutralise(held);
+        void neutralise(held);
         recordBroken(metrics, name);
       }
     } catch {
@@ -114,7 +117,14 @@ export const observeResponse = (
   if (observers.onResponse !== undefined) {
     try {
       const returned: unknown = observers.onResponse(response, observers.recorder);
-      neutralise(returned);
+      // Counted, not merely survived. `load.ts` refuses a literal `async` callback, but a plain
+      // arrow that *returns* a promise — `(r, record) => fetch(logUrl).then(() => record.count(…))`
+      // — passes every gate, and its counts land after the run has published. Swallowing that
+      // quietly meant a run reporting zero of a counter the config incremented on every response,
+      // with nothing on the page saying so.
+      if (neutralise(returned)) {
+        metrics.counters.inc(EngineMetric.brokenObservers);
+      }
     } catch {
       metrics.counters.inc(EngineMetric.brokenObservers);
     }

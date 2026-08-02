@@ -8,6 +8,9 @@ import {
 import { FakeClock } from "../test-support/fake-clock.ts";
 import { FakeTransport, synchronouslyThrowingTransport } from "../test-support/fake-transport.ts";
 import { burst, constantRate } from "./arrival-profiles.ts";
+
+/** Bumped by the counter-starvation test's `onResponse`, which needs a distinct name per response. */
+let recorded = 0;
 import { EngineMetric } from "./metric-names.ts";
 
 /**
@@ -157,6 +160,66 @@ describe("one bad request cannot cost the whole run", () => {
     expect(reads.responseCount).toBe(0);
     // Counted like any other transport failure, and kept out of the percentiles.
     expect(reads.latencyMs).toBeUndefined();
+  });
+});
+
+describe("user code cannot starve the engine's own bookkeeping", () => {
+  /**
+   * The counter map is bounded, and `record.count(`seat-${id}`)` — contract run 2's own shape —
+   * reaches that bound legitimately. Before the engine reserved its names, whatever it had not yet
+   * incremented by then was refused: the drop count, the request-error count and the broken-check
+   * total all stopped being recordable, and the report went quiet about them in exactly the run
+   * that produced the most of them.
+   */
+  it("keeps counting drops, request errors and broken checks after a user fills the name budget", async () => {
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ clock });
+
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: burst({ count: 900 }),
+            // Every ninth request cannot be built. These land before most of the responses do,
+            // but the reservation is what makes them recordable at all.
+            requestFor: (ordinal) => {
+              if (ordinal % 9 === 0) {
+                throw new Error("no seat for that ordinal");
+              }
+              return { label: "reads" };
+            },
+            checks: { alwaysBroken: () => undefined as unknown as boolean },
+            // One counter name per response: 800 distinct names against a 512 cap.
+            onResponse: (_response, record) => {
+              recorded += 1;
+              record.count(`seat-${String(recorded)}`);
+            },
+          },
+        ],
+        maxInFlight: 1_000,
+        drainTimeoutMs: 1_000,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    expect(reads.requestErrorCount).toBe(100);
+    expect(reads.dispatchedCount + reads.droppedCount + reads.requestErrorCount).toBe(
+      reads.scheduledCount,
+    );
+    // Every response broke the check. Losing this to the budget published `PASS alwaysBroken`
+    // for a run in which the predicate never once returned a boolean.
+    expect(reads.checks.alwaysBroken).toEqual({
+      passed: 0,
+      failed: 0,
+      broken: reads.responseCount,
+    });
+    expect(reads.brokenObservations).toBe(reads.responseCount);
+    // The refusals themselves are reported rather than absorbed — the user asked for 800 names and
+    // got about 500, and a threshold reading one of the missing ones must not read a silent 0.
+    expect(reads.refusedRecordings).toBeGreaterThan(0);
   });
 });
 

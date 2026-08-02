@@ -77,3 +77,28 @@ export const EngineMetric = {
    */
   reservedNameRefusals: "stampede.reservedNameRefusals",
 } as const;
+
+/**
+ * The engine's counter names, for pre-registration.
+ *
+ * The prefix stops a user counter *overwriting* an engine one. It does not stop a user counter
+ * *starving* it: names are admitted while the map is under its cardinality cap, and every engine
+ * counter is created lazily on its first increment — so an `onResponse` doing
+ * `record.count(\`seat-\${seatId}\`)`, which is contract run 2's own shape, fills the map and then
+ * every engine counter that has not yet fired is refused. The accounting identity, the broken-check
+ * total and the checks table all stop holding together, silently, in the run that needs them most.
+ *
+ * Reserving a slot each before any load goes out costs eleven names out of 512 and makes
+ * `known.has(name)` permanently true, which is the only thing the cardinality rule looks at.
+ */
+export const ENGINE_COUNTERS: readonly string[] = [
+  EngineMetric.dispatched,
+  EngineMetric.dropped,
+  EngineMetric.responses,
+  EngineMetric.errors,
+  EngineMetric.abandoned,
+  EngineMetric.brokenChecks,
+  EngineMetric.brokenObservers,
+  EngineMetric.requestErrors,
+  EngineMetric.reservedNameRefusals,
+];

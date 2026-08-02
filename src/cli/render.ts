@@ -1,4 +1,4 @@
-import { duration, ms, rate } from "../report/format.ts";
+import { duration, ms, plain, rate } from "../report/format.ts";
 import type { LatencySummary, RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 import type { Verdict } from "./thresholds.ts";
 
@@ -31,7 +31,7 @@ const percentiles = (label: string, summary: LatencySummary | undefined): string
 
 const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
   const lines = [
-    `  ${scenario.name}`,
+    `  ${plain(scenario.name)}`,
     `    requests    ${String(scenario.scheduledCount)} scheduled · ${String(scenario.dispatchedCount)} sent · ${String(scenario.responseCount)} answered`,
   ];
 
@@ -91,19 +91,24 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
         : tally.failed === 0
           ? "PASS"
           : `FAIL ${String(tally.failed)}/${String(tally.passed + tally.failed)}`;
-    lines.push(`    check       ${verdict}  ${name}`);
+    lines.push(`    check       ${verdict}  ${plain(name)}`);
   }
   for (const [name, value] of Object.entries(scenario.counters)) {
-    lines.push(`    counter     ${name} = ${String(value)}`);
+    lines.push(`    counter     ${plain(name)} = ${String(value)}`);
   }
   for (const [name, trend] of Object.entries(scenario.trends)) {
     lines.push(
-      `    recorded    ${name}  p50 ${ms(trend.p50Ms)} · p99 ${ms(trend.p99Ms)} · max ${ms(trend.maxMs)}`,
+      `    recorded    ${plain(name)}  p50 ${ms(trend.p50Ms)} · p99 ${ms(trend.p99Ms)} · max ${ms(trend.maxMs)}`,
     );
   }
   if (scenario.brokenObservations > 0) {
     lines.push(
-      `    ⚠ ${String(scenario.brokenObservations)} broken observations — a check threw or returned a non-boolean`,
+      `    ⚠ ${String(scenario.brokenObservations)} broken observations — a check or onResponse threw, returned a non-boolean, or asked for a reserved metric name`,
+    );
+  }
+  if (scenario.refusedRecordings > 0) {
+    lines.push(
+      `    ⚠ ${String(scenario.refusedRecordings)} recordings refused — more distinct metric names than the cap allows, so some counters are missing entirely`,
     );
   }
 

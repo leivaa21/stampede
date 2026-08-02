@@ -134,11 +134,7 @@ await loadConfig(${JSON.stringify(file)}).catch((error) => {
 
     it("refuses a scenario name in that namespace too", async () => {
       await expect(
-        loadConfig(
-          writeConfig(
-            VALID.replace("reads: {", '"stampede.internal": {').replace("reads", "reads"),
-          ),
-        ),
+        loadConfig(writeConfig(VALID.replace("reads: {", '"stampede.internal": {'))),
       ).rejects.toThrow(/scenario name "stampede.internal" starts with/);
     });
 
@@ -148,7 +144,15 @@ await loadConfig(${JSON.stringify(file)}).catch((error) => {
       const long = "c".repeat(115);
       await expect(
         loadConfig(writeConfig(withScenario(`checks: { "${long}": () => true }`))),
-      ).rejects.toThrow(/is too long — a check name may be at most \d+ characters/);
+        // The quoted figure is the budget minus the derived counter's prefix. Quoting the raw
+        // 120 would name a length that still fails, which is worse than saying nothing.
+      ).rejects.toThrow(/is too long — a check name may be at most 99 characters/);
+    });
+
+    it("says what an onResponse has to be when it is not a function", async () => {
+      await expect(
+        loadConfig(writeConfig(withScenario(`onResponse: "please count things"`))),
+      ).rejects.toThrow(/scenario "reads" has an `onResponse` that is not a function/);
     });
 
     it("accepts a plain synchronous check", async () => {

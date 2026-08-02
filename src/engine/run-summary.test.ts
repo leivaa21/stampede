@@ -75,6 +75,20 @@ describe("summariseRun separates the user's metrics from the engine's", () => {
     expect(summary?.checks.oneWinner).toEqual({ passed: 1, failed: 1, broken: 2 });
   });
 
+  it("orders checks by name, so two workers finishing in either order publish the same table", () => {
+    const metrics = new MetricsRegistry();
+    const reads = metrics.scenario("reads");
+    // Recorded in an order no reader would choose. Map iteration would preserve it, and a report
+    // whose rows move when a worker finishes sooner is not a reproducible report (D1-02).
+    for (const name of ["zeta", "alpha", "mid"]) {
+      reads.checks.record(name, true);
+    }
+
+    const [summary] = summariseRun(oneScenario, metrics).scenarios;
+
+    expect(Object.keys(summary?.checks ?? {})).toEqual(["alpha", "mid", "zeta"]);
+  });
+
   it("counts a refused reserved name as a broken observation", () => {
     const metrics = new MetricsRegistry();
     metrics.scenario("reads").counters.inc(EngineMetric.reservedNameRefusals, 5);
@@ -89,6 +103,19 @@ describe("summariseRun separates the user's metrics from the engine's", () => {
 });
 
 describe("summariseRun reports what a scenario did, not what it hoped", () => {
+  it("leaves out a check that was declared but never asked", () => {
+    const metrics = new MetricsRegistry();
+    // The engine reserves a broken-counter slot per declared check before the run starts, so the
+    // counter map knows the name even when no response ever reached the predicate. Publishing it
+    // as `{ passed: 0, failed: 0, broken: 0 }` would render **PASS** — a green claim about
+    // responses that do not exist.
+    metrics.scenario("reads").counters.reserve(brokenCheckCounter("neverRan"));
+
+    const [summary] = summariseRun(oneScenario, metrics).scenarios;
+
+    expect(summary?.checks).toEqual({});
+  });
+
   it("publishes zeros for a scenario the registry never heard of", () => {
     // A worker that died before its first response sends no namespace for its scenario. The
     // scenario still has to appear, at zero — a run that quietly drops a scenario from its report

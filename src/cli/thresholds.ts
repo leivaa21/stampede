@@ -64,12 +64,36 @@ const adviceFor = (scenario: RunSummary["scenarios"][number]): string => {
  * but on the run-failed code, with the assertion named. Reporting it as a violated threshold would
  * blame the target for a typo, which is the confusion the exit-code contract exists to prevent.
  */
+/**
+ * A scenario whose numbers are *incomplete*, rather than bad.
+ *
+ * Cardinality caps refuse recordings rather than throwing, which is right — a run must not die at
+ * minute nineteen because a config asked for one name too many. But a threshold reading a counter
+ * that was refused reads a confident `0`, and reports a violation the target never caused. So the
+ * refusals fail the run on the run-failed code, naming the cap.
+ */
+export const findRefusedRecordings = (summary: RunSummary): string | undefined => {
+  for (const scenario of summary.scenarios) {
+    if (scenario.refusedRecordings > 0) {
+      return (
+        `scenario "${scenario.name}" refused ${String(scenario.refusedRecordings)} recordings — ` +
+        `it asked for more distinct metric names than the per-scenario cap allows. ` +
+        `The values that were recorded are real, but some are missing, so a threshold reading ` +
+        `one of them would read 0 rather than the truth. Use fewer distinct names — ` +
+        `a counter per seat is a cardinality bomb; a counter per outcome is not.`
+      );
+    }
+  }
+  return undefined;
+};
+
 export const findBrokenObservations = (summary: RunSummary): string | undefined => {
   for (const scenario of summary.scenarios) {
     if (scenario.brokenObservations > 0) {
       return (
         `scenario "${scenario.name}" had ${String(scenario.brokenObservations)} broken observations — ` +
-        `a check or onResponse threw, or a check returned something other than true/false. ` +
+        `a check or onResponse threw, returned something other than true/false, or asked for a ` +
+        `metric name in stampede's own namespace. ` +
         `The run's numbers are real, but at least one of its claims is not.`
       );
     }

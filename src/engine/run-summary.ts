@@ -4,6 +4,7 @@ import type {
   ScenarioMetrics,
   TrendSummary,
 } from "../metrics/index.ts";
+import { compareNames } from "../metrics/by-name.ts";
 import { brokenCheckCounter, EngineMetric, RESERVED_METRIC_PREFIX } from "./metric-names.ts";
 
 const BROKEN_CHECK_PREFIX = `${RESERVED_METRIC_PREFIX}brokenCheck.`;
@@ -132,6 +133,15 @@ export interface ScenarioRunSummary {
    * the check named rather than the system blamed (D2-04).
    */
   readonly brokenObservations: number;
+  /**
+   * Recordings the metrics registry refused for cardinality — names asked for beyond the caps.
+   *
+   * `metrics/validate.ts` states the rule this field exists to keep: *a refusal nobody counts is a
+   * silent hole in the numbers*. The count existed and nothing published it, so a config asking for
+   * 600 counter names got 512 and a threshold reading one of the missing ones read a confident 0 —
+   * a violation the target never caused, in a run that looked complete.
+   */
+  readonly refusedRecordings: number;
 }
 
 export interface RunSummary {
@@ -186,10 +196,16 @@ const userCounters = (recorded: ScenarioMetrics | undefined): Readonly<Record<st
   );
 
 /**
- * Every check the scenario recorded *or* broke.
+ * Every check the scenario actually observed — recorded, failed *or* broke.
  *
- * A check that threw on every single response has no pass/fail tally at all — it only has a broken
- * count — so reading `checks.names` alone would omit the very check a reader most needs named.
+ * Two names have to be reachable here. A check that threw on every single response has no pass/fail
+ * tally at all, only a broken count, so reading `checks.names` alone would omit the very check a
+ * reader most needs named. And the broken counters are *reserved* before the run starts, so reading
+ * the counter map alone would list every declared check whether or not it ever ran.
+ *
+ * Hence the emptiness test: a check with nothing in any of its three states was never asked, and
+ * publishing it as `{ passed: 0, failed: 0, broken: 0 }` would render as **PASS** — a green claim
+ * about responses that do not exist, which is the one thing this file exists to prevent.
  */
 const userChecks = (
   recorded: ScenarioMetrics | undefined,
@@ -202,16 +218,19 @@ const userChecks = (
       names.add(counter.slice(BROKEN_CHECK_PREFIX.length));
     }
   }
+  const observed = [...names]
+    .sort(compareNames)
+    .map((name): [string, { passed: number; failed: number; broken: number }] => [
+      name,
+      {
+        ...(recorded?.checks.get(name) ?? { passed: 0, failed: 0 }),
+        broken: recorded?.counters.get(brokenCheckCounter(name)) ?? 0,
+      },
+    ])
+    .filter(([, tally]) => tally.passed + tally.failed + tally.broken > 0);
+
   return Object.freeze(
-    Object.fromEntries(
-      [...names].sort().map((name) => [
-        name,
-        Object.freeze({
-          ...(recorded?.checks.get(name) ?? { passed: 0, failed: 0 }),
-          broken: recorded?.counters.get(brokenCheckCounter(name)) ?? 0,
-        }),
-      ]),
-    ),
+    Object.fromEntries(observed.map(([name, tally]) => [name, Object.freeze(tally)])),
   );
 };
 
@@ -265,6 +284,7 @@ const summariseScenario = (
     counters: userCounters(recorded),
     checks: userChecks(recorded),
     trends: userTrends(recorded),
+    refusedRecordings: recorded?.refusedCount ?? 0,
     brokenObservations:
       (recorded?.counters.get(EngineMetric.brokenChecks) ?? 0) +
       (recorded?.counters.get(EngineMetric.brokenObservers) ?? 0) +

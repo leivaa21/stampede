@@ -57,18 +57,6 @@ export interface TransportResponse {
 }
 
 /**
- * Sends one request and waits for the response.
- *
- * Generic in the request because the engine does not know what a request *is*. `http-transport.ts`
- * is the shipped implementation; the generic is what let it arrive without the scheduler changing,
- * and what will let a streaming transport arrive the same way.
- *
- * **`send` must reject on a transport-level failure** (connection refused, DNS, timeout) rather
- * than resolving with a synthetic status. The dispatcher counts those separately and deliberately
- * keeps them out of the latency histogram — an instant ECONNREFUSED recorded as a 0.1 ms latency
- * would be the most flattering p99 a broken target could possibly produce.
- */
-/**
  * What `onResponse` records into. Defined here, once, beside the response it accompanies.
  *
  * `config/types.ts`, `run-spec.ts` and `observe.ts` all restated this shape inline — three copies
@@ -89,6 +77,18 @@ export interface ResponseRecorder {
 /** A named predicate over a response, counted pass/fail and reported as a row. */
 export type ResponseCheck = (response: TransportResponse) => boolean;
 
+/**
+ * Sends one request and waits for the response.
+ *
+ * Generic in the request because the engine does not know what a request *is*. `http-transport.ts`
+ * is the shipped implementation; the generic is what let it arrive without the scheduler changing,
+ * and what will let a streaming transport arrive the same way.
+ *
+ * **`send` must reject on a transport-level failure** (connection refused, DNS, timeout) rather
+ * than resolving with a synthetic status. The dispatcher counts those separately and deliberately
+ * keeps them out of the latency histogram — an instant ECONNREFUSED recorded as a 0.1 ms latency
+ * would be the most flattering p99 a broken target could possibly produce.
+ */
 export interface Transport<TRequest> {
   send(request: TRequest): Promise<TransportResponse>;
 }

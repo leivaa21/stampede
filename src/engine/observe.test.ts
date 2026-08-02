@@ -164,6 +164,20 @@ describe("async callbacks", () => {
     expect(metrics.counters.get(brokenCheckCounter("asyncCheck"))).toBe(1);
   });
 
+  it("leaves an ordinary return value alone", () => {
+    const metrics = scenario();
+    // Only a *thenable* is a swallowed promise. An `onResponse` whose last expression happens to be
+    // an object — `(r, record) => record.count("x")` returning undefined, or a builder returning a
+    // config — did its work synchronously and is not broken.
+    observeResponse(
+      metrics,
+      observers(metrics, { onResponse: () => ({ then: "not a function" }) }),
+      response(),
+    );
+
+    expect(metrics.counters.get(EngineMetric.brokenObservers)).toBe(0);
+  });
+
   it("does not let an async onResponse take the process down", async () => {
     const metrics = scenario();
     const unhandled: unknown[] = [];
@@ -182,6 +196,10 @@ describe("async callbacks", () => {
         response(),
       );
       await new Promise((resolve) => setTimeout(resolve, 50));
+      // Not merely survived: counted. An `onResponse` that returns a promise does its work after
+      // the run has published, so a run whose config incremented a counter on every response would
+      // otherwise report zero of it with nothing on the page saying why.
+      expect(metrics.counters.get(EngineMetric.brokenObservers)).toBe(1);
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }

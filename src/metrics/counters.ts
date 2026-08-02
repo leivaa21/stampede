@@ -28,6 +28,29 @@ export class Counters {
     return restored;
   }
 
+  /**
+   * Claims a name at zero, so a later `inc` of it can never be refused for cardinality.
+   *
+   * The cap exists to bound memory against names built from response data. That is a rule about
+   * *user* names; an engine counter refused because a user filled the map turns a published number
+   * into a lie — the run reports no drops because the drop counter never got a slot. Reserving is
+   * how a name says "I am part of the accounting, not part of the cardinality".
+   *
+   * Still budgeted: a reserved name occupies a slot like any other, because pretending otherwise
+   * would make the cap describe something other than the size of the map.
+   */
+  reserve(name: string): void {
+    assertMetricName(name, "counter");
+    if (this.#totals.has(name)) {
+      return;
+    }
+    if (!admitsMetricName(this.#totals, name, MAX_DISTINCT_TALLIES)) {
+      this.#refusedCount += 1;
+      return;
+    }
+    this.#totals.set(name, 0);
+  }
+
   inc(name: string, by = 1): void {
     assertMetricName(name, "counter");
     assertTally(by, `Counter "${name}" increment`);

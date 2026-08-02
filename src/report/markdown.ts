@@ -157,7 +157,13 @@ const scenarioSection = (scenario: ScenarioRunSummary): string => {
     ...(scenario.brokenObservations > 0
       ? [
           "",
-          `> ⚠ **${String(scenario.brokenObservations)} broken observations** — a check threw or returned a non-boolean. The measurements are real; at least one claim about them is not.`,
+          `> ⚠ **${String(scenario.brokenObservations)} broken observations** — a check or \`onResponse\` threw, returned a non-boolean, or asked for a reserved metric name. The measurements are real; at least one claim about them is not.`,
+        ]
+      : []),
+    ...(scenario.refusedRecordings > 0
+      ? [
+          "",
+          `> ⚠ **${String(scenario.refusedRecordings)} recordings refused** — this scenario asked for more distinct metric names than the per-scenario cap allows, so some counters are missing from the table above **entirely**, not merely undercounted.`,
         ]
       : []),
     // Blank `>` between notes, or GitHub merges adjacent blockquote lines into one paragraph and
