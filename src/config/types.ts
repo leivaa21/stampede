@@ -22,17 +22,26 @@ export interface ScenarioConfig<TSetup> {
    */
   readonly profile: ArrivalProfile;
   /**
-   * The request this scenario sends, built once from the setup state.
+   * Builds the request this scenario sends, once per dispatch.
    *
    * Built rather than written literally so a scenario can use what `setup()` created — the show id
-   * for open-ticket's namesake run, an auth token, a seeded row. Per-*request* variation (a
+   * for open-ticket's namesake run, an auth token, a seeded row.
+   *
    * `ordinal` is the request's position **in the whole run**, from 0, and is what makes "N buyers,
    * N distinct seats" expressible: `seatIds: [seats[ordinal % seats.length]]`. It is global rather
-   * than per-worker, so four threads never build the same request four times (D2-02). Ignore it
-   * and every buyer sends the same thing, which is the namesake run.
+   * than per-worker, so four threads never build the same request four times (D2-02). Ignore it and
+   * every buyer sends the same thing, which is the namesake run.
    *
-   * Called **once per dispatch**, so keep it cheap — and if it throws, that request is counted as
-   * a build failure and the run continues; it is not reported as the target refusing.
+   * Keep it cheap: it runs on the dispatch path, once per request, and time spent here is time the
+   * generator is not dispatching. If it throws, that request is counted as a build failure and the
+   * run continues — reported as `not built`, never as the target refusing.
+   *
+   * **It must be a pure function of `(setupState, ordinal)`.** Every worker gets its own structured
+   * clone of the setup state, so a builder that consumes shared state — `state.seats.pop()`, an
+   * incrementing nonce — hands four threads the same four values rather than sixteen distinct ones.
+   * The ordinal exists precisely so variation can be derived rather than accumulated. stampede also
+   * calls this once at ordinal 0 per worker before the run starts, to fail a malformed request at
+   * startup instead of twenty minutes in, which an impure builder would notice.
    */
   readonly request: (setupState: TSetup, ordinal: number) => HttpRequestSpec;
   /**

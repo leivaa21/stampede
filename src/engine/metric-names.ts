@@ -79,26 +79,46 @@ export const EngineMetric = {
 } as const;
 
 /**
- * The engine's counter names, for pre-registration.
+ * Which kind of metric each name is recorded as.
+ *
+ * Exhaustive over `EngineMetric` by type, so adding a member without classifying it is a compile
+ * error. That is the point: `ENGINE_COUNTERS` below is derived from this map, and a counter left
+ * out of it is silently starvable again — a regression no test would notice, because the failure
+ * only appears in a run whose user code fills the name budget first.
+ */
+const ENGINE_METRIC_KINDS: Readonly<Record<keyof typeof EngineMetric, "counter" | "distribution">> =
+  {
+    latency: "distribution",
+    scheduledLatency: "distribution",
+    scheduleLag: "distribution",
+    dispatched: "counter",
+    dropped: "counter",
+    responses: "counter",
+    errors: "counter",
+    abandoned: "counter",
+    brokenChecks: "counter",
+    brokenObservers: "counter",
+    requestErrors: "counter",
+    reservedNameRefusals: "counter",
+  };
+
+/**
+ * The engine's counter names, for pre-registration before any load goes out.
  *
  * The prefix stops a user counter *overwriting* an engine one. It does not stop a user counter
  * *starving* it: names are admitted while the map is under its cardinality cap, and every engine
  * counter is created lazily on its first increment — so an `onResponse` doing
  * `record.count(\`seat-\${seatId}\`)`, which is contract run 2's own shape, fills the map and then
- * every engine counter that has not yet fired is refused. The accounting identity, the broken-check
- * total and the checks table all stop holding together, silently, in the run that needs them most.
+ * every engine counter that has not yet fired is refused.
  *
- * Reserving a slot each before any load goes out costs eleven names out of 512 and makes
- * `known.has(name)` permanently true, which is the only thing the cardinality rule looks at.
+ * The counters that starve are exactly the ones that matter: `dropped` and `abandoned` are first
+ * incremented when the target falls over, which is *after* a run's worth of user names exist. A
+ * run that dropped 350 requests then reports zero drops, and `dispatched + dropped + notBuilt ===
+ * scheduled` — the identity the README claims — stops holding with nothing on the page to say so.
+ *
+ * Reserving a slot each costs nine names out of 512 and makes `known.has(name)` permanently true,
+ * which is the only thing the cardinality rule looks at.
  */
-export const ENGINE_COUNTERS: readonly string[] = [
-  EngineMetric.dispatched,
-  EngineMetric.dropped,
-  EngineMetric.responses,
-  EngineMetric.errors,
-  EngineMetric.abandoned,
-  EngineMetric.brokenChecks,
-  EngineMetric.brokenObservers,
-  EngineMetric.requestErrors,
-  EngineMetric.reservedNameRefusals,
-];
+export const ENGINE_COUNTERS: readonly string[] = Object.entries(ENGINE_METRIC_KINDS)
+  .filter(([, kind]) => kind === "counter")
+  .map(([key]) => EngineMetric[key as keyof typeof EngineMetric]);

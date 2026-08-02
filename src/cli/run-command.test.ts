@@ -119,6 +119,52 @@ describe("runFromConfig", () => {
     expect(report.verdict?.violated).toEqual(["impossible"]);
   }, 30_000);
 
+  it("reports the double sell even when a check is also broken", async () => {
+    // Two things went wrong: a predicate has a typo *and* the seat sold twice. Reporting only the
+    // typo loses the double sell, which is the thing this tool exists to find. The broken claim
+    // decides the exit code — a run whose assertions are unsound cannot be said to have judged the
+    // target — but both sentences reach the reader.
+    const configPath = writeConfig(`export default defineConfig({
+  setup: () => ({ url: ${JSON.stringify(target.url)} }),
+  scenarios: {
+    reads: {
+      profile: burst({ count: 20 }),
+      request: (s) => ({ url: s.url }),
+      checks: { parsesBody: (r) => JSON.parse("not json").ok },
+    },
+  },
+  teardown: async () => { throw new Error("double sell: 2 sold"); },
+});
+`);
+
+    const report = await runFromConfig({ configPath });
+
+    expect(report.exitCode).toBe(ExitCode.RunFailed);
+    expect(report.failure).toContain("broken observations");
+    expect(report.failure).toContain("double sell: 2 sold");
+  }, 30_000);
+
+  it("reports every reason a run failed, not only the first", async () => {
+    const configPath = writeConfig(`export default defineConfig({
+  setup: () => ({ url: ${JSON.stringify(target.url)} }),
+  scenarios: {
+    reads: {
+      profile: burst({ count: 20 }),
+      request: (s) => ({ url: s.url }),
+      checks: { parsesBody: (r) => JSON.parse("not json").ok },
+    },
+  },
+  thresholds: [{ name: "throws", assert: () => { throw new Error("bad claim"); } }],
+});
+`);
+
+    const report = await runFromConfig({ configPath });
+
+    expect(report.exitCode).toBe(ExitCode.RunFailed);
+    expect(report.failure).toContain("a threshold predicate threw");
+    expect(report.failure).toContain("broken observations");
+  }, 30_000);
+
   it("runs teardown after the storm, not before it", async () => {
     // The ordering *is* the milestone's argument, so it is asserted from inside the config: teardown
     // asks the target how many requests it has seen, and throws if the storm has not happened yet.

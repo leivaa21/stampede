@@ -143,3 +143,60 @@ describe("Counters cardinality", () => {
     }).not.toThrow();
   });
 });
+
+describe("reserve", () => {
+  it("claims a name so a later increment cannot be refused for cardinality", () => {
+    const counters = new Counters();
+    counters.reserve("stampede.dropped");
+    for (let i = 0; i < MAX_DISTINCT_TALLIES + 100; i += 1) {
+      counters.inc(`seat-${String(i)}`);
+    }
+
+    counters.inc("stampede.dropped", 350);
+
+    // Without the reservation this reads 0, and a run that dropped 350 requests reports a clean
+    // sweep — the engine's own bookkeeping starved out by names built from response data.
+    expect(counters.get("stampede.dropped")).toBe(350);
+  });
+
+  it("never resets a counter that already has a total", () => {
+    const counters = new Counters();
+    counters.inc("reserved201", 500);
+
+    counters.reserve("reserved201");
+
+    // Today only `runDispatch` reserves, and it does so on an empty map. The moment anything
+    // reserves lazily, dropping this guard is a published number silently reset to zero.
+    expect(counters.get("reserved201")).toBe(500);
+  });
+
+  it("counts a reservation it could not make, rather than dropping it", () => {
+    const counters = new Counters();
+    for (let i = 0; i < MAX_DISTINCT_TALLIES; i += 1) {
+      counters.inc(`seat-${String(i)}`);
+    }
+
+    counters.reserve("stampede.dropped");
+
+    // A refusal nobody counts is a silent hole in the numbers (`validate.ts`). Even the engine's
+    // own reservation can lose the race if a merged snapshot filled the map first.
+    expect(counters.refusedCount).toBe(1);
+  });
+
+  it("refuses an empty name like every other recording surface", () => {
+    expect(() => {
+      new Counters().reserve("");
+    }).toThrow(RangeError);
+  });
+
+  it("occupies a slot, because the cap describes the size of the map", () => {
+    const counters = new Counters();
+    counters.reserve("stampede.dropped");
+    for (let i = 0; i < MAX_DISTINCT_TALLIES; i += 1) {
+      counters.inc(`seat-${String(i)}`);
+    }
+
+    expect(counters.names).toHaveLength(MAX_DISTINCT_TALLIES);
+    expect(counters.refusedCount).toBe(1);
+  });
+});

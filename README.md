@@ -5,9 +5,9 @@ describe scenarios in typed TypeScript, and get a live terminal dashboard plus a
 markdown report — with named checks, custom counters merged across worker threads, and thresholds
 that decide the exit code.
 
-> **M1 is done.** `stampede run` works end to end: live dashboard, markdown report, exit codes CI
-> can act on. The numbers below are from real runs, not intentions — see
-> [Proving the numbers](#proving-the-numbers).
+> **M1 is done, and M2 lands the assertion machinery.** Named checks, custom counters merged across
+> worker threads, and per-_request_ variation all work today. The numbers below are from real runs,
+> not intentions — see [Proving the numbers](#proving-the-numbers).
 
 ## Why it exists
 
@@ -36,6 +36,16 @@ export default defineConfig({
         url: `http://localhost:5210/shows/${showId}/reservations`,
         body: { seatIds: [seatId] },
       }),
+
+      // Named claims about every response, counted pass/fail and printed as a row.
+      checks: {
+        oneWinnerOrConflict: (res) => res.status === 201 || res.status === 409,
+      },
+
+      // Counters and distributions a check cannot express. Merged across every worker thread.
+      onResponse: (res, record) => {
+        if (res.status === 201) record.count("reserved201");
+      },
     },
   },
 
@@ -48,7 +58,11 @@ export default defineConfig({
   },
 
   thresholds: [
-    { name: "every buyer got an answer", assert: (s) => s.scenarios[0]!.responseCount === 500 },
+    { name: "exactly one buyer wins", assert: (s) => s.scenarios[0]!.counters.reserved201 === 1 },
+    {
+      name: "every response was a win or a conflict",
+      assert: (s) => s.scenarios[0]!.checks.oneWinnerOrConflict?.failed === 0,
+    },
     {
       name: "p99 under 250ms",
       assert: (s) => (s.scenarios[0]!.latencyMs?.p99Ms ?? Infinity) < 250,
@@ -57,11 +71,22 @@ export default defineConfig({
 });
 ```
 
-> **Not in M1:** per-scenario `checks` and `onResponse`, and per-_request_ variation. The engine
-> carries one request per scenario, so "500 buyers, one seat" works and "500 buyers, 500 seats"
-> does not yet. Until they land, a run's verdict comes from `teardown` plus thresholds over the
-> run summary — which is enough for the case above, and is what the numbers below were produced
-> with.
+Every buyer above wants **the same seat**. To give each one a seat of their own, take the request's
+ordinal — it is the **run's**, not the worker's, so four threads still produce 500 distinct seats:
+
+```ts
+scenarios: {
+  hotShow: {
+    profile: constantRate({ ratePerSecond: 250, durationMs: 2_000 }),
+    request: ({ showId, seatIds }, ordinal) => ({
+      method: "POST",
+      url: `http://localhost:5210/shows/${showId}/reservations`,
+      body: { seatIds: [seatIds[ordinal]] },
+    }),
+    checks: { created: (res) => res.status === 201 },
+  },
+},
+```
 
 ```bash
 stampede run scenarios.ts                      # live TUI
@@ -185,9 +210,7 @@ report · live dashboard. **401 tests**, zero known vulnerabilities, gate two gr
 **Not published to npm yet.** Install from source; `@leivaa21/stampede` is reserved.
 
 **Deferred on purpose:** SSE / long-lived streaming requests, distributed workers, protocols beyond
-HTTP(S), a cloud service, a scripting DSL. Per-_request_ variation (a different seat per buyer) and
-per-scenario `checks`/`onResponse` are named M2 work — the engine carries one request per scenario
-today, which covers "500 buyers, one seat" but not "500 buyers, 500 seats".
+HTTP(S), a cloud service, a scripting DSL. Say no on purpose.
 
 Built as the instrument for [open-ticket](https://github.com/leivaa21/open-ticket)'s published load
 numbers — built the instrument, then used it to validate the architecture.

@@ -121,10 +121,10 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
     return { ...failed(unmeasured, settings), summary, supersededSnapshots };
   }
 
-  // Collected here, reported after the thresholds. These are runs whose *measurements* are real
-  // and whose *claims* are not, so unlike an unmeasured scenario there is a percentile table worth
-  // printing — and returning early would cost the reader the specific half of the story, the same
-  // trade the teardown path below already refuses.
+  // Collected here, reported after the thresholds and the teardown. These are runs whose
+  // *measurements* are real and whose *claims* are not, so unlike an unmeasured scenario there is a
+  // percentile table worth printing — and returning early would cost the reader the specific half
+  // of the story, the same trade the teardown path below already refuses.
   const runFailures = [findBrokenObservations(summary), findRefusedRecordings(summary)].filter(
     (failure): failure is string => failure !== undefined,
   );
@@ -140,19 +140,28 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
     }
   }
 
-  // Evaluated even when teardown failed. Both land on exit 1, so returning early bought nothing
-  // and cost the reader the more specific half: "the seat sold twice" is the symptom, and
-  // "`exactly one buyer wins` — reserved201 was 500" is the claim that names it.
+  // Evaluated even when teardown failed. Returning early bought nothing and cost the reader the
+  // more specific half: "the seat sold twice" is the symptom, and "`exactly one buyer wins` —
+  // reserved201 was 500" is the claim that names it.
   const verdict = evaluateThresholds(config.thresholds ?? [], summary);
-  // Every reason the *run* failed, never only the first: one broken claim hiding behind another is
-  // how a second bug survives a fix for the first.
+  // Every *kind* of reason the run did not come out clean, never only the first: one failure
+  // hiding behind another is how a second bug survives a fix for the first. (Each finder still
+  // names one scenario — the first offending one — which is enough to act on.)
+  //
+  // `teardownFailure` belongs in here rather than only in the exit code below. Moving the broken
+  // observations check after `teardown` meant teardown now *runs* on that path, and a config whose
+  // check has a typo *and* whose seat sold twice would otherwise report only the typo — losing the
+  // double sell, which is the thing the tool exists to find.
   const failures = [
     ...(verdict.broken.length > 0
       ? [`a threshold predicate threw: ${verdict.broken.join(", ")}`]
       : []),
     ...runFailures,
+    ...(teardownFailure !== undefined ? [teardownFailure] : []),
   ];
-  if (failures.length > 0) {
+  // Exit 2 outranks exit 1: a run whose claims are broken cannot be trusted to have judged the
+  // target at all, so "the run failed" is the honest verdict even when a threshold also fell.
+  if (verdict.broken.length > 0 || runFailures.length > 0) {
     return {
       exitCode: ExitCode.RunFailed,
       summary,
@@ -165,9 +174,7 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
 
   return {
     exitCode:
-      teardownFailure !== undefined || verdict.violated.length > 0
-        ? ExitCode.ThresholdViolated
-        : ExitCode.Ok,
+      failures.length > 0 || verdict.violated.length > 0 ? ExitCode.ThresholdViolated : ExitCode.Ok,
     summary,
     verdict,
     failure: teardownFailure,

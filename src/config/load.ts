@@ -2,7 +2,11 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { brokenCheckCounter, RESERVED_METRIC_PREFIX } from "../engine/metric-names.ts";
-import { MAX_DISTINCT_SCENARIOS, MAX_METRIC_NAME_LENGTH } from "../metrics/validate.ts";
+import {
+  MAX_CHECKS_PER_SCENARIO,
+  MAX_DISTINCT_SCENARIOS,
+  MAX_METRIC_NAME_LENGTH,
+} from "../metrics/validate.ts";
 import type { StampedeConfig } from "./types.ts";
 
 /**
@@ -207,6 +211,14 @@ export const assertConfigShape: (
       if (!isRecord(checks)) {
         throw new ConfigLoadError(
           `${configPath}: scenario "${name}" has \`checks\` that is not an object of named predicates`,
+        );
+      }
+      // Each check reserves a counter slot for its broken tally, from the same budget the user's
+      // own counters draw on. Left unbounded, a config could starve itself and then be told its
+      // counters were the problem.
+      if (Object.keys(checks).length > MAX_CHECKS_PER_SCENARIO) {
+        throw new ConfigLoadError(
+          `${configPath}: scenario "${name}" declares ${String(Object.keys(checks).length)} checks; the limit is ${String(MAX_CHECKS_PER_SCENARIO)}`,
         );
       }
       for (const [checkName, predicate] of Object.entries(checks)) {

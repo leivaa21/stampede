@@ -108,7 +108,7 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
   }
   if (scenario.refusedRecordings > 0) {
     lines.push(
-      `    ⚠ ${String(scenario.refusedRecordings)} recordings refused — more distinct metric names than the cap allows, so some counters are missing entirely`,
+      `    ⚠ ${String(scenario.refusedRecordings)} recordings refused — more distinct metric names than a cap allows, so some counters or distributions are missing entirely, not merely undercounted`,
     );
   }
 

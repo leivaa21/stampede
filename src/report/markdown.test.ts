@@ -251,10 +251,49 @@ describe("renderMarkdownReport", () => {
       ),
     );
 
-    expect(text).toContain("|  | check | passed | failed |");
-    expect(text).toContain("| PASS | oneWinnerOrConflict | 500 | 0 |");
+    // Whole rows, terminated: `toContain("| PASS | oneWinnerOrConflict | 500 | 0 |")` also matches
+    // a row with a fourth column after it, so the assertion survived the column being added.
+    expect(text).toContain("|  | check | passed | failed | broken |\n");
+    expect(text).toContain("| PASS | oneWinnerOrConflict | 500 | 0 | 0 |\n");
     // Bold, so a failure survives a skim of a pasted table.
-    expect(text).toContain("| **FAIL** | noDoubleSell | 480 | 20 |");
+    expect(text).toContain("| **FAIL** | noDoubleSell | 480 | 20 | 0 |\n");
+  });
+
+  it("publishes a broken check as BROKEN, never as a pass and never as a target failure", () => {
+    // This table gets pasted into a README and outlives the run that produced it. `| PASS |` here
+    // is a green claim nobody verified; `| **FAIL** |` accuses the target of double-selling 500
+    // seats because a predicate had a typo (D2-04).
+    const text = render(
+      summaryOf(
+        scenario({ checks: { oneWinnerOrConflict: { passed: 0, failed: 0, broken: 500 } } }),
+      ),
+    );
+
+    expect(text).toContain("| **BROKEN** | oneWinnerOrConflict | 0 | 0 | 500 |\n");
+  });
+
+  it("marks a check broken even when most responses passed it", () => {
+    // A check that broke on 40 of 500 responses is not a check anyone should read a verdict from,
+    // and 460 passes must not out-vote the fact that the predicate is unsound.
+    const text = render(
+      summaryOf(scenario({ checks: { parsesBody: { passed: 460, failed: 0, broken: 40 } } })),
+    );
+
+    expect(text).toContain("| **BROKEN** | parsesBody | 460 | 0 | 40 |\n");
+  });
+
+  it("says when recordings were refused, so a missing counter is not read as a zero", () => {
+    const text = render(summaryOf(scenario({ refusedRecordings: 88 })));
+
+    expect(text).toContain("**88 recordings refused**");
+  });
+
+  it("names requests the config could not build in the shortfall", () => {
+    const text = render(
+      summaryOf(scenario({ scheduledCount: 100, dispatchedCount: 90, requestErrorCount: 10 })),
+    );
+
+    expect(text).toContain("10 not built");
   });
 
   it("prints counters and recorded distributions when a scenario has them", () => {

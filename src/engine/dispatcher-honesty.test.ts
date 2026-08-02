@@ -6,11 +6,20 @@ import {
   summaryOf,
 } from "../test-support/dispatch-fixtures.ts";
 import { FakeClock } from "../test-support/fake-clock.ts";
-import { FakeTransport, synchronouslyThrowingTransport } from "../test-support/fake-transport.ts";
+import {
+  FakeTransport,
+  synchronouslyThrowingTransport,
+  type FakeRequest,
+} from "../test-support/fake-transport.ts";
 import { burst, constantRate } from "./arrival-profiles.ts";
+import type { Transport, TransportResponse } from "./ports.ts";
 
-/** Bumped by the counter-starvation test's `onResponse`, which needs a distinct name per response. */
-let recorded = 0;
+/** The reference target's answer, when it is answering. */
+const okResponse = (): TransportResponse => ({
+  status: 200,
+  headers: {},
+  text: JSON.stringify({ ok: true }),
+});
 import { EngineMetric } from "./metric-names.ts";
 
 /**
@@ -166,60 +175,114 @@ describe("one bad request cannot cost the whole run", () => {
 describe("user code cannot starve the engine's own bookkeeping", () => {
   /**
    * The counter map is bounded, and `record.count(`seat-${id}`)` — contract run 2's own shape —
-   * reaches that bound legitimately. Before the engine reserved its names, whatever it had not yet
-   * incremented by then was refused: the drop count, the request-error count and the broken-check
-   * total all stopped being recordable, and the report went quiet about them in exactly the run
-   * that produced the most of them.
+   * reaches that bound legitimately. Engine counters are created lazily on their first increment,
+   * so before the engine reserved its names, whatever had not yet fired by then was refused.
+   *
+   * **The ordering is the whole test.** A burst whose dispatches all happen before any response
+   * cannot show this: `dispatched` and `requestErrors` claim their slots in that first batch, and
+   * the check loop claims `brokenChecks` before `onResponse` writes its first name. The counters
+   * that actually starve are the ones whose first increment arrives *after* user code has filled
+   * the map — drops, abandonment, transport errors, and a check that starts breaking late. So the
+   * target here answers a few hundred requests instantly, and only then stops answering at all.
    */
-  it("keeps counting drops, request errors and broken checks after a user fills the name budget", async () => {
+  it("keeps counting drops and abandonment after a user has filled the name budget", async () => {
     const clock = new FakeClock();
-    const transport = new FakeTransport({ clock });
+    let answered = 0;
+    // Answers the first 600 instantly, then never again — a target that falls over mid-run.
+    // 600 is above the 512-name cap on purpose: the map has to be full before the first drop.
+    const transport: Transport<FakeRequest> = {
+      send: () => {
+        answered += 1;
+        return answered <= 600 ? Promise.resolve(okResponse()) : new Promise(() => undefined);
+      },
+    };
 
+    let names = 0;
     const outcome = await runToCompletion(
       {
         scenarios: [
           {
             name: "reads",
-            profile: burst({ count: 900 }),
-            // Every ninth request cannot be built. These land before most of the responses do,
-            // but the reservation is what makes them recordable at all.
-            requestFor: (ordinal) => {
-              if (ordinal % 9 === 0) {
-                throw new Error("no seat for that ordinal");
-              }
-              return { label: "reads" };
+            profile: constantRate({ ratePerSecond: 1_000, durationMs: 1_000 }),
+            requestFor: () => ({ label: "reads" }),
+            checks: {
+              // Sound until the target stops answering, then broken on every response after —
+              // a JSON check meeting an HTML 503 page. Its per-name counter is claimed on the
+              // first *breakage*, which is deliberately after the map is full.
+              parsesBody: (response) => (JSON.parse(response.text) as { ok: boolean }).ok,
             },
-            checks: { alwaysBroken: () => undefined as unknown as boolean },
-            // One counter name per response: 800 distinct names against a 512 cap.
+            // One name per response: 600 distinct names against a 512-name cap, every slot taken
+            // before the first drop happens.
             onResponse: (_response, record) => {
-              recorded += 1;
-              record.count(`seat-${String(recorded)}`);
+              names += 1;
+              record.count(`seat-${String(names)}`);
             },
           },
         ],
-        maxInFlight: 1_000,
-        drainTimeoutMs: 1_000,
+        maxInFlight: 50,
+        drainTimeoutMs: 100,
       },
       clock,
       transport,
     );
     const reads = summaryOf(outcome, "reads");
 
-    expect(reads.requestErrorCount).toBe(100);
+    // The counters that only exist because the target fell over. Without reservation these are
+    // refused and the run reports a clean sweep of a thousand requests it never completed.
+    expect(reads.droppedCount).toBeGreaterThan(0);
+    expect(reads.abandonedCount).toBeGreaterThan(0);
     expect(reads.dispatchedCount + reads.droppedCount + reads.requestErrorCount).toBe(
       reads.scheduledCount,
     );
-    // Every response broke the check. Losing this to the budget published `PASS alwaysBroken`
-    // for a run in which the predicate never once returned a boolean.
-    expect(reads.checks.alwaysBroken).toEqual({
-      passed: 0,
-      failed: 0,
-      broken: reads.responseCount,
-    });
-    expect(reads.brokenObservations).toBe(reads.responseCount);
-    // The refusals themselves are reported rather than absorbed — the user asked for 800 names and
-    // got about 500, and a threshold reading one of the missing ones must not read a silent 0.
-    expect(reads.refusedRecordings).toBeGreaterThan(0);
+    expect(reads.responseCount + reads.errorCount + reads.abandonedCount).toBe(
+      reads.dispatchedCount,
+    );
+    // And the refusals themselves are published rather than absorbed: 600 names asked for, 512
+    // slots in the map, nine of them already claimed by the engine plus one for the check.
+    expect(reads.refusedRecordings).toBe(600 - (512 - 10));
+  });
+
+  it("keeps attributing a check that only starts breaking once the budget is full", async () => {
+    const clock = new FakeClock();
+    let answered = 0;
+    const transport: Transport<FakeRequest> = {
+      send: () => {
+        answered += 1;
+        return Promise.resolve(
+          answered <= 600 ? okResponse() : { ...okResponse(), text: "<html>" },
+        );
+      },
+    };
+
+    let names = 0;
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: constantRate({ ratePerSecond: 1_000, durationMs: 1_000 }),
+            requestFor: () => ({ label: "reads" }),
+            checks: { parsesBody: (response) => (JSON.parse(response.text) as { ok: boolean }).ok },
+            onResponse: (_response, record) => {
+              names += 1;
+              record.count(`seat-${String(names)}`);
+            },
+          },
+        ],
+        maxInFlight: 1_000,
+        drainTimeoutMs: 500,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    // 600 good responses fill the map; every one after breaks the predicate. Losing the per-name
+    // counter here publishes `PASS parsesBody 600 / 0 / 0` for a run in which 400 responses broke
+    // it outright — and losing the total publishes exit 0 for the same run.
+    expect(reads.checks.parsesBody?.broken).toBe(reads.responseCount - 600);
+    expect(reads.checks.parsesBody?.passed).toBe(600);
+    expect(reads.brokenObservations).toBe(reads.responseCount - 600);
   });
 });
 

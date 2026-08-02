@@ -45,6 +45,16 @@ export const MAX_DISTINCT_TALLIES = 512;
 /** Scenarios are few by nature; a config generating more than this is a bug worth surfacing. */
 export const MAX_DISTINCT_SCENARIOS = 64;
 
+/**
+ * Checks a single scenario may declare.
+ *
+ * Each one reserves a counter slot for its broken tally, out of the same `MAX_DISTINCT_TALLIES`
+ * budget the user's own counters draw on. Unbounded, 400 declared checks would silently leave a
+ * config 103 counter slots and then fail its run with a message about counters-per-seat. 64 is
+ * generous for named claims about one scenario and leaves the budget recognisably intact.
+ */
+export const MAX_CHECKS_PER_SCENARIO = 64;
+
 export const assertMetricName = (name: string, kind: string): void => {
   if (name.length === 0) {
     throw new RangeError(`A ${kind} name must not be empty`);

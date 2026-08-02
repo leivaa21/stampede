@@ -78,11 +78,13 @@ describe("summariseRun separates the user's metrics from the engine's", () => {
   it("orders checks by name, so two workers finishing in either order publish the same table", () => {
     const metrics = new MetricsRegistry();
     const reads = metrics.scenario("reads");
-    // Recorded in an order no reader would choose. Map iteration would preserve it, and a report
-    // whose rows move when a worker finishes sooner is not a reproducible report (D1-02).
-    for (const name of ["zeta", "alpha", "mid"]) {
-      reads.checks.record(name, true);
-    }
+    // Two *sources* of names, each already sorted within itself: recorded checks, and the broken
+    // counters. Concatenating them is what needs the sort — `mid` comes from the counter map and
+    // has to land between two names from the tally map. Without it a report's rows move when a
+    // worker finishes sooner, which is not a reproducible report (D1-02).
+    reads.checks.record("zeta", true);
+    reads.checks.record("alpha", true);
+    reads.counters.inc(brokenCheckCounter("mid"), 3);
 
     const [summary] = summariseRun(oneScenario, metrics).scenarios;
 

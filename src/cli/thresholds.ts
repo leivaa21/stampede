@@ -24,18 +24,6 @@ export interface Verdict {
 }
 
 /**
- * A scenario that recorded nothing fails the **run**, before any threshold is evaluated.
- *
- * D1-02 makes an empty histogram `undefined` rather than `0`, because zero latency is a lie about a
- * run that measured nothing. Rejecting the empty run here is what lets the threshold-facing summary
- * expose plain numbers — otherwise the obvious way to satisfy the type-checker would be
- * `(s.p99 ?? 0) < 250`, and a scenario that never ran would *pass* its threshold. That is precisely
- * the lie the `undefined` was chosen to prevent, reintroduced by the ergonomics of preventing it.
- *
- * Exit 2 rather than 1 is the honest classification: a scenario that issued requests and got nothing
- * back is broken, not violated.
- */
-/**
  * Points at the knob the counts actually implicate.
  *
  * "check the target is reachable" is one hypothesis, and printing it while the same sentence says
@@ -58,13 +46,6 @@ const adviceFor = (scenario: RunSummary["scenarios"][number]): string => {
 };
 
 /**
- * A scenario whose *assertions* are broken, rather than whose target is.
- *
- * D2-04: a check that threw or returned a non-boolean is a bug in the claim, so the run fails —
- * but on the run-failed code, with the assertion named. Reporting it as a violated threshold would
- * blame the target for a typo, which is the confusion the exit-code contract exists to prevent.
- */
-/**
  * A scenario whose numbers are *incomplete*, rather than bad.
  *
  * Cardinality caps refuse recordings rather than throwing, which is right — a run must not die at
@@ -77,16 +58,24 @@ export const findRefusedRecordings = (summary: RunSummary): string | undefined =
     if (scenario.refusedRecordings > 0) {
       return (
         `scenario "${scenario.name}" refused ${String(scenario.refusedRecordings)} recordings — ` +
-        `it asked for more distinct metric names than the per-scenario cap allows. ` +
-        `The values that were recorded are real, but some are missing, so a threshold reading ` +
-        `one of them would read 0 rather than the truth. Use fewer distinct names — ` +
-        `a counter per seat is a cardinality bomb; a counter per outcome is not.`
+        `it asked for more distinct metric names than a per-scenario cap allows (512 counters, ` +
+        `512 checks, 32 distributions), or for a name over 120 characters. ` +
+        `The values that were recorded are real, but some are missing entirely, so a threshold ` +
+        `reading one of them would read 0 rather than the truth. Use fewer distinct names — ` +
+        `a counter or a trend per seat is a cardinality bomb; one per outcome is not.`
       );
     }
   }
   return undefined;
 };
 
+/**
+ * A scenario whose *assertions* are broken, rather than whose target is.
+ *
+ * D2-04: a check that threw or returned a non-boolean is a bug in the claim, so the run fails —
+ * but on the run-failed code, with the assertion named. Reporting it as a violated threshold would
+ * blame the target for a typo, which is the confusion the exit-code contract exists to prevent.
+ */
 export const findBrokenObservations = (summary: RunSummary): string | undefined => {
   for (const scenario of summary.scenarios) {
     if (scenario.brokenObservations > 0) {
@@ -101,6 +90,18 @@ export const findBrokenObservations = (summary: RunSummary): string | undefined 
   return undefined;
 };
 
+/**
+ * A scenario that recorded nothing fails the **run**, before any threshold is evaluated.
+ *
+ * D1-02 makes an empty histogram `undefined` rather than `0`, because zero latency is a lie about a
+ * run that measured nothing. Rejecting the empty run here is what lets the threshold-facing summary
+ * expose plain numbers — otherwise the obvious way to satisfy the type-checker would be
+ * `(s.p99 ?? 0) < 250`, and a scenario that never ran would *pass* its threshold. That is precisely
+ * the lie the `undefined` was chosen to prevent, reintroduced by the ergonomics of preventing it.
+ *
+ * Exit 2 rather than 1 is the honest classification: a scenario that issued requests and got nothing
+ * back is broken, not violated.
+ */
 export const findUnmeasuredScenario = (summary: RunSummary): string | undefined => {
   for (const scenario of summary.scenarios) {
     if (scenario.scheduledCount > 0 && scenario.responseCount === 0) {

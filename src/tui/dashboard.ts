@@ -1,4 +1,4 @@
-import { duration, ms, rate } from "../report/format.ts";
+import { duration, ms, plain, rate } from "../report/format.ts";
 import type { RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 
 /**
@@ -30,8 +30,9 @@ const SHOW_CURSOR = `${CSI}?25h`;
  * rather than code unit also keeps an emoji from being cut into a lone surrogate.
  */
 const truncate = (line: string, width: number): string => {
-  // eslint-disable-next-line no-control-regex
-  const printable = line.replace(/[\u0000-\u001f\u007f]/g, " ");
+  // `plain` rather than a second regex here: two answers to "what is a control character" in one
+  // repo is one too many, and this file's copy was the weaker of them (it missed the C1 range).
+  const printable = plain(line);
   // Spreading a string iterates code points, which is the point: slicing by code unit can cut an
   // emoji in half and emit a lone surrogate to the terminal. Grapheme clusters would be better
   // still, but `Intl.Segmenter` is a dependency-free improvement for another day and the failure it
@@ -109,6 +110,11 @@ const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonl
   } else if (scenario.brokenObservations > 0) {
     // onResponse threw, or a reserved name was refused — no check name to blame.
     lines.push(`    ⚠ ${String(scenario.brokenObservations)} broken observations`);
+  }
+  // Live, for the same reason drops are: this now *fails the run*, and finding out at the end that
+  // the last nineteen minutes were recording into a full map is the silence D2-05 refuses.
+  if (scenario.refusedRecordings > 0) {
+    lines.push(`    ⚠ ${String(scenario.refusedRecordings)} recordings refused — too many names`);
   }
 
   return lines;

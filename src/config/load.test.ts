@@ -155,6 +155,15 @@ await loadConfig(${JSON.stringify(file)}).catch((error) => {
       ).rejects.toThrow(/scenario "reads" has an `onResponse` that is not a function/);
     });
 
+    it("caps how many checks one scenario may declare", async () => {
+      // Every check reserves a counter slot for its broken tally. Unbounded, a config starves its
+      // own counters and is then told the counters are at fault.
+      const many = Array.from({ length: 65 }, (_, i) => `c${String(i)}: () => true`).join(", ");
+      await expect(loadConfig(writeConfig(withScenario(`checks: { ${many} }`)))).rejects.toThrow(
+        /declares 65 checks; the limit is 64/,
+      );
+    });
+
     it("accepts a plain synchronous check", async () => {
       const config = await loadConfig(
         writeConfig(withScenario(`checks: { created: (r) => r.status === 201 }`)),

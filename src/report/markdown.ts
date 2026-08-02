@@ -163,7 +163,7 @@ const scenarioSection = (scenario: ScenarioRunSummary): string => {
     ...(scenario.refusedRecordings > 0
       ? [
           "",
-          `> ⚠ **${String(scenario.refusedRecordings)} recordings refused** — this scenario asked for more distinct metric names than the per-scenario cap allows, so some counters are missing from the table above **entirely**, not merely undercounted.`,
+          `> ⚠ **${String(scenario.refusedRecordings)} recordings refused** — this scenario asked for more distinct metric names than a per-scenario cap allows (512 counters, 512 checks, 32 distributions), so some rows are missing from the tables above **entirely**, not merely undercounted.`,
         ]
       : []),
     // Blank `>` between notes, or GitHub merges adjacent blockquote lines into one paragraph and
