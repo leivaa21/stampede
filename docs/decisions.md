@@ -269,3 +269,68 @@ frame must **not** use `RunSummary.achievedRatePerSecond` — that divides by th
 configured window, which is right only at the end, and mid-run showed a run issuing exactly its
 requested rate as a two-thirds shortfall for its entire duration. The dashboard derives its own rate
 from elapsed time. A consumer that throws is isolated: a render bug must not abort a load test.
+
+## 2026-08-02 — M2: the response body reaches user code, always
+
+**Context:** checks, `onResponse` and open-ticket's contract run 4 (`behindMs`) all need what came
+back, and `TransportResponse` carried only a status. Options: always decode, opt in per scenario,
+infer from whether the scenario declares callbacks, or hand out a lazy `await response.text()`.
+**Decision:** every response carries `{ status, headers, text }`, unconditionally. `text` is a
+string; it is not JSON-parsed.
+**Rationale:** the bytes are **already read** — `http-transport.ts` drains the body so the measured
+window covers the whole response rather than stopping at the headers — so the new cost is decoding
+and holding one string per in-flight response, bounded by `maxInFlight`. Opt-in costs nothing at
+runtime and costs a user their first debugging session when a check reads `undefined`. The lazy
+accessor is the one that actually loses something real: the read would land **outside** the measured
+window, so latency would silently stop meaning what it means everywhere else — the one trade this
+repo will not make. Parsing is left to the user because it costs on the hot path and throws on the
+one response that is not JSON, which is the response a check most wants to catch.
+**Consequences:** user callbacks run per response on the worker's hot path (see the throw rule
+below). A very large body is held briefly; `maxInFlight` is the bound, as it is for everything else.
+
+## 2026-08-02 — M2: `request(state, index)` carries the run's ordinal, not the shard's
+
+**Context:** contract run 2 is N buyers across N _distinct_ seats. The engine carried one request
+per scenario for its whole lifetime.
+**Decision:** the request builder receives the dispatch ordinal, and that ordinal is **global to the
+run**: `shardIndex + localIndex * shardCount`.
+**Rationale:** `mergedSchedule` numbers dispatches from 0 within each shard, so four workers would
+each build request 0, 1, 2 — and "N buyers, N distinct seats" would quietly become four buyers per
+seat, which is precisely the bug run 2 exists to detect. The stride split _is_ that mapping, so the
+recovery is exact by construction rather than by arithmetic that has to add up;
+`schedule-split.ts` wrote the formula down when it chose the stride, for this milestone.
+**Consequences:** a request object is allocated per dispatch rather than per scenario — the honest
+cost, since a client sending a different body each time really does build it each time. The
+body-encoding memo in `http-transport.ts` is keyed on the request object, so it stops hitting for
+varying requests; it stays correct (encode once per distinct request) and simply stops helping.
+`request(state)` continues to work — the second parameter is optional to the user.
+
+## 2026-08-02 — M2: counters and checks live per scenario, and D1-06's example is corrected
+
+**Context:** D1-06's worked example promised `s.counters.reserved201` at the top level. D1-05, added
+later, established that a run holds several concurrent scenarios, and `metrics/` namespaces
+everything per scenario.
+**Decision:** thresholds read `s.scenarios[i].counters.reserved201` and
+`s.scenarios[i].checks.doubleSell.failed`. There is no merged top-level view, not even as a
+convenience.
+**Rationale:** the two promises cannot both hold. Merging across scenarios means a `reserved201` in
+the write scenario and one in the read scenario silently add together — the class of quiet wrongness
+this repo has refused at every turn — and a convenience view is exactly the form everyone would
+reach for. Correcting the older example is cheaper than bending the storage to fit it, and
+per-scenario is the shape that needs no translation layer.
+**Consequences:** thresholds are wordier. `docs/design/m1.md`'s D1-06 example is updated rather than
+left to mislead.
+
+## 2026-08-02 — M2: a check that throws is a broken check, not a failed one
+
+**Context:** user code now runs per response, on the hot path, inside a worker.
+**Decision:** a check returning `false` is a **failure** — counted against its name, reported as a
+row, readable by thresholds. A check or `onResponse` that **throws** is a _broken_ check: counted
+separately, the run continues, and the run fails at the end with the check named.
+**Rationale:** the same split M1's D1-06 made for threshold predicates, for the same reason. A bug
+in an assertion must not be reported as the target violating an invariant — that sends someone
+hunting a race condition that was never there — and must not abort a twenty-minute run either. A
+check that throws on every response would otherwise fill a run with noise; counting is what makes it
+visible without drowning the report.
+**Consequences:** the summary carries a broken-check tally alongside pass/fail, and the report and
+dashboard distinguish the three states.

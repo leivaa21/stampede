@@ -28,10 +28,13 @@
 > is cross-checked by the target's own request count.
 >
 > **Not done:** not published to npm (`@leivaa21/stampede` is reserved, `publishConfig` is set).
-> **M2 candidates:** per-request variation (a different seat per buyer — the engine carries one
-> request per scenario today, so contract run 2 is not yet expressible), per-scenario `checks` and
-> `onResponse`, and SSE / long-lived streaming requests. Keep this line current after every merged
-> slice.
+> **M2 is designed and in progress** (`docs/design/m2.md`): the assertion machinery reaches the
+> response. `TransportResponse` gains headers and text (the bytes are already read for timing);
+> per-scenario `checks` and `onResponse` feed the `Counters`/`Checks` that `metrics/` has had since
+> M1 and nothing could reach; `request(state, index)` carries the **run's** ordinal, not the shard's;
+> counters and checks land per scenario on the threshold-facing summary. That makes open-ticket's
+> contract runs 1, 2 and 4 expressible — SSE fan-out (run 5) is M3, and open-ticket said in writing
+> it is not waiting on it. Keep this line current after every merged slice.
 
 ## Identity
 
