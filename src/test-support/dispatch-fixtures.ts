@@ -13,7 +13,7 @@ import type { FakeRequest } from "./fake-transport.ts";
 export const scenario = (name: string, profile: ArrivalProfile): Scenario<FakeRequest> => ({
   name,
   profile,
-  request: { label: name },
+  requestFor: () => ({ label: name }),
 });
 
 /** Starts a run and drives the fake timeline to its end. Nothing here sleeps for real. */

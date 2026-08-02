@@ -72,6 +72,15 @@ const assertRequestShape = (built: unknown, name: string): HttpRequestSpec => {
   return built as HttpRequestSpec;
 };
 
+const eagerlyValidatedBuilder = (
+  scenario: StampedeConfig<unknown>["scenarios"][string],
+  setupState: unknown,
+  name: string,
+): ((ordinal: number) => HttpRequestSpec) => {
+  assertRequestShape(scenario.request(setupState, 0), name);
+  return (ordinal) => assertRequestShape(scenario.request(setupState, ordinal), name);
+};
+
 export const scenariosFrom = (
   config: StampedeConfig<unknown>,
   setupState: unknown,
@@ -79,9 +88,10 @@ export const scenariosFrom = (
   Object.entries(config.scenarios).map(([name, scenario]) => ({
     name,
     profile: scenario.profile,
-    // Built once per scenario, here, rather than per dispatch: the engine's request is one value
-    // for the whole scenario today. When per-request variation lands this is the line that changes.
-    request: assertRequestShape(scenario.request(setupState), name),
+    // Built once per dispatch (D2-02's accepted cost), but validated **eagerly at ordinal 0** so
+    // the common mistake — returning a string, or forgetting the url — fails at startup with the
+    // scenario named, rather than as a wall of counted build errors twenty minutes in.
+    requestFor: eagerlyValidatedBuilder(scenario, setupState, name),
     checks: scenario.checks,
     onResponse: scenario.onResponse,
   }));

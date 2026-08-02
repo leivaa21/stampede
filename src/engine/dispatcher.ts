@@ -145,11 +145,26 @@ export const runDispatch = async <TRequest>(
     }
   };
 
-  const dispatch = (state: ScenarioState<TRequest>, instantMs: number): void => {
+  const shard = spec.shard ?? { index: 0, count: 1 };
+
+  const dispatch = (state: ScenarioState<TRequest>, instantMs: number, ordinal: number): void => {
     // The cap is the price of open-loop dispatch: against a target that has stopped answering, the
     // schedule keeps producing instants and memory is otherwise unbounded. Dropped *and* counted.
     if (inFlight.count >= spec.maxInFlight) {
       state.metrics.counters.inc(EngineMetric.dropped);
+      return;
+    }
+
+    // Global to the run, not local to this shard: four workers each numbering from 0 would make
+    // "N buyers, N distinct seats" into four buyers per seat (D2-02). The stride split is exactly
+    // this mapping, so it is a recovery rather than an approximation.
+    let request: TRequest;
+    try {
+      request = state.requestFor(shard.index + ordinal * shard.count);
+    } catch {
+      // A request that could not be built was never sent, so it is not a transport failure and
+      // must not be counted as one — the target is not the thing that went wrong.
+      state.metrics.counters.inc(EngineMetric.requestErrors);
       return;
     }
 
@@ -161,7 +176,7 @@ export const runDispatch = async <TRequest>(
     state.metrics.trend(EngineMetric.scheduleLag).recordMs(Math.max(0, sentAtMs - scheduledAtMs));
 
     inFlight.track(
-      sendSafely(state.request).then(
+      sendSafely(request).then(
         (response): void => {
           state.pendingCount -= 1;
           if (recordingResponses) {
@@ -193,7 +208,7 @@ export const runDispatch = async <TRequest>(
       continue;
     }
     while (next.done !== true && next.value.instantMs <= elapsedMs) {
-      dispatch(next.value.scenario, next.value.instantMs);
+      dispatch(next.value.scenario, next.value.instantMs, next.value.index);
       next = schedule.next();
     }
     // One event-loop turn per batch, so responses can land and in-flight can drain. Without it a

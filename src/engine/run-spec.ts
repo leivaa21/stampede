@@ -1,4 +1,5 @@
 import type { TransportResponse } from "./ports.ts";
+import type { Shard } from "./schedule-split.ts";
 import type { ScheduledScenario } from "./schedule.ts";
 import { assertCount, assertDurationMs, assertPositiveCount } from "./validate.ts";
 
@@ -8,12 +9,12 @@ export const DEFAULT_DRAIN_TIMEOUT_MS = 30_000;
 /**
  * A scenario: a name, when it dispatches, and what it sends.
  *
- * The request is one value for the whole scenario. Per-request variation (a different seat id per
- * buyer) is the scenario config's job in a later PR, not the transport's — the engine hands
- * whatever it is given straight through.
+ * `requestFor` takes the dispatch ordinal so a scenario can vary per request — "N buyers, N
+ * distinct seats" (D2-02). The ordinal it receives is **global to the run**, not local to a shard;
+ * see `RunSpec.shard`.
  */
 export interface Scenario<TRequest> extends ScheduledScenario {
-  readonly request: TRequest;
+  readonly requestFor: (ordinal: number) => TRequest;
   /** Named predicates over each response — see `config/types.ts` and D2-04. */
   readonly checks?: Readonly<Record<string, (response: TransportResponse) => boolean>>;
   /** Runs once per response, for counters and trends a check cannot express. */
@@ -48,6 +49,17 @@ export interface RunSpec<TRequest> {
    * abandoned and left uncounted in the latency percentiles.
    */
   readonly drainTimeoutMs?: number;
+  /**
+   * Which slice of the run this dispatch loop is, so ordinals can be made global.
+   *
+   * `mergedSchedule` numbers dispatches from 0 within whatever it is given, so four workers would
+   * each build request 0, 1, 2 — and "N buyers, N distinct seats" would quietly become four buyers
+   * per seat, the exact bug contract run 2 exists to detect. The stride split *is* the mapping
+   * `shardIndex + localOrdinal * shardCount`, so the recovery is exact by construction.
+   *
+   * Defaults to the whole run being one shard, which is what a single-threaded `runDispatch` is.
+   */
+  readonly shard?: Shard;
 }
 
 /**

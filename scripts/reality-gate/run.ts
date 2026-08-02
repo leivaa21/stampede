@@ -105,7 +105,7 @@ const gateRun = async ({
           {
             name: "reads",
             profile: constantRate({ ratePerSecond, durationMs }),
-            request: { url: TARGET_URL },
+            requestFor: () => ({ url: TARGET_URL }),
           },
         ],
         maxInFlight: 500,
