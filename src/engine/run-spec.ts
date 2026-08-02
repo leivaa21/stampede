@@ -1,3 +1,4 @@
+import type { TransportResponse } from "./ports.ts";
 import type { ScheduledScenario } from "./schedule.ts";
 import { assertCount, assertDurationMs, assertPositiveCount } from "./validate.ts";
 
@@ -13,6 +14,16 @@ export const DEFAULT_DRAIN_TIMEOUT_MS = 30_000;
  */
 export interface Scenario<TRequest> extends ScheduledScenario {
   readonly request: TRequest;
+  /** Named predicates over each response — see `config/types.ts` and D2-04. */
+  readonly checks?: Readonly<Record<string, (response: TransportResponse) => boolean>>;
+  /** Runs once per response, for counters and trends a check cannot express. */
+  readonly onResponse?: (
+    response: TransportResponse,
+    record: {
+      count: (name: string, by?: number) => void;
+      recordMs: (name: string, valueMs: number) => void;
+    },
+  ) => void;
 }
 
 export interface RunSpec<TRequest> {

@@ -1,6 +1,7 @@
 import { MetricsRegistry, type ScenarioMetrics } from "../metrics/index.ts";
 import { InFlight } from "./in-flight.ts";
 import { recordLatencies } from "./latency.ts";
+import { observeResponse, type ResponseObservers } from "./observe.ts";
 import { EngineMetric } from "./metric-names.ts";
 import type { Clock, Transport, TransportResponse } from "./ports.ts";
 import {
@@ -14,6 +15,7 @@ import { mergedSchedule } from "./schedule.ts";
 
 interface ScenarioState<TRequest> extends Scenario<TRequest> {
   readonly metrics: ScenarioMetrics;
+  readonly observers: ResponseObservers;
   lastDispatchElapsedMs: number | undefined;
   pendingCount: number;
 }
@@ -102,6 +104,7 @@ export const runDispatch = async <TRequest>(
   const states: ScenarioState<TRequest>[] = spec.scenarios.map((scenario) => ({
     ...scenario,
     metrics: metrics.scenario(scenario.name),
+    observers: { checks: scenario.checks, onResponse: scenario.onResponse },
     lastDispatchElapsedMs: undefined,
     pendingCount: 0,
   }));
@@ -159,11 +162,14 @@ export const runDispatch = async <TRequest>(
 
     inFlight.track(
       sendSafely(state.request).then(
-        (): void => {
+        (response): void => {
           state.pendingCount -= 1;
           if (recordingResponses) {
             state.metrics.counters.inc(EngineMetric.responses);
             recordLatencies(state.metrics, { scheduledAtMs, sentAtMs, doneAtMs: clock.now() });
+            // After the latency is recorded, deliberately: user code must not be able to inflate
+            // the number it is being handed by taking its time about looking at it.
+            observeResponse(state.metrics, state.observers, response);
           }
         },
         (): void => {
