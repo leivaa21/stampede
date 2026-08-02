@@ -1,5 +1,5 @@
-import type { TransportResponse } from "./ports.ts";
-import type { Shard } from "./schedule-split.ts";
+import type { ResponseCheck, ResponseRecorder, TransportResponse } from "./ports.ts";
+import { assertShard, type Shard } from "./schedule-split.ts";
 import type { ScheduledScenario } from "./schedule.ts";
 import { assertCount, assertDurationMs, assertPositiveCount } from "./validate.ts";
 
@@ -16,15 +16,9 @@ export const DEFAULT_DRAIN_TIMEOUT_MS = 30_000;
 export interface Scenario<TRequest> extends ScheduledScenario {
   readonly requestFor: (ordinal: number) => TRequest;
   /** Named predicates over each response — see `config/types.ts` and D2-04. */
-  readonly checks?: Readonly<Record<string, (response: TransportResponse) => boolean>>;
+  readonly checks?: Readonly<Record<string, ResponseCheck>>;
   /** Runs once per response, for counters and trends a check cannot express. */
-  readonly onResponse?: (
-    response: TransportResponse,
-    record: {
-      count: (name: string, by?: number) => void;
-      recordMs: (name: string, valueMs: number) => void;
-    },
-  ) => void;
+  readonly onResponse?: (response: TransportResponse, record: ResponseRecorder) => void;
 }
 
 export interface RunSpec<TRequest> {
@@ -77,6 +71,13 @@ export const assertRunSpec = <TRequest>(spec: RunSpec<TRequest>): void => {
   assertPositiveCount(spec.maxInFlight, "maxInFlight");
   if (spec.drainTimeoutMs !== undefined) {
     assertDurationMs(spec.drainTimeoutMs, "drainTimeoutMs");
+  }
+
+  if (spec.shard !== undefined) {
+    // A public field on a public type: `{ index: 0, count: 0 }` makes every ordinal 0, so every
+    // buyer gets seat 0 silently for the whole run — the exact bug D2-02 exists to detect,
+    // reintroduced through the door D2-02 opened.
+    assertShard(spec.shard);
   }
 
   const seen = new Set<string>();

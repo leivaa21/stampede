@@ -1,6 +1,6 @@
 import type { ScenarioMetrics } from "../metrics/index.ts";
-import { EngineMetric } from "./metric-names.ts";
-import type { TransportResponse } from "./ports.ts";
+import { brokenCheckCounter, EngineMetric, RESERVED_METRIC_PREFIX } from "./metric-names.ts";
+import type { ResponseRecorder, TransportResponse } from "./ports.ts";
 
 /**
  * Running the user's checks and `onResponse` against one response.
@@ -17,64 +17,104 @@ import type { TransportResponse } from "./ports.ts";
  */
 
 export interface ResponseObservers {
-  readonly checks: Readonly<Record<string, (response: TransportResponse) => boolean>> | undefined;
+  /** Pre-flattened once per scenario: `Object.entries` per response allocates for a constant. */
+  readonly checks: readonly (readonly [string, (response: TransportResponse) => boolean])[];
+  /**
+   * `=> unknown`, not `=> void`, deliberately: the public type in `ports.ts` says `void` to steer
+   * the config author, but what arrives here is user code that has already been type-stripped, and
+   * this file's whole job is to deal with whatever it actually returns.
+   */
   readonly onResponse:
-    | ((
-        response: TransportResponse,
-        record: {
-          count: (name: string, by?: number) => void;
-          recordMs: (name: string, valueMs: number) => void;
-        },
-      ) => void)
-    | undefined;
+    ((response: TransportResponse, record: ResponseRecorder) => unknown) | undefined;
+  /** Built once per scenario — the closures are pure functions of the scenario's metrics. */
+  readonly recorder: ResponseRecorder;
 }
 
 /**
- * A check that returned something other than a boolean is broken, not failing.
+ * A promise reaching here is a callback the user made `async`.
  *
- * Node strips the user's types without checking them, so nothing at runtime guarantees a boolean —
- * and `checks: { ok: (r) => { r.status === 200 } }`, braces instead of parens, returns `undefined`.
- * Counting that as a failure would blame the target for a typo, exactly as it would in a threshold.
+ * TypeScript assigns `() => Promise<void>` to a `() => void` parameter without complaint, so
+ * nothing upstream stops it — and an unhandled rejection from a worker takes the whole run down,
+ * publishing nothing. `async (r) => JSON.parse(r.text) !== null` is a completely natural thing to
+ * write, so this is a likely mistake rather than an exotic one: the promise is neutralised here and
+ * the observation counted broken, which is what every other broken observation gets.
  */
-const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
+const isThenable = (value: unknown): value is PromiseLike<unknown> =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof (value as { then?: unknown }).then === "function";
+
+const neutralise = (value: unknown): void => {
+  if (isThenable(value)) {
+    void Promise.resolve(value).catch(() => undefined);
+  }
+};
+
+/**
+ * Builds the recorder a scenario's `onResponse` writes through. One per scenario, not per response.
+ *
+ * Refuses the engine's own namespace. The user's counters and the engine's live in the same map, so
+ * `record.count("stampede.dropped", 100)` would otherwise make a run report four hundred dropped
+ * requests that never happened — in a tool whose whole pitch is that its numbers are honest.
+ * Data-derived, so it is refused and counted rather than thrown (`metrics/validate.ts`'s rule).
+ */
+export const recorderFor = (metrics: ScenarioMetrics): ResponseRecorder => ({
+  count: (name, by = 1) => {
+    if (name.startsWith(RESERVED_METRIC_PREFIX)) {
+      metrics.counters.inc(EngineMetric.reservedNameRefusals);
+      return;
+    }
+    metrics.counters.inc(name, by);
+  },
+  recordMs: (name, valueMs) => {
+    if (name.startsWith(RESERVED_METRIC_PREFIX)) {
+      metrics.counters.inc(EngineMetric.reservedNameRefusals);
+      return;
+    }
+    metrics.trend(name).recordMs(valueMs);
+  },
+});
+
+/** Records a check as broken: counted against its own name, and against the scenario's total. */
+const recordBroken = (metrics: ScenarioMetrics, name: string): void => {
+  metrics.counters.inc(EngineMetric.brokenChecks);
+  // Per name, so a report can say *which* claim is broken. Without this a throwing check was
+  // written into `failed`, and the checks table read "**FAIL** | oneWinnerOrConflict | 0 | 500" —
+  // a report accusing the target of double-selling 500 seats because a predicate had a typo.
+  //
+  // The per-name counter can be refused if the registry's counter budget is full; the total above
+  // never is, so a full budget costs the attribution, never the verdict.
+  metrics.counters.inc(brokenCheckCounter(name));
+};
 
 export const observeResponse = (
   metrics: ScenarioMetrics,
   observers: ResponseObservers,
   response: TransportResponse,
 ): void => {
-  const { checks, onResponse } = observers;
-
-  if (checks !== undefined) {
-    for (const [name, predicate] of Object.entries(checks)) {
-      try {
-        const held: unknown = predicate(response);
-        if (isBoolean(held)) {
-          metrics.checks.record(name, held);
-        } else {
-          metrics.counters.inc(EngineMetric.brokenChecks);
-          metrics.checks.record(name, false);
-        }
-      } catch {
-        // The error itself is deliberately not kept. It would be a different string per response
-        // for a check that throws on every one of them, and the count is what makes the problem
-        // visible without a run's worth of noise; the check's *name* is what a reader needs.
-        metrics.counters.inc(EngineMetric.brokenChecks);
-        metrics.checks.record(name, false);
+  for (const [name, predicate] of observers.checks) {
+    try {
+      const held: unknown = predicate(response);
+      if (typeof held === "boolean") {
+        metrics.checks.record(name, held);
+      } else {
+        // Node strips the user's types without checking them, so nothing guarantees a boolean —
+        // and `(r) => { r.status === 200 }`, braces instead of parens, returns `undefined`.
+        neutralise(held);
+        recordBroken(metrics, name);
       }
+    } catch {
+      // The error itself is deliberately not kept. It would be a different string per response for
+      // a check that throws on every one of them, and the count plus the check's *name* is what a
+      // reader needs — not a run's worth of identical stacks.
+      recordBroken(metrics, name);
     }
   }
 
-  if (onResponse !== undefined) {
+  if (observers.onResponse !== undefined) {
     try {
-      onResponse(response, {
-        count: (name, by = 1) => {
-          metrics.counters.inc(name, by);
-        },
-        recordMs: (name, valueMs) => {
-          metrics.trend(name).recordMs(valueMs);
-        },
-      });
+      const returned: unknown = observers.onResponse(response, observers.recorder);
+      neutralise(returned);
     } catch {
       metrics.counters.inc(EngineMetric.brokenObservers);
     }

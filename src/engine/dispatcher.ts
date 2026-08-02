@@ -1,7 +1,7 @@
 import { MetricsRegistry, type ScenarioMetrics } from "../metrics/index.ts";
 import { InFlight } from "./in-flight.ts";
 import { recordLatencies } from "./latency.ts";
-import { observeResponse, type ResponseObservers } from "./observe.ts";
+import { observeResponse, recorderFor, type ResponseObservers } from "./observe.ts";
 import { EngineMetric } from "./metric-names.ts";
 import type { Clock, Transport, TransportResponse } from "./ports.ts";
 import {
@@ -70,6 +70,15 @@ export interface RunOutcome {
   readonly progress: RunProgress;
 }
 
+const observersFor = <TRequest>(
+  scenarioMetrics: ScenarioMetrics,
+  scenario: Scenario<TRequest>,
+): ResponseObservers => ({
+  checks: Object.entries(scenario.checks ?? {}),
+  onResponse: scenario.onResponse,
+  recorder: recorderFor(scenarioMetrics),
+});
+
 /**
  * Runs one open-loop dispatch loop to completion and reports what really happened.
  *
@@ -101,13 +110,18 @@ export const runDispatch = async <TRequest>(
   const metrics = ports.metrics ?? new MetricsRegistry();
   // Namespaces are created up front, so a scenario name the metrics registry refuses fails the
   // run before any load is generated rather than on its first response.
-  const states: ScenarioState<TRequest>[] = spec.scenarios.map((scenario) => ({
-    ...scenario,
-    metrics: metrics.scenario(scenario.name),
-    observers: { checks: scenario.checks, onResponse: scenario.onResponse },
-    lastDispatchElapsedMs: undefined,
-    pendingCount: 0,
-  }));
+  const states: ScenarioState<TRequest>[] = spec.scenarios.map((scenario) => {
+    const scenarioMetrics = metrics.scenario(scenario.name);
+    return {
+      ...scenario,
+      metrics: scenarioMetrics,
+      // Flattened and built once per scenario: `Object.entries` and two closures per *response*
+      // would allocate for something constant for the whole run.
+      observers: observersFor(scenarioMetrics, scenario),
+      lastDispatchElapsedMs: undefined,
+      pendingCount: 0,
+    };
+  });
 
   const inFlight = new InFlight();
   const startedAtMs = clock.now();

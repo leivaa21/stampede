@@ -11,6 +11,19 @@
  * because everything here has to survive the worker → main-thread merge, and the metrics registry
  * is the one carrier that merges exactly, associatively and commutatively (D1-03).
  */
+/**
+ * The engine's own metric namespace.
+ *
+ * Reserved rather than merely conventional: the engine and the user write into the same maps, so a
+ * user counter named `stampede.dropped` would rewrite a published engine number. Refused at the
+ * recording edge, and rejected for check names at config load.
+ */
+export const RESERVED_METRIC_PREFIX = "stampede.";
+
+/** Per-check broken tally, so a report can name *which* claim is broken rather than only how many. */
+export const brokenCheckCounter = (checkName: string): string =>
+  `${RESERVED_METRIC_PREFIX}brokenCheck.${checkName}`;
+
 export const EngineMetric = {
   /** Histogram, µs: actual send → response. What the target took. */
   latency: "stampede.latency",
@@ -56,4 +69,11 @@ export const EngineMetric = {
    * them together would send someone to debug a network that was fine.
    */
   requestErrors: "stampede.requestErrors",
+  /**
+   * Counter increments and recordings refused for using the engine's reserved prefix.
+   *
+   * Refused rather than accepted, because accepting would let a user's counter rewrite a published
+   * engine number; counted rather than dropped, because a refusal nobody counts is a silent hole.
+   */
+  reservedNameRefusals: "stampede.reservedNameRefusals",
 } as const;

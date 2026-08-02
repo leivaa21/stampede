@@ -98,6 +98,68 @@ await loadConfig(${JSON.stringify(file)}).catch((error) => {
     await expect(loadConfig(file)).rejects.toThrow(/constantRate\(\), ramp\(\), burst\(\)/);
   });
 
+  /**
+   * The assertion surface's own edges. Each of these type-checks perfectly and fails silently at
+   * runtime — which is why they are startup errors rather than something a reader has to notice in
+   * a report at the end of a twenty-minute run.
+   */
+  describe("checks and onResponse", () => {
+    const withScenario = (extra: string): string =>
+      VALID.replace(
+        `request: () => ({ url: "http://localhost:1/" }) },`,
+        `request: () => ({ url: "http://localhost:1/" }), ${extra} },`,
+      );
+
+    it("refuses an async check, which would otherwise pass forever", async () => {
+      // `async (r) => r.status === 201` returns a promise. A promise is truthy and is never
+      // `false`, so every response would be recorded as passing a check that verified nothing.
+      await expect(
+        loadConfig(writeConfig(withScenario(`checks: { created: async () => true }`))),
+      ).rejects.toThrow(/check "created".*is `async`.*Drop the `async` keyword/s);
+    });
+
+    it("refuses an async onResponse", async () => {
+      await expect(
+        loadConfig(writeConfig(withScenario(`onResponse: async () => undefined`))),
+      ).rejects.toThrow(/`onResponse` in scenario "reads" is `async`/);
+    });
+
+    it("refuses a check name in stampede's own metric namespace", async () => {
+      // Otherwise the check's tally and the engine's drop counter share a key, and the run reports
+      // a drop count the user wrote.
+      await expect(
+        loadConfig(writeConfig(withScenario(`checks: { "stampede.dropped": () => true }`))),
+      ).rejects.toThrow(/check name "stampede.dropped" starts with `stampede.`, which is reserved/);
+    });
+
+    it("refuses a scenario name in that namespace too", async () => {
+      await expect(
+        loadConfig(
+          writeConfig(
+            VALID.replace("reads: {", '"stampede.internal": {').replace("reads", "reads"),
+          ),
+        ),
+      ).rejects.toThrow(/scenario name "stampede.internal" starts with/);
+    });
+
+    it("refuses a check name too long to attribute a break to", async () => {
+      // The registry silently refuses an over-long name rather than throwing, so this would cost
+      // the "which check broke" attribution at exactly the moment someone needed it.
+      const long = "c".repeat(115);
+      await expect(
+        loadConfig(writeConfig(withScenario(`checks: { "${long}": () => true }`))),
+      ).rejects.toThrow(/is too long — a check name may be at most \d+ characters/);
+    });
+
+    it("accepts a plain synchronous check", async () => {
+      const config = await loadConfig(
+        writeConfig(withScenario(`checks: { created: (r) => r.status === 201 }`)),
+      );
+
+      expect(Object.keys(config.scenarios.reads?.checks ?? {})).toEqual(["created"]);
+    });
+  });
+
   it("refuses a threshold that is not a named predicate", async () => {
     const file = writeConfig(`
 import { burst } from "${REPO_ROOT}src/engine/arrival-profiles.ts";

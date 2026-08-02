@@ -31,6 +31,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   scheduledCount: 10,
   dispatchedCount: 10,
   droppedCount: 0,
+  requestErrorCount: 0,
   responseCount: 10,
   errorCount: 0,
   abandonedCount: 0,
@@ -157,7 +158,9 @@ describe("renderSummary", () => {
 
   it("prints a check even when it passed, so an asserting run does not look like a silent one", () => {
     const text = renderSummary(
-      summaryOf(scenario({ checks: { oneWinnerOrConflict: { passed: 500, failed: 0 } } })),
+      summaryOf(
+        scenario({ checks: { oneWinnerOrConflict: { passed: 500, failed: 0, broken: 0 } } }),
+      ),
     );
 
     expect(text).toContain("check       PASS  oneWinnerOrConflict");
@@ -165,7 +168,7 @@ describe("renderSummary", () => {
 
   it("shows how many responses failed a check, not just that one did", () => {
     const text = renderSummary(
-      summaryOf(scenario({ checks: { noDoubleSell: { passed: 480, failed: 20 } } })),
+      summaryOf(scenario({ checks: { noDoubleSell: { passed: 480, failed: 20, broken: 0 } } })),
     );
 
     expect(text).toContain("FAIL 20/500  noDoubleSell");

@@ -4,7 +4,9 @@ import type {
   ScenarioMetrics,
   TrendSummary,
 } from "../metrics/index.ts";
-import { EngineMetric } from "./metric-names.ts";
+import { brokenCheckCounter, EngineMetric, RESERVED_METRIC_PREFIX } from "./metric-names.ts";
+
+const BROKEN_CHECK_PREFIX = `${RESERVED_METRIC_PREFIX}brokenCheck.`;
 
 /**
  * What the run has to admit to when it is over.
@@ -67,6 +69,14 @@ export interface ScenarioRunSummary {
   readonly dispatchedCount: number;
   /** Requests refused by the in-flight cap: dropped, and counted here so a report can annotate it. */
   readonly droppedCount: number;
+  /**
+   * Requests the scenario's own builder could not produce, so they were never sent.
+   *
+   * A named field rather than a counter buried in the map, because without it
+   * `dispatched + dropped === scheduled` — the identity the README claims — silently stopped
+   * holding, and a halved achieved rate had no cause anywhere on the page.
+   */
+  readonly requestErrorCount: number;
   readonly responseCount: number;
   /** Transport-level failures. Counted, and deliberately absent from the latency percentiles. */
   readonly errorCount: number;
@@ -102,8 +112,17 @@ export interface ScenarioRunSummary {
    * which is the class of quiet wrongness this repo refuses everywhere else.
    */
   readonly counters: Readonly<Record<string, number>>;
-  /** The scenario's checks, by name, as pass/fail tallies. */
-  readonly checks: Readonly<Record<string, { readonly passed: number; readonly failed: number }>>;
+  /**
+   * The scenario's checks, by name — three states, not two.
+   *
+   * `broken` counts responses where the predicate threw or returned a non-boolean. It is separate
+   * from `failed` because writing a throw into `failed` made the checks table read
+   * "**FAIL** | oneWinnerOrConflict | 0 | 500" — a report accusing the target of double-selling
+   * 500 seats because a predicate had a typo (D2-04).
+   */
+  readonly checks: Readonly<
+    Record<string, { readonly passed: number; readonly failed: number; readonly broken: number }>
+  >;
   /** Distributions `onResponse` recorded — contract run 4's `behindMs` lands here. */
   readonly trends: Readonly<Record<string, TrendSummary>>;
   /**
@@ -155,7 +174,7 @@ const ratePerSecond = (count: number, spanMs: number): number | undefined =>
  * user's threshold reads. Engine metrics have named fields on the summary already; the user's keep
  * the map.
  */
-const isUserMetric = (name: string): boolean => !name.startsWith("stampede.");
+const isUserMetric = (name: string): boolean => !name.startsWith(RESERVED_METRIC_PREFIX);
 
 const userCounters = (recorded: ScenarioMetrics | undefined): Readonly<Record<string, number>> =>
   Object.freeze(
@@ -166,17 +185,35 @@ const userCounters = (recorded: ScenarioMetrics | undefined): Readonly<Record<st
     ),
   );
 
+/**
+ * Every check the scenario recorded *or* broke.
+ *
+ * A check that threw on every single response has no pass/fail tally at all — it only has a broken
+ * count — so reading `checks.names` alone would omit the very check a reader most needs named.
+ */
 const userChecks = (
   recorded: ScenarioMetrics | undefined,
-): Readonly<Record<string, { readonly passed: number; readonly failed: number }>> =>
-  Object.freeze(
+): Readonly<
+  Record<string, { readonly passed: number; readonly failed: number; readonly broken: number }>
+> => {
+  const names = new Set<string>(recorded?.checks.names ?? []);
+  for (const counter of recorded?.counters.names ?? []) {
+    if (counter.startsWith(BROKEN_CHECK_PREFIX)) {
+      names.add(counter.slice(BROKEN_CHECK_PREFIX.length));
+    }
+  }
+  return Object.freeze(
     Object.fromEntries(
-      [...(recorded?.checks.names ?? [])].map((name) => [
+      [...names].sort().map((name) => [
         name,
-        Object.freeze({ ...(recorded?.checks.get(name) ?? { passed: 0, failed: 0 }) }),
+        Object.freeze({
+          ...(recorded?.checks.get(name) ?? { passed: 0, failed: 0 }),
+          broken: recorded?.counters.get(brokenCheckCounter(name)) ?? 0,
+        }),
       ]),
     ),
   );
+};
 
 const userTrends = (
   recorded: ScenarioMetrics | undefined,
@@ -213,6 +250,7 @@ const summariseScenario = (
     scheduledCount: progress.scheduledCount,
     dispatchedCount,
     droppedCount: counted(EngineMetric.dropped),
+    requestErrorCount: counted(EngineMetric.requestErrors),
     responseCount: counted(EngineMetric.responses),
     errorCount: counted(EngineMetric.errors),
     abandonedCount: counted(EngineMetric.abandoned),
@@ -229,7 +267,8 @@ const summariseScenario = (
     trends: userTrends(recorded),
     brokenObservations:
       (recorded?.counters.get(EngineMetric.brokenChecks) ?? 0) +
-      (recorded?.counters.get(EngineMetric.brokenObservers) ?? 0),
+      (recorded?.counters.get(EngineMetric.brokenObservers) ?? 0) +
+      (recorded?.counters.get(EngineMetric.reservedNameRefusals) ?? 0),
     latencyMs: toLatencySummary(recorded?.findHistogram(EngineMetric.latency)?.summary()),
     scheduledLatencyMs: toLatencySummary(
       recorded?.findHistogram(EngineMetric.scheduledLatency)?.summary(),

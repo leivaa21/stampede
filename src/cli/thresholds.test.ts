@@ -11,6 +11,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   scheduledCount: 10,
   dispatchedCount: 10,
   droppedCount: 0,
+  requestErrorCount: 0,
   responseCount: 10,
   errorCount: 0,
   abandonedCount: 0,
@@ -125,7 +126,7 @@ describe("evaluateThresholds", () => {
       summaryOf(
         scenario({
           counters: { reserved201: 1 },
-          checks: { noDoubleSell: { passed: 500, failed: 0 } },
+          checks: { noDoubleSell: { passed: 500, failed: 0, broken: 0 } },
         }),
       ),
     );

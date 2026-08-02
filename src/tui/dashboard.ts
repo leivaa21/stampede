@@ -60,9 +60,9 @@ const achievedSoFar = (dispatched: number, elapsedMs: number): number | undefine
   elapsedMs <= 0 ? undefined : (dispatched * 1000) / elapsedMs;
 
 const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonly string[] => {
-  // `dropped` counts too: a refused request is a schedule instant that has been dealt with, and a
-  // bar that ignored them would crawl while the run was in fact racing to its end.
-  const done = scenario.dispatchedCount + scenario.droppedCount;
+  // `dropped` and `not built` count too: both are schedule instants that have been dealt with, and
+  // a bar that ignored them would crawl while the run was in fact racing to its end.
+  const done = scenario.dispatchedCount + scenario.droppedCount + scenario.requestErrorCount;
   const fraction = scenario.scheduledCount === 0 ? 0 : done / scenario.scheduledCount;
 
   const lines = [
@@ -74,6 +74,7 @@ const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonl
   // watch a run they think is healthy for twenty minutes.
   const shortfalls = [
     scenario.droppedCount > 0 ? `${String(scenario.droppedCount)} dropped` : undefined,
+    scenario.requestErrorCount > 0 ? `${String(scenario.requestErrorCount)} not built` : undefined,
     scenario.errorCount > 0 ? `${String(scenario.errorCount)} failed` : undefined,
   ].filter((part): part is string => part !== undefined);
   if (shortfalls.length > 0) {
@@ -98,7 +99,15 @@ const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonl
       `    ✗ ${failing.map(([name, tally]) => `${name} ${String(tally.failed)}`).join(" · ")}`,
     );
   }
-  if (scenario.brokenObservations > 0) {
+  // Named, not just counted. "3 broken observations" at minute one of a twenty-minute run leaves
+  // the reader with nothing to fix; the check's name is the fix.
+  const broken = Object.entries(scenario.checks).filter(([, tally]) => tally.broken > 0);
+  if (broken.length > 0) {
+    lines.push(
+      `    ⚠ broken: ${broken.map(([name, tally]) => `${name} ${String(tally.broken)}`).join(" · ")}`,
+    );
+  } else if (scenario.brokenObservations > 0) {
+    // onResponse threw, or a reserved name was refused — no check name to blame.
     lines.push(`    ⚠ ${String(scenario.brokenObservations)} broken observations`);
   }
 

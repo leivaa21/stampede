@@ -39,6 +39,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   scheduledCount: 500,
   dispatchedCount: 498,
   droppedCount: 2,
+  requestErrorCount: 0,
   responseCount: 497,
   errorCount: 1,
   abandonedCount: 0,
@@ -242,8 +243,8 @@ describe("renderMarkdownReport", () => {
       summaryOf(
         scenario({
           checks: {
-            oneWinnerOrConflict: { passed: 500, failed: 0 },
-            noDoubleSell: { passed: 480, failed: 20 },
+            oneWinnerOrConflict: { passed: 500, failed: 0, broken: 0 },
+            noDoubleSell: { passed: 480, failed: 20, broken: 0 },
           },
         }),
       ),

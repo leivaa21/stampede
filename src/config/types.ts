@@ -1,6 +1,6 @@
 import type { ArrivalProfile } from "../engine/arrival-profiles.ts";
 import type { HttpRequestSpec } from "../engine/http-transport.ts";
-import type { TransportResponse } from "../engine/ports.ts";
+import type { ResponseCheck, ResponseRecorder, TransportResponse } from "../engine/ports.ts";
 import type { RunSummary } from "../engine/run-summary.ts";
 
 /**
@@ -49,7 +49,7 @@ export interface ScenarioConfig<TSetup> {
    * fails at the end with the check named — a bug in an assertion must not be reported as the
    * target violating an invariant.
    */
-  readonly checks?: Readonly<Record<string, (response: TransportResponse) => boolean>>;
+  readonly checks?: Readonly<Record<string, ResponseCheck>>;
   /**
    * Runs once per response, for counters and trends a check cannot express.
    *
@@ -59,24 +59,6 @@ export interface ScenarioConfig<TSetup> {
    * rather than allowed to end the run.
    */
   readonly onResponse?: (response: TransportResponse, record: ResponseRecorder) => void;
-}
-
-/**
- * What `onResponse` records into.
- *
- * Deliberately narrow: increment a counter, record a number. Both are merged across worker threads
- * by `metrics/`, which is the only reason a claim about a whole run can be made at all.
- */
-export interface ResponseRecorder {
-  /** Adds to a named counter for this scenario. `by` defaults to 1. */
-  readonly count: (name: string, by?: number) => void;
-  /**
-   * Records a number into a named distribution for this scenario — percentiles, not just a total.
-   *
-   * Milliseconds by name, because that is what every distribution in this tool is measured in and
-   * a unitless one would be the first number nobody could interpret.
-   */
-  readonly recordMs: (name: string, valueMs: number) => void;
 }
 
 /**

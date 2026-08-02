@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { brokenCheckCounter, RESERVED_METRIC_PREFIX } from "../engine/metric-names.ts";
 import { MAX_DISTINCT_SCENARIOS, MAX_METRIC_NAME_LENGTH } from "../metrics/validate.ts";
 import type { StampedeConfig } from "./types.ts";
 
@@ -80,9 +81,40 @@ const assertName = (name: string, what: string, configPath: string): void => {
   if (name.length === 0) {
     throw new ConfigLoadError(`${configPath}: a ${what} name must not be empty`);
   }
+  // The engine's own counters share the metric map with the user's. A check called
+  // `stampede.dropped` would collide with the drop count, and a report that says a run dropped
+  // nothing when it dropped four hundred requests is the one failure this tool cannot have.
+  // Config-derived, so it is a startup error — `observe.ts` refuses the same prefix at runtime for
+  // names built from response data, where throwing would kill a run mid-flight.
+  if (name.startsWith(RESERVED_METRIC_PREFIX)) {
+    throw new ConfigLoadError(
+      `${configPath}: ${what} name "${name}" starts with \`${RESERVED_METRIC_PREFIX}\`, which is reserved for stampede's own metrics — rename it`,
+    );
+  }
   if (name.length > MAX_METRIC_NAME_LENGTH) {
     throw new ConfigLoadError(
       `${configPath}: ${what} name is ${String(name.length)} characters; the limit is ${String(MAX_METRIC_NAME_LENGTH)}`,
+    );
+  }
+};
+
+/**
+ * Refuses an `async` check or `onResponse` at load time, by name.
+ *
+ * TypeScript assigns `async (r) => r.status === 201` to a `(r) => boolean` parameter without a
+ * word of complaint — the return type becomes `Promise<boolean>`, which is truthy, never `false`,
+ * and would have made every check pass forever. `observe.ts` catches this at runtime too (it has
+ * to: a config can hand back a function it built itself), but by then the answer is a broken-check
+ * count in a report. Here it is a message naming the check and the fix, before a request goes out.
+ */
+const assertNotAsync = (fn: unknown, what: string, configPath: string): void => {
+  // Read through the prototype rather than a hard-coded reference to a global: `AsyncFunction` is
+  // not one, and a function bound or wrapped by the config still reports it here.
+  const kind = (fn as { readonly constructor?: { readonly name?: unknown } }).constructor?.name;
+  if (kind === "AsyncFunction") {
+    throw new ConfigLoadError(
+      `${configPath}: ${what} is \`async\`, so it returns a promise rather than a value — ` +
+        `stampede reads it synchronously on the response path. Drop the \`async\` keyword.`,
     );
   }
 };
@@ -170,11 +202,6 @@ export const assertConfigShape: (
         `${configPath}: scenario "${name}" has a profile with no valid \`durationMs\``,
       );
     }
-    // A scenario that schedules nothing would sail past the "recorded no responses" guard — it
-    // dispatched nothing, so nothing failed — and reach the thresholds with `latencyMs` undefined,
-    // where `(s.p99 ?? 0) < 250` passes. A green CI job for a load test that sent zero requests is
-    // the exact lie D1-06 exists to prevent, reached through a different door. Rates that round
-    // down are the usual cause: 2/s for 100ms is 0.2 requests, floored to none.
     const { checks, onResponse } = scenario;
     if (checks !== undefined) {
       if (!isRecord(checks)) {
@@ -191,13 +218,32 @@ export const assertConfigShape: (
             `${configPath}: check "${checkName}" in scenario "${name}" must be a function taking a response`,
           );
         }
+        // A broken check is attributed by a counter derived from its name, and the metrics
+        // registry *silently refuses* a name over the limit rather than throwing — so a check
+        // named right up to the limit would lose its attribution at exactly the moment someone
+        // needed it. Budgeted here, where the name can still be changed.
+        if (brokenCheckCounter(checkName).length > MAX_METRIC_NAME_LENGTH) {
+          throw new ConfigLoadError(
+            `${configPath}: check name "${checkName}" is too long — a check name may be at most ` +
+              `${String(MAX_METRIC_NAME_LENGTH - brokenCheckCounter("").length)} characters`,
+          );
+        }
+        assertNotAsync(predicate, `check "${checkName}" in scenario "${name}"`, configPath);
       }
     }
-    if (onResponse !== undefined && typeof onResponse !== "function") {
-      throw new ConfigLoadError(
-        `${configPath}: scenario "${name}" has an \`onResponse\` that is not a function`,
-      );
+    if (onResponse !== undefined) {
+      if (typeof onResponse !== "function") {
+        throw new ConfigLoadError(
+          `${configPath}: scenario "${name}" has an \`onResponse\` that is not a function`,
+        );
+      }
+      assertNotAsync(onResponse, `\`onResponse\` in scenario "${name}"`, configPath);
     }
+    // A scenario that schedules nothing would sail past the "recorded no responses" guard — it
+    // dispatched nothing, so nothing failed — and reach the thresholds with `latencyMs` undefined,
+    // where `(s.p99 ?? 0) < 250` passes. A green CI job for a load test that sent zero requests is
+    // the exact lie D1-06 exists to prevent, reached through a different door. Rates that round
+    // down are the usual cause: 2/s for 100ms is 0.2 requests, floored to none.
     if (profile.count === 0) {
       throw new ConfigLoadError(
         `${configPath}: scenario "${name}" schedules 0 requests over ${String(profile.durationMs)}ms — ` +

@@ -42,6 +42,12 @@ export interface Verdict {
  * `10 dropped` sends the user to the wrong place — that is `maxInFlight`, not the network.
  */
 const adviceFor = (scenario: RunSummary["scenarios"][number]): string => {
+  // First, because it is the only one of these where the *config* is at fault: nothing was sent, so
+  // no advice about the target or its cap can be right. "check the target is reachable" for a
+  // `request()` that threw on every ordinal sends someone to inspect a server that was never asked.
+  if (scenario.requestErrorCount >= scenario.scheduledCount && scenario.requestErrorCount > 0) {
+    return "every request threw while being built; fix `request()` in the config.";
+  }
   if (scenario.droppedCount >= scenario.dispatchedCount && scenario.droppedCount > 0) {
     return "almost everything was refused by the in-flight cap; raise `maxInFlight`.";
   }
@@ -77,7 +83,8 @@ export const findUnmeasuredScenario = (summary: RunSummary): string | undefined 
       return (
         `scenario "${scenario.name}" recorded no responses at all ` +
         `(${String(scenario.dispatchedCount)} dispatched, ${String(scenario.errorCount)} failed, ` +
-        `${String(scenario.droppedCount)} dropped, ${String(scenario.abandonedCount)} abandoned). ` +
+        `${String(scenario.droppedCount)} dropped, ${String(scenario.requestErrorCount)} not built, ` +
+        `${String(scenario.abandonedCount)} abandoned). ` +
         `There is nothing to publish a percentile from — ${adviceFor(scenario)}`
       );
     }

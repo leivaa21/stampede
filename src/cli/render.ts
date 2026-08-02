@@ -39,6 +39,12 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
   // achieved rate below is only interpretable next to what did not happen.
   const shortfalls = [
     scenario.droppedCount > 0 ? `${String(scenario.droppedCount)} dropped` : undefined,
+    // `dispatched + dropped + notBuilt === scheduled` is the identity this line has to keep true.
+    // Without it a config whose `request()` threw showed a halved achieved rate with no cause
+    // anywhere on the page — the shortfall said "none".
+    scenario.requestErrorCount > 0
+      ? `${String(scenario.requestErrorCount)} not built (request() threw)`
+      : undefined,
     scenario.errorCount > 0 ? `${String(scenario.errorCount)} failed` : undefined,
     scenario.abandonedCount > 0 ? `${String(scenario.abandonedCount)} abandoned` : undefined,
   ].filter((part): part is string => part !== undefined);
@@ -77,10 +83,14 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
   // Checks are the reason this tool exists, so they print even when they all passed — a run that
   // asserted something and a run that asserted nothing must not look the same.
   for (const [name, tally] of Object.entries(scenario.checks)) {
+    // Three states, and broken outranks failed: a check that threw on some responses and returned
+    // `false` on others is a check nobody should be reading a verdict from yet (D2-04).
     const verdict =
-      tally.failed === 0
-        ? "PASS"
-        : `FAIL ${String(tally.failed)}/${String(tally.passed + tally.failed)}`;
+      tally.broken > 0
+        ? `BROKEN ${String(tally.broken)}`
+        : tally.failed === 0
+          ? "PASS"
+          : `FAIL ${String(tally.failed)}/${String(tally.passed + tally.failed)}`;
     lines.push(`    check       ${verdict}  ${name}`);
   }
   for (const [name, value] of Object.entries(scenario.counters)) {

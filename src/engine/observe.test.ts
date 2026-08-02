@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MetricsRegistry } from "../metrics/index.ts";
-import { EngineMetric } from "./metric-names.ts";
-import { observeResponse } from "./observe.ts";
+import { brokenCheckCounter, EngineMetric } from "./metric-names.ts";
+import { observeResponse, recorderFor, type ResponseObservers } from "./observe.ts";
 import type { TransportResponse } from "./ports.ts";
 
 /**
@@ -21,13 +21,26 @@ const response = (over: Partial<TransportResponse> = {}): TransportResponse => (
 
 const scenario = () => new MetricsRegistry().scenario("reads");
 
+/** Mirrors what `dispatcher.ts` builds once per scenario. */
+const observers = (
+  metrics: ReturnType<typeof scenario>,
+  parts: {
+    checks?: Record<string, (response: TransportResponse) => boolean>;
+    onResponse?: ResponseObservers["onResponse"];
+  },
+): ResponseObservers => ({
+  checks: Object.entries(parts.checks ?? {}),
+  onResponse: parts.onResponse,
+  recorder: recorderFor(metrics),
+});
+
 describe("checks", () => {
   it("counts a passing check against its name", () => {
     const metrics = scenario();
 
     observeResponse(
       metrics,
-      { checks: { ok: (r) => r.status === 200 }, onResponse: undefined },
+      observers(metrics, { checks: { ok: (r) => r.status === 200 } }),
       response(),
     );
 
@@ -39,7 +52,7 @@ describe("checks", () => {
 
     observeResponse(
       metrics,
-      { checks: { ok: (r) => r.status === 201 }, onResponse: undefined },
+      observers(metrics, { checks: { ok: (r) => r.status === 201 } }),
       response({ status: 409 }),
     );
 
@@ -55,19 +68,21 @@ describe("checks", () => {
 
     observeResponse(
       metrics,
-      {
+      observers(metrics, {
         checks: {
           boom: () => {
             throw new Error("typo in the check");
           },
         },
-        onResponse: undefined,
-      },
+      }),
       response(),
     );
 
     expect(metrics.counters.get(EngineMetric.brokenChecks)).toBe(1);
-    expect(metrics.checks.get("boom")).toEqual({ passed: 0, failed: 1 });
+    // Named, so a report can say *which* claim is broken — and NOT written into `failed`, which
+    // would have the checks table accuse the target of failing a check that never ran.
+    expect(metrics.counters.get(brokenCheckCounter("boom"))).toBe(1);
+    expect(metrics.checks.get("boom")).toEqual({ passed: 0, failed: 0 });
   });
 
   it("treats a check returning a non-boolean as broken", () => {
@@ -77,7 +92,7 @@ describe("checks", () => {
 
     observeResponse(
       metrics,
-      { checks: { braces: (() => undefined) as unknown as () => boolean }, onResponse: undefined },
+      observers(metrics, { checks: { braces: (() => undefined) as unknown as () => boolean } }),
       response(),
     );
 
@@ -90,15 +105,14 @@ describe("checks", () => {
 
     observeResponse(
       metrics,
-      {
+      observers(metrics, {
         checks: {
           boom: () => {
             throw new Error("nope");
           },
           fine: () => true,
         },
-        onResponse: undefined,
-      },
+      }),
       response(),
     );
 
@@ -110,10 +124,7 @@ describe("checks", () => {
 
     observeResponse(
       metrics,
-      {
-        checks: { a: () => true, b: () => false, c: () => true },
-        onResponse: undefined,
-      },
+      observers(metrics, { checks: { a: () => true, b: () => false, c: () => true } }),
       response(),
     );
 
@@ -123,20 +134,112 @@ describe("checks", () => {
   });
 });
 
+describe("async callbacks", () => {
+  it("does not let an async check take the process down", async () => {
+    // TypeScript assigns `() => Promise<boolean>` to a `() => boolean` parameter without
+    // complaint, so nothing upstream stops this — and an unhandled rejection from a worker takes
+    // the whole run with it, publishing nothing.
+    const metrics = scenario();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      observeResponse(
+        metrics,
+        observers(metrics, {
+          checks: {
+            asyncCheck: (() => Promise.reject(new Error("async boom"))) as unknown as () => boolean,
+          },
+        }),
+        response(),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    expect(unhandled).toEqual([]);
+    // A promise is not a boolean, so it is a broken check like any other non-boolean.
+    expect(metrics.counters.get(brokenCheckCounter("asyncCheck"))).toBe(1);
+  });
+
+  it("does not let an async onResponse take the process down", async () => {
+    const metrics = scenario();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      observeResponse(
+        metrics,
+        observers(metrics, {
+          // What an `async` onResponse in a user's config compiles to. `load.ts` rejects it at
+          // startup, but a promise still has to be survivable here: the engine is exported for
+          // programmatic use, where nothing goes through the config loader at all.
+          onResponse: () => Promise.reject(new Error("async boom")),
+        }),
+        response(),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    expect(unhandled).toEqual([]);
+  });
+});
+
+describe("the reserved namespace", () => {
+  it("refuses a user counter that would rewrite an engine number", () => {
+    // The engine and the user write into the same map, so this would have made a run report
+    // four hundred dropped requests that never happened.
+    const metrics = scenario();
+
+    observeResponse(
+      metrics,
+      observers(metrics, {
+        onResponse: (_r, record) => {
+          record.count("stampede.dropped", 100);
+        },
+      }),
+      response(),
+    );
+
+    expect(metrics.counters.get(EngineMetric.dropped)).toBe(0);
+    expect(metrics.counters.get(EngineMetric.reservedNameRefusals)).toBe(1);
+  });
+
+  it("refuses a reserved trend name too", () => {
+    const metrics = scenario();
+
+    observeResponse(
+      metrics,
+      observers(metrics, {
+        onResponse: (_r, record) => {
+          record.recordMs("stampede.latency", 5);
+        },
+      }),
+      response(),
+    );
+
+    expect(metrics.counters.get(EngineMetric.reservedNameRefusals)).toBe(1);
+  });
+});
+
 describe("onResponse", () => {
   it("counts what the user asks it to count", () => {
     const metrics = scenario();
 
     observeResponse(
       metrics,
-      {
-        checks: undefined,
+      observers(metrics, {
         onResponse: (r, record) => {
           if (r.status === 201) {
             record.count("reserved201");
           }
         },
-      },
+      }),
       response({ status: 201 }),
     );
 
@@ -148,12 +251,11 @@ describe("onResponse", () => {
 
     observeResponse(
       metrics,
-      {
-        checks: undefined,
+      observers(metrics, {
         onResponse: (_r, record) => {
           record.count("retries", 3);
         },
-      },
+      }),
       response(),
     );
 
@@ -166,12 +268,11 @@ describe("onResponse", () => {
     for (const behindMs of [10, 20, 30]) {
       observeResponse(
         metrics,
-        {
-          checks: undefined,
+        observers(metrics, {
           onResponse: (r, record) => {
             record.recordMs("behindMs", (JSON.parse(r.text) as { behindMs: number }).behindMs);
           },
-        },
+        }),
         response({ text: JSON.stringify({ behindMs }) }),
       );
     }
@@ -187,12 +288,11 @@ describe("onResponse", () => {
     expect(() => {
       observeResponse(
         metrics,
-        {
-          checks: undefined,
+        observers(metrics, {
           onResponse: () => {
             throw new Error("bad JSON, probably");
           },
-        },
+        }),
         response(),
       );
     }).not.toThrow();
@@ -203,7 +303,7 @@ describe("onResponse", () => {
   it("does nothing at all when a scenario declares neither", () => {
     const metrics = scenario();
 
-    observeResponse(metrics, { checks: undefined, onResponse: undefined }, response());
+    observeResponse(metrics, observers(metrics, {}), response());
 
     expect(metrics.counters.get(EngineMetric.brokenChecks)).toBe(0);
   });

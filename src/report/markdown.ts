@@ -57,6 +57,7 @@ const percentileTable = (scenario: ScenarioRunSummary): string =>
 const shortfallOf = (scenario: ScenarioRunSummary): string => {
   const parts = [
     scenario.droppedCount > 0 ? `${String(scenario.droppedCount)} dropped` : undefined,
+    scenario.requestErrorCount > 0 ? `${String(scenario.requestErrorCount)} not built` : undefined,
     scenario.errorCount > 0 ? `${String(scenario.errorCount)} failed` : undefined,
     scenario.abandonedCount > 0 ? `${String(scenario.abandonedCount)} abandoned` : undefined,
   ].filter((part): part is string => part !== undefined);
@@ -119,11 +120,15 @@ const scenarioSection = (scenario: ScenarioRunSummary): string => {
     saturationNote("as queued", scenario.scheduledLatencyMs),
   ].filter((note): note is string => note !== undefined);
 
+  // A broken check is neither PASS nor FAIL. Collapsing it into FAIL published a table saying the
+  // target broke an invariant 500 times when the predicate had a typo (D2-04); collapsing it into
+  // PASS would publish a green claim nothing ever verified.
   const checkRows = Object.entries(scenario.checks).map(([name, tally]) => [
-    tally.failed === 0 ? "PASS" : "**FAIL**",
+    tally.broken > 0 ? "**BROKEN**" : tally.failed === 0 ? "PASS" : "**FAIL**",
     cell(name),
     String(tally.passed),
     String(tally.failed),
+    String(tally.broken),
   ]);
   const counterRows = Object.entries(scenario.counters).map(([name, value]) => [
     cell(name),
@@ -144,7 +149,9 @@ const scenarioSection = (scenario: ScenarioRunSummary): string => {
     percentileTable(scenario),
     // The checks table the contract asked for by name. Printed whenever a scenario declared any,
     // because "every check passed" and "no checks were declared" must not render identically.
-    ...(checkRows.length > 0 ? ["", table(["", "check", "passed", "failed"], checkRows)] : []),
+    ...(checkRows.length > 0
+      ? ["", table(["", "check", "passed", "failed", "broken"], checkRows)]
+      : []),
     ...(counterRows.length > 0 ? ["", table(["counter", "total"], counterRows)] : []),
     ...(trendRows.length > 0 ? ["", table(["recorded", "p50", "p99", "max"], trendRows)] : []),
     ...(scenario.brokenObservations > 0

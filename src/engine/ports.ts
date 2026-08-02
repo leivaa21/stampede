@@ -68,6 +68,27 @@ export interface TransportResponse {
  * keeps them out of the latency histogram — an instant ECONNREFUSED recorded as a 0.1 ms latency
  * would be the most flattering p99 a broken target could possibly produce.
  */
+/**
+ * What `onResponse` records into. Defined here, once, beside the response it accompanies.
+ *
+ * `config/types.ts`, `run-spec.ts` and `observe.ts` all restated this shape inline — three copies
+ * of a contract that will grow a `fail(name)` one day, which is a drift waiting to happen.
+ */
+export interface ResponseRecorder {
+  /** Adds to a named counter for this scenario. `by` defaults to 1. */
+  readonly count: (name: string, by?: number) => void;
+  /**
+   * Records a number into a named distribution — percentiles, not just a total.
+   *
+   * Milliseconds by name, because that is what every distribution in this tool is measured in and
+   * a unitless one would be the first number nobody could interpret.
+   */
+  readonly recordMs: (name: string, valueMs: number) => void;
+}
+
+/** A named predicate over a response, counted pass/fail and reported as a row. */
+export type ResponseCheck = (response: TransportResponse) => boolean;
+
 export interface Transport<TRequest> {
   send(request: TRequest): Promise<TransportResponse>;
 }
