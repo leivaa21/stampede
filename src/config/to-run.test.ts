@@ -10,7 +10,9 @@ import {
   workerCountFor,
 } from "./to-run.ts";
 
-const configWith = (request: (state: unknown) => unknown): StampedeConfig<unknown> =>
+const configWith = (
+  request: (state: unknown, ordinal: number) => unknown,
+): StampedeConfig<unknown> =>
   ({
     scenarios: { reads: { profile: burst({ count: 2 }), request } },
   }) as unknown as StampedeConfig<unknown>;
@@ -24,7 +26,29 @@ describe("scenariosFrom", () => {
 
     expect(scenarios).toHaveLength(1);
     expect(scenarios[0]?.name).toBe("reads");
-    expect(scenarios[0]?.request.url).toBe("http://x/7");
+    expect(scenarios[0]?.requestFor(0).url).toBe("http://x/7");
+  });
+
+  it("hands the request builder the run's ordinal", () => {
+    // D2-02: what makes "N buyers, N distinct seats" expressible at all.
+    const scenarios = scenariosFrom(
+      configWith((_state, ordinal) => ({ url: `http://x/seat-${String(ordinal)}` })),
+      undefined,
+    );
+
+    expect(scenarios[0]?.requestFor(0).url).toBe("http://x/seat-0");
+    expect(scenarios[0]?.requestFor(41).url).toBe("http://x/seat-41");
+  });
+
+  it("validates the built request eagerly, at startup", () => {
+    // The common mistake should fail with the scenario named, not as a wall of counted build
+    // errors twenty minutes into a run.
+    expect(() =>
+      scenariosFrom(
+        configWith((_state, ordinal) => (ordinal === 0 ? "not a request" : { url: "http://x/" })),
+        undefined,
+      ),
+    ).toThrow(/scenario "reads"/);
   });
 
   it("refuses a request() that returned the URL instead of a request", () => {

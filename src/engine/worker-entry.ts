@@ -64,6 +64,9 @@ const main = async (assignment: WorkerAssignment): Promise<void> => {
         scenarios: shardScenarios(scenarios, shard),
         maxInFlight: assignment.maxInFlight,
         drainTimeoutMs: assignment.drainTimeoutMs,
+        // Without this every worker would number its dispatches from 0 and four threads would
+        // build request 0 four times — "N buyers, N distinct seats" becoming four per seat.
+        shard,
       },
       { clock: systemClock, transport, metrics, live },
     );

@@ -31,6 +31,8 @@ export interface FixtureSetupState {
   readonly withChecks?: boolean;
   /** Count one `seen` per response, so the pool tests can prove counters merge across threads. */
   readonly withCounter?: boolean;
+  /** Send each request to `/seat-<ordinal>`, so the target records which ordinals it really saw. */
+  readonly varyByOrdinal?: boolean;
 }
 
 const assignment = workerData as
@@ -76,7 +78,12 @@ export default defineConfig<FixtureSetupState>({
               ratePerSecond: state.count,
               durationMs: state.durationMs ?? 1_000,
             }),
-      request: (setupState) => ({ url: setupState.url }),
+      request: (setupState, ordinal) => ({
+        url:
+          setupState.varyByOrdinal === true
+            ? `${setupState.url}seat-${String(ordinal)}`
+            : setupState.url,
+      }),
     },
   },
 });

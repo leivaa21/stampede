@@ -26,10 +26,15 @@ export interface ScenarioConfig<TSetup> {
    *
    * Built rather than written literally so a scenario can use what `setup()` created — the show id
    * for open-ticket's namesake run, an auth token, a seeded row. Per-*request* variation (a
-   * different seat per buyer) needs the engine to carry a dispatch ordinal across shards and is a
-   * later milestone; `schedule-split.ts` documents how that ordinal is recovered when it lands.
+   * `ordinal` is the request's position **in the whole run**, from 0, and is what makes "N buyers,
+   * N distinct seats" expressible: `seatIds: [seats[ordinal % seats.length]]`. It is global rather
+   * than per-worker, so four threads never build the same request four times (D2-02). Ignore it
+   * and every buyer sends the same thing, which is the namesake run.
+   *
+   * Called **once per dispatch**, so keep it cheap — and if it throws, that request is counted as
+   * a build failure and the run continues; it is not reported as the target refusing.
    */
-  readonly request: (setupState: TSetup) => HttpRequestSpec;
+  readonly request: (setupState: TSetup, ordinal: number) => HttpRequestSpec;
   /**
    * Named predicates over a response, counted pass/fail and reported as a row.
    *

@@ -48,4 +48,12 @@ export const EngineMetric = {
   brokenChecks: "stampede.brokenChecks",
   /** `onResponse` callbacks that threw. Same reasoning as `brokenChecks`. */
   brokenObservers: "stampede.brokenObservers",
+  /**
+   * Requests the scenario's own builder could not produce.
+   *
+   * Counted apart from transport errors on purpose: "your `request()` threw at ordinal 4,001" and
+   * "the target refused the connection" are different problems with different owners, and folding
+   * them together would send someone to debug a network that was fine.
+   */
+  requestErrors: "stampede.requestErrors",
 } as const;
