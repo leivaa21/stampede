@@ -1,4 +1,4 @@
-import { duration, ms, rate } from "../report/format.ts";
+import { duration, ms, plain, rate } from "../report/format.ts";
 import type { LatencySummary, RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 import type { Verdict } from "./thresholds.ts";
 
@@ -31,7 +31,7 @@ const percentiles = (label: string, summary: LatencySummary | undefined): string
 
 const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
   const lines = [
-    `  ${scenario.name}`,
+    `  ${plain(scenario.name)}`,
     `    requests    ${String(scenario.scheduledCount)} scheduled · ${String(scenario.dispatchedCount)} sent · ${String(scenario.responseCount)} answered`,
   ];
 
@@ -39,6 +39,12 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
   // achieved rate below is only interpretable next to what did not happen.
   const shortfalls = [
     scenario.droppedCount > 0 ? `${String(scenario.droppedCount)} dropped` : undefined,
+    // `dispatched + dropped + notBuilt === scheduled` is the identity this line has to keep true.
+    // Without it a config whose `request()` threw showed a halved achieved rate with no cause
+    // anywhere on the page — the shortfall said "none".
+    scenario.requestErrorCount > 0
+      ? `${String(scenario.requestErrorCount)} not built (request() threw)`
+      : undefined,
     scenario.errorCount > 0 ? `${String(scenario.errorCount)} failed` : undefined,
     scenario.abandonedCount > 0 ? `${String(scenario.abandonedCount)} abandoned` : undefined,
   ].filter((part): part is string => part !== undefined);
@@ -74,6 +80,38 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
     ].filter((note): note is string => note !== undefined),
   );
 
+  // Checks are the reason this tool exists, so they print even when they all passed — a run that
+  // asserted something and a run that asserted nothing must not look the same.
+  for (const [name, tally] of Object.entries(scenario.checks)) {
+    // Three states, and broken outranks failed: a check that threw on some responses and returned
+    // `false` on others is a check nobody should be reading a verdict from yet (D2-04).
+    const verdict =
+      tally.broken > 0
+        ? `BROKEN ${String(tally.broken)}`
+        : tally.failed === 0
+          ? "PASS"
+          : `FAIL ${String(tally.failed)}/${String(tally.passed + tally.failed)}`;
+    lines.push(`    check       ${verdict}  ${plain(name)}`);
+  }
+  for (const [name, value] of Object.entries(scenario.counters)) {
+    lines.push(`    counter     ${plain(name)} = ${String(value)}`);
+  }
+  for (const [name, trend] of Object.entries(scenario.trends)) {
+    lines.push(
+      `    recorded    ${plain(name)}  p50 ${ms(trend.p50Ms)} · p99 ${ms(trend.p99Ms)} · max ${ms(trend.maxMs)}`,
+    );
+  }
+  if (scenario.brokenObservations > 0) {
+    lines.push(
+      `    ⚠ ${String(scenario.brokenObservations)} broken observations — a check or onResponse threw, returned a non-boolean, or asked for a reserved metric name`,
+    );
+  }
+  if (scenario.refusedRecordings > 0) {
+    lines.push(
+      `    ⚠ ${String(scenario.refusedRecordings)} recordings refused — more distinct metric names than a cap allows, so some counters or distributions are missing entirely, not merely undercounted`,
+    );
+  }
+
   return lines;
 };
 
@@ -87,15 +125,24 @@ export const renderSummary = (summary: RunSummary): string =>
     ...summary.scenarios.flatMap((scenario) => [...scenarioLines(scenario), ""]),
   ].join("\n");
 
-export const renderVerdict = (verdict: Verdict): string => {
+/**
+ * @param runFailed whether anything else already went wrong, which changes what "no thresholds"
+ * means. A run that failed in `teardown` now reaches here with an *empty* verdict rather than none,
+ * and "nothing was asserted about this run" printed one line above "teardown() failed — double
+ * sell: 2 sold" is the same false reassurance the report refuses to publish.
+ */
+export const renderVerdict = (verdict: Verdict, runFailed: boolean): string => {
   if (verdict.results.length === 0) {
-    return "no thresholds declared — nothing was asserted about this run\n";
+    return runFailed ? "" : "no thresholds declared — nothing was asserted about this run\n";
   }
   const lines = verdict.results.map((result) => {
     if (result.error !== undefined) {
-      return `  BROKEN  ${result.name} — ${result.error}`;
+      // `plain` on both: the name is config-derived, but a predicate's message routinely carries
+      // target text — `throw new Error(await res.text())` in a teardown is the obvious case — and
+      // this string goes to a terminal and a CI log.
+      return `  BROKEN  ${plain(result.name)} — ${plain(result.error)}`;
     }
-    return `  ${result.held ? "PASS  " : "FAIL  "}  ${result.name}`;
+    return `  ${result.held ? "PASS  " : "FAIL  "}  ${plain(result.name)}`;
   });
   return ["thresholds", ...lines, ""].join("\n");
 };

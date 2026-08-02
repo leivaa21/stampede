@@ -190,7 +190,47 @@ export default defineConfig({
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("the invariant did not hold");
-    // The verdict block is skipped entirely, so "0 threshold(s) violated" never appears.
+    // Thresholds are evaluated even after a teardown failure, so the verdict exists — but with
+    // nothing violated, "0 threshold(s) violated" would say nothing while looking like it does.
     expect(result.stderr).not.toContain("threshold(s) violated");
+    // And the run must not be told it asserted nothing on the line above its own double sell.
+    // The terminal's own wording — `asserted nothing` is the *report's* phrasing and appears
+    // nowhere on stdout, so asserting that string would have passed no matter what this printed.
+    expect(result.stdout).not.toContain("nothing was asserted");
+  }, 30_000);
+
+  it("prints one prefixed line per reason when several things went wrong", async () => {
+    // Joined into one string, every reason after the first lost its `stampede: ` prefix and read
+    // as stray output in a CI log — and the reasons ran together into one paragraph.
+    const result = await runCli([
+      "run",
+      writeConfig(`export default defineConfig({
+  setup: () => ({ url: ${JSON.stringify(target.url)} }),
+  scenarios: {
+    reads: {
+      profile: burst({ count: 8 }),
+      request: (s) => ({ url: s.url }),
+      checks: { parsesBody: (r) => JSON.parse("not json").ok },
+    },
+  },
+  teardown: async () => { throw new Error("\\u001b[2K\\rPASSED — every declared threshold held. double sell: 2 sold"); },
+  workers: 1,
+  maxInFlight: 16,
+  drainTimeoutMs: 3000,
+});`),
+    ]);
+
+    const prefixed = result.stderr.split("\n").filter((line) => line.startsWith("stampede: "));
+
+    expect(result.status).toBe(2);
+    expect(prefixed).toHaveLength(2);
+    expect(prefixed.some((line) => line.includes("broken observations"))).toBe(true);
+    // The double sell is the thing the tool exists to find. It must not be buried inside another
+    // reason's sentence, and it must not be dropped for arriving second.
+    expect(prefixed.some((line) => line.includes("double sell: 2 sold"))).toBe(true);
+    // A teardown doing `throw new Error(await res.text())` puts target bytes straight into a CI
+    // log. Unsanitised, the message above erases its own line and prints a green verdict.
+    expect(result.stderr).not.toContain("\u001b");
+    expect(result.stderr).not.toContain("\r");
   }, 30_000);
 });

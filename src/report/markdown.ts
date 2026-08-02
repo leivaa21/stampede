@@ -21,8 +21,8 @@ export interface ReportContext {
   readonly workerCount: number;
   readonly maxInFlight: number;
   readonly drainTimeoutMs: number;
-  /** Non-zero means the run did not pass; the text is what went wrong. */
-  readonly failure: string | undefined;
+  /** One reason per entry — see `RunReport.failures`. Empty when the run came out clean. */
+  readonly failures: readonly string[];
   /** Snapshots discarded for arriving out of order — zero in normal operation. */
   readonly supersededSnapshots: number;
   /** Passed in rather than read here, so the report is a pure function and tests can fix it. */
@@ -57,6 +57,7 @@ const percentileTable = (scenario: ScenarioRunSummary): string =>
 const shortfallOf = (scenario: ScenarioRunSummary): string => {
   const parts = [
     scenario.droppedCount > 0 ? `${String(scenario.droppedCount)} dropped` : undefined,
+    scenario.requestErrorCount > 0 ? `${String(scenario.requestErrorCount)} not built` : undefined,
     scenario.errorCount > 0 ? `${String(scenario.errorCount)} failed` : undefined,
     scenario.abandonedCount > 0 ? `${String(scenario.abandonedCount)} abandoned` : undefined,
   ].filter((part): part is string => part !== undefined);
@@ -119,12 +120,52 @@ const scenarioSection = (scenario: ScenarioRunSummary): string => {
     saturationNote("as queued", scenario.scheduledLatencyMs),
   ].filter((note): note is string => note !== undefined);
 
+  // A broken check is neither PASS nor FAIL. Collapsing it into FAIL published a table saying the
+  // target broke an invariant 500 times when the predicate had a typo (D2-04); collapsing it into
+  // PASS would publish a green claim nothing ever verified.
+  const checkRows = Object.entries(scenario.checks).map(([name, tally]) => [
+    tally.broken > 0 ? "**BROKEN**" : tally.failed === 0 ? "PASS" : "**FAIL**",
+    cell(name),
+    String(tally.passed),
+    String(tally.failed),
+    String(tally.broken),
+  ]);
+  const counterRows = Object.entries(scenario.counters).map(([name, value]) => [
+    cell(name),
+    String(value),
+  ]);
+  const trendRows = Object.entries(scenario.trends).map(([name, trend]) => [
+    cell(name),
+    ms(trend.p50Ms),
+    ms(trend.p99Ms),
+    ms(trend.maxMs),
+  ]);
+
   return [
     `### ${cell(scenario.name)}`,
     "",
     table(["", ""], facts),
     "",
     percentileTable(scenario),
+    // The checks table the contract asked for by name. Printed whenever a scenario declared any,
+    // because "every check passed" and "no checks were declared" must not render identically.
+    ...(checkRows.length > 0
+      ? ["", table(["", "check", "passed", "failed", "broken"], checkRows)]
+      : []),
+    ...(counterRows.length > 0 ? ["", table(["counter", "total"], counterRows)] : []),
+    ...(trendRows.length > 0 ? ["", table(["recorded", "p50", "p99", "max"], trendRows)] : []),
+    ...(scenario.brokenObservations > 0
+      ? [
+          "",
+          `> ⚠ **${String(scenario.brokenObservations)} broken observations** — a check or \`onResponse\` threw, returned a non-boolean, or asked for a reserved metric name. The measurements are real; at least one claim about them is not.`,
+        ]
+      : []),
+    ...(scenario.refusedRecordings > 0
+      ? [
+          "",
+          `> ⚠ **${String(scenario.refusedRecordings)} recordings refused** — this scenario asked for more distinct metric names than a per-scenario cap allows (512 counters, 512 checks, 32 distributions), so some rows are missing from the tables above **entirely**, not merely undercounted.`,
+        ]
+      : []),
     // Blank `>` between notes, or GitHub merges adjacent blockquote lines into one paragraph and
     // the two warnings run together into a wall of text.
     ...(notes.length > 0 ? ["", notes.join("\n>\n")] : []),
@@ -133,26 +174,26 @@ const scenarioSection = (scenario: ScenarioRunSummary): string => {
 
 const verdictSection = (
   verdict: Verdict | undefined,
-  failure: string | undefined,
+  failures: readonly string[],
 ): readonly string[] => {
+  // Two independent facts — were thresholds evaluated, and did anything go wrong — and all four
+  // combinations say something different. Collapsing any pair of them is how "this run measured,
+  // but asserted nothing" ended up printed directly beneath "**FAILED** — double sell: 2 sold".
+  const noThresholdRows = (evaluated: boolean): readonly string[] => [
+    "### Thresholds",
+    "",
+    failures.length > 0
+      ? evaluated
+        ? "_None were declared, and the run failed for the reasons above._"
+        : "_Not evaluated — the run failed first. See the verdict above._"
+      : "_No thresholds were declared — this run measured, but asserted nothing._",
+  ];
+
   if (verdict === undefined) {
-    // Two very different situations that must not share a sentence. A run that failed before its
-    // thresholds could be evaluated is not a run that declared none — saying "asserted nothing"
-    // there publishes a clean-looking table for a run whose invariant broke.
-    return [
-      "### Thresholds",
-      "",
-      failure === undefined
-        ? "_No thresholds were declared — this run measured, but asserted nothing._"
-        : "_Not evaluated — the run failed first. See the verdict above._",
-    ];
+    return noThresholdRows(false);
   }
   if (verdict.results.length === 0) {
-    return [
-      "### Thresholds",
-      "",
-      "_No thresholds were declared — this run measured, but asserted nothing._",
-    ];
+    return noThresholdRows(true);
   }
   return [
     "### Thresholds",
@@ -169,12 +210,34 @@ const verdictSection = (
   ];
 };
 
+/**
+ * The verdict line, and the reasons under it — one bullet each, never one paragraph.
+ *
+ * `cell()` is table-cell escaping, and running a multi-reason failure through it flattened every
+ * newline into a space: four reasons became a 700-character sentence with the double sell buried
+ * at the end of a clause about cardinality caps, in the artifact designed to be pasted into a
+ * README. One reason still reads as a headline; several read as a list.
+ */
+const failureHeadline = (failures: readonly string[], verdict: Verdict | undefined): string => {
+  if (failures.length === 0) {
+    return `**FAILED** — ${String(verdict?.violated.length ?? 0)} threshold(s) violated`;
+  }
+  if (failures.length === 1) {
+    return `**FAILED** — ${cell(failures[0] ?? "")}`;
+  }
+  return [
+    "**FAILED** — several things went wrong:",
+    "",
+    ...failures.map((f) => `- ${cell(f)}`),
+  ].join("\n");
+};
+
 export const renderMarkdownReport = (
   summary: RunSummary,
   verdict: Verdict | undefined,
   context: ReportContext,
 ): string => {
-  const failed = context.failure !== undefined || (verdict?.violated.length ?? 0) > 0;
+  const failed = context.failures.length > 0 || (verdict?.violated.length ?? 0) > 0;
 
   return [
     "## Load test",
@@ -182,7 +245,7 @@ export const renderMarkdownReport = (
     // The verdict first, in bold, before any number. A reader skimming a pasted table has to learn
     // that the run failed before they read a percentile from it.
     failed
-      ? `**FAILED** — ${cell(context.failure ?? `${String(verdict?.violated.length ?? 0)} threshold(s) violated`)}`
+      ? failureHeadline(context.failures, verdict)
       : "**PASSED** — every declared threshold held.",
     "",
     // Two spaces end the line: GitHub collapses a single newline, which would run the provenance
@@ -200,7 +263,7 @@ export const renderMarkdownReport = (
       : []),
     "",
     ...summary.scenarios.flatMap((scenario) => [scenarioSection(scenario), ""]),
-    ...verdictSection(verdict, context.failure),
+    ...verdictSection(verdict, context.failures),
     "",
   ].join("\n");
 };

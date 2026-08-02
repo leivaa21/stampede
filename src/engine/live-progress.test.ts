@@ -129,10 +129,11 @@ describe("checks and counters across real threads", () => {
     });
 
     const reads = outcome.summary.scenarios[0];
-    expect(reads?.checks.alwaysPasses).toEqual({ passed: 80, failed: 0 });
-    expect(reads?.checks.alwaysFails).toEqual({ passed: 0, failed: 80 });
-    // A check that throws is counted once per response and its tally reads as failed, so a run
-    // cannot look clean because an assertion was broken.
+    expect(reads?.checks.alwaysPasses).toEqual({ passed: 80, failed: 0, broken: 0 });
+    expect(reads?.checks.alwaysFails).toEqual({ passed: 0, failed: 80, broken: 0 });
+    // A throwing check is broken, not failed — and the per-name tally survives the worker merge,
+    // so the report can name the broken claim instead of accusing the target of a failure.
+    expect(reads?.checks.alwaysThrows).toEqual({ passed: 0, failed: 0, broken: 80 });
     expect(reads?.brokenObservations).toBe(80);
   }, 30_000);
 

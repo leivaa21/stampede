@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { HELP, parseArgs } from "./cli/args.ts";
 import { renderSummary, renderVerdict } from "./cli/render.ts";
+import { plain } from "./report/format.ts";
 import { ExitCode, runFromConfig, type ExitCodeValue } from "./cli/run-command.ts";
 import { guardTerminal } from "./cli/signals.ts";
 import { renderMarkdownReport } from "./report/markdown.ts";
@@ -111,7 +112,7 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
           workerCount: report.workerCount,
           maxInFlight: report.maxInFlight,
           drainTimeoutMs: report.drainTimeoutMs,
-          failure: report.failure,
+          failures: report.failures,
           supersededSnapshots: report.supersededSnapshots,
           generatedAt: new Date(),
         }),
@@ -136,14 +137,23 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
       `note: ${String(report.supersededSnapshots)} worker snapshots arrived out of order and were discarded`,
     );
   }
-  if (report.verdict !== undefined) {
-    out(renderVerdict(report.verdict));
+  // `renderVerdict` is empty when a failed run declared no thresholds — printing it would add a
+  // stray blank line between the summary and the reasons.
+  const verdictText =
+    report.verdict === undefined ? "" : renderVerdict(report.verdict, report.failures.length > 0);
+  if (verdictText.length > 0) {
+    out(verdictText);
   }
-  if (report.failure !== undefined) {
-    err(`stampede: ${report.failure}`);
+  // One prefixed line per reason. Joined into a single string they lost their `stampede: ` prefix
+  // from the second reason on, so three of four reasons read as stray output in a CI log.
+  for (const failure of report.failures) {
+    err(`stampede: ${plain(failure)}`);
   }
 
-  if (report.exitCode === ExitCode.ThresholdViolated && report.verdict !== undefined) {
+  // Only when something was actually violated. Thresholds are now evaluated even after a teardown
+  // failure — so a run that failed *only* in teardown has a defined verdict with nothing in it,
+  // and "0 threshold(s) violated" would be a line that says nothing while looking like it does.
+  if (report.verdict !== undefined && report.verdict.violated.length > 0) {
     err(`stampede: ${String(report.verdict.violated.length)} threshold(s) violated`);
   }
   return report.exitCode;

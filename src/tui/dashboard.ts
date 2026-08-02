@@ -1,4 +1,4 @@
-import { duration, ms, rate } from "../report/format.ts";
+import { duration, ms, plain, rate } from "../report/format.ts";
 import type { RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 
 /**
@@ -30,8 +30,9 @@ const SHOW_CURSOR = `${CSI}?25h`;
  * rather than code unit also keeps an emoji from being cut into a lone surrogate.
  */
 const truncate = (line: string, width: number): string => {
-  // eslint-disable-next-line no-control-regex
-  const printable = line.replace(/[\u0000-\u001f\u007f]/g, " ");
+  // `plain` rather than a second regex here: two answers to "what is a control character" in one
+  // repo is one too many, and this file's copy was the weaker of them (it missed the C1 range).
+  const printable = plain(line);
   // Spreading a string iterates code points, which is the point: slicing by code unit can cut an
   // emoji in half and emit a lone surrogate to the terminal. Grapheme clusters would be better
   // still, but `Intl.Segmenter` is a dependency-free improvement for another day and the failure it
@@ -60,9 +61,9 @@ const achievedSoFar = (dispatched: number, elapsedMs: number): number | undefine
   elapsedMs <= 0 ? undefined : (dispatched * 1000) / elapsedMs;
 
 const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonly string[] => {
-  // `dropped` counts too: a refused request is a schedule instant that has been dealt with, and a
-  // bar that ignored them would crawl while the run was in fact racing to its end.
-  const done = scenario.dispatchedCount + scenario.droppedCount;
+  // `dropped` and `not built` count too: both are schedule instants that have been dealt with, and
+  // a bar that ignored them would crawl while the run was in fact racing to its end.
+  const done = scenario.dispatchedCount + scenario.droppedCount + scenario.requestErrorCount;
   const fraction = scenario.scheduledCount === 0 ? 0 : done / scenario.scheduledCount;
 
   const lines = [
@@ -74,6 +75,7 @@ const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonl
   // watch a run they think is healthy for twenty minutes.
   const shortfalls = [
     scenario.droppedCount > 0 ? `${String(scenario.droppedCount)} dropped` : undefined,
+    scenario.requestErrorCount > 0 ? `${String(scenario.requestErrorCount)} not built` : undefined,
     scenario.errorCount > 0 ? `${String(scenario.errorCount)} failed` : undefined,
   ].filter((part): part is string => part !== undefined);
   if (shortfalls.length > 0) {
@@ -88,6 +90,32 @@ const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonl
   lines.push(
     `    p50 ${ms(scenario.latencyMs?.p50Ms)} · p99 ${ms(scenario.latencyMs?.p99Ms)} · queued p99 ${ms(scenario.scheduledLatencyMs?.p99Ms)}`,
   );
+
+  // Only the failing ones, and only while they are failing. Waiting for the summary to reveal that
+  // every response has been failing `noDoubleSell` for eight minutes is the same mistake as hiding
+  // drops, which this file already refuses (D2-05).
+  const failing = Object.entries(scenario.checks).filter(([, tally]) => tally.failed > 0);
+  if (failing.length > 0) {
+    lines.push(
+      `    ✗ ${failing.map(([name, tally]) => `${name} ${String(tally.failed)}`).join(" · ")}`,
+    );
+  }
+  // Named, not just counted. "3 broken observations" at minute one of a twenty-minute run leaves
+  // the reader with nothing to fix; the check's name is the fix.
+  const broken = Object.entries(scenario.checks).filter(([, tally]) => tally.broken > 0);
+  if (broken.length > 0) {
+    lines.push(
+      `    ⚠ broken: ${broken.map(([name, tally]) => `${name} ${String(tally.broken)}`).join(" · ")}`,
+    );
+  } else if (scenario.brokenObservations > 0) {
+    // onResponse threw, or a reserved name was refused — no check name to blame.
+    lines.push(`    ⚠ ${String(scenario.brokenObservations)} broken observations`);
+  }
+  // Live, for the same reason drops are: this now *fails the run*, and finding out at the end that
+  // the last nineteen minutes were recording into a full map is the silence D2-05 refuses.
+  if (scenario.refusedRecordings > 0) {
+    lines.push(`    ⚠ ${String(scenario.refusedRecordings)} recordings refused — too many names`);
+  }
 
   return lines;
 };

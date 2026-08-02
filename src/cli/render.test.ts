@@ -31,6 +31,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   scheduledCount: 10,
   dispatchedCount: 10,
   droppedCount: 0,
+  requestErrorCount: 0,
   responseCount: 10,
   errorCount: 0,
   abandonedCount: 0,
@@ -43,6 +44,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   checks: {},
   trends: {},
   brokenObservations: 0,
+  refusedRecordings: 0,
   ...over,
 });
 
@@ -155,6 +157,105 @@ describe("renderSummary", () => {
     expect(renderSummary(summaryOf(scenario()))).toContain("peak in flight ≤ 40");
   });
 
+  it("prints a check even when it passed, so an asserting run does not look like a silent one", () => {
+    const text = renderSummary(
+      summaryOf(
+        scenario({ checks: { oneWinnerOrConflict: { passed: 500, failed: 0, broken: 0 } } }),
+      ),
+    );
+
+    expect(text).toContain("check       PASS  oneWinnerOrConflict");
+  });
+
+  it("shows how many responses failed a check, not just that one did", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ checks: { noDoubleSell: { passed: 480, failed: 20, broken: 0 } } })),
+    );
+
+    expect(text).toContain("FAIL 20/500  noDoubleSell");
+  });
+
+  it("prints counters and recorded distributions", () => {
+    const text = renderSummary(
+      summaryOf(
+        scenario({
+          counters: { reserved201: 1 },
+          trends: {
+            behindMs: {
+              count: 3,
+              minMs: 1,
+              maxMs: 40,
+              meanMs: 20,
+              p50Ms: 18,
+              p95Ms: 38,
+              p99Ms: 39,
+              p999Ms: 40,
+              overflowCount: 0,
+              saturated: false,
+              isLowerBound: false,
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(text).toContain("counter     reserved201 = 1");
+    expect(text).toContain("recorded    behindMs");
+  });
+
+  it("never prints PASS for a check that only ever broke", () => {
+    // D2-04's whole point, and the cell the argument is written about. Collapsing broken into PASS
+    // publishes a green claim nothing verified; collapsing it into FAIL accuses the target of an
+    // invariant violation that was a typo in the predicate.
+    const text = renderSummary(
+      summaryOf(
+        scenario({ checks: { oneWinnerOrConflict: { passed: 0, failed: 0, broken: 500 } } }),
+      ),
+    );
+
+    expect(text).toContain("BROKEN 500  oneWinnerOrConflict");
+    expect(text).not.toContain("PASS  oneWinnerOrConflict");
+  });
+
+  it("reports a real failure as FAIL, not as broken", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ checks: { noDoubleSell: { passed: 10, failed: 2, broken: 0 } } })),
+    );
+
+    expect(text).toContain("FAIL 2/12  noDoubleSell");
+  });
+
+  it("names requests the config could not build, so a shortfall always has a cause", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ scheduledCount: 100, dispatchedCount: 90, requestErrorCount: 10 })),
+    );
+
+    expect(text).toContain("10 not built (request() threw)");
+  });
+
+  it("says when recordings were refused, because the missing ones read as zero", () => {
+    const text = renderSummary(summaryOf(scenario({ refusedRecordings: 88 })));
+
+    expect(text).toContain("88 recordings refused");
+  });
+
+  it("cannot have its own output rewritten by the target", () => {
+    // A counter name can be built from response data, so a hostile target controls a string this
+    // writes to a CI log. `\r` alone overwrites the line above; an ANSI escape can print a verdict.
+    const text = renderSummary(
+      summaryOf(scenario({ counters: { "\u001b[2Kfake\rPASS everything": 1 } })),
+    );
+
+    expect(text).not.toContain("\u001b");
+    expect(text).not.toContain("\r");
+  });
+
+  it("warns when an assertion is broken rather than the target", () => {
+    expect(renderSummary(summaryOf(scenario({ brokenObservations: 4 })))).toContain(
+      "4 broken observations",
+    );
+  });
+
   it("keeps multiple scenarios separate and named", () => {
     const text = renderSummary(
       summaryOf(scenario({ name: "reads" }), scenario({ name: "writes" })),
@@ -167,25 +268,33 @@ describe("renderSummary", () => {
 
 describe("renderVerdict", () => {
   it("marks a held claim PASS and a violated one FAIL, by name", () => {
-    const text = renderVerdict({
-      results: [
-        { name: "exactly one buyer wins", held: true, error: undefined },
-        { name: "p99 under 250ms", held: false, error: undefined },
-      ],
-      violated: ["p99 under 250ms"],
-      broken: [],
-    });
+    const text = renderVerdict(
+      {
+        results: [
+          { name: "exactly one buyer wins", held: true, error: undefined },
+          { name: "p99 under 250ms", held: false, error: undefined },
+        ],
+        violated: ["p99 under 250ms"],
+        broken: [],
+      },
+      false,
+    );
 
     expect(text).toContain("PASS    exactly one buyer wins");
     expect(text).toContain("FAIL    p99 under 250ms");
   });
 
   it("distinguishes a broken predicate from a failed one", () => {
-    const text = renderVerdict({
-      results: [{ name: "reaches into nothing", held: false, error: "cannot read x of undefined" }],
-      violated: [],
-      broken: ["reaches into nothing"],
-    });
+    const text = renderVerdict(
+      {
+        results: [
+          { name: "reaches into nothing", held: false, error: "cannot read x of undefined" },
+        ],
+        violated: [],
+        broken: ["reaches into nothing"],
+      },
+      false,
+    );
 
     expect(text).toContain("BROKEN  reaches into nothing");
     expect(text).toContain("cannot read x of undefined");
@@ -193,8 +302,39 @@ describe("renderVerdict", () => {
   });
 
   it("says plainly when a run asserted nothing at all", () => {
-    expect(renderVerdict({ results: [], violated: [], broken: [] })).toContain(
+    expect(renderVerdict({ results: [], violated: [], broken: [] }, false)).toContain(
       "nothing was asserted",
     );
+  });
+
+  it("says nothing about thresholds when the run already failed for another reason", () => {
+    // The round-three defect, on the surface it originally shipped on: "nothing was asserted about
+    // this run" printed one line above "teardown() failed — double sell: 2 sold" is the same false
+    // reassurance the report refuses to publish. An empty verdict is what a run that declared no
+    // thresholds now carries — thresholds are evaluated even after a teardown failure.
+    expect(renderVerdict({ results: [], violated: [], broken: [] }, true)).toBe("");
+  });
+
+  it("still says so when nothing went wrong and nothing was asserted", () => {
+    // The other half: a clean run that declared no thresholds must not look like a proven one.
+    expect(renderVerdict({ results: [], violated: [], broken: [] }, false)).toContain(
+      "nothing was asserted about this run",
+    );
+  });
+
+  it("cannot have a threshold's own error rewrite the terminal", () => {
+    // `throw new Error(await res.text())` in a teardown or a predicate is ordinary, and it puts
+    // target-chosen bytes straight into a CI log.
+    const text = renderVerdict(
+      {
+        results: [{ name: "claim", held: false, error: "\u001b[2Kfake\rPASS" }],
+        violated: [],
+        broken: ["claim"],
+      },
+      false,
+    );
+
+    expect(text).not.toContain("\u001b");
+    expect(text).not.toContain("\r");
   });
 });

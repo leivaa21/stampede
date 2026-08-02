@@ -1,6 +1,6 @@
 import type { ArrivalProfile } from "../engine/arrival-profiles.ts";
 import type { HttpRequestSpec } from "../engine/http-transport.ts";
-import type { TransportResponse } from "../engine/ports.ts";
+import type { ResponseCheck, ResponseRecorder, TransportResponse } from "../engine/ports.ts";
 import type { RunSummary } from "../engine/run-summary.ts";
 
 /**
@@ -22,17 +22,26 @@ export interface ScenarioConfig<TSetup> {
    */
   readonly profile: ArrivalProfile;
   /**
-   * The request this scenario sends, built once from the setup state.
+   * Builds the request this scenario sends, once per dispatch.
    *
    * Built rather than written literally so a scenario can use what `setup()` created — the show id
-   * for open-ticket's namesake run, an auth token, a seeded row. Per-*request* variation (a
+   * for open-ticket's namesake run, an auth token, a seeded row.
+   *
    * `ordinal` is the request's position **in the whole run**, from 0, and is what makes "N buyers,
    * N distinct seats" expressible: `seatIds: [seats[ordinal % seats.length]]`. It is global rather
-   * than per-worker, so four threads never build the same request four times (D2-02). Ignore it
-   * and every buyer sends the same thing, which is the namesake run.
+   * than per-worker, so four threads never build the same request four times (D2-02). Ignore it and
+   * every buyer sends the same thing, which is the namesake run.
    *
-   * Called **once per dispatch**, so keep it cheap — and if it throws, that request is counted as
-   * a build failure and the run continues; it is not reported as the target refusing.
+   * Keep it cheap: it runs on the dispatch path, once per request, and time spent here is time the
+   * generator is not dispatching. If it throws, that request is counted as a build failure and the
+   * run continues — reported as `not built`, never as the target refusing.
+   *
+   * **It must be a pure function of `(setupState, ordinal)`.** Every worker gets its own structured
+   * clone of the setup state, so a builder that consumes shared state — `state.seats.pop()`, an
+   * incrementing nonce — hands four threads the same four values rather than sixteen distinct ones.
+   * The ordinal exists precisely so variation can be derived rather than accumulated. stampede also
+   * calls this once at ordinal 0 per worker before the run starts, to fail a malformed request at
+   * startup instead of twenty minutes in, which an impure builder would notice.
    */
   readonly request: (setupState: TSetup, ordinal: number) => HttpRequestSpec;
   /**
@@ -49,7 +58,7 @@ export interface ScenarioConfig<TSetup> {
    * fails at the end with the check named — a bug in an assertion must not be reported as the
    * target violating an invariant.
    */
-  readonly checks?: Readonly<Record<string, (response: TransportResponse) => boolean>>;
+  readonly checks?: Readonly<Record<string, ResponseCheck>>;
   /**
    * Runs once per response, for counters and trends a check cannot express.
    *
@@ -59,24 +68,6 @@ export interface ScenarioConfig<TSetup> {
    * rather than allowed to end the run.
    */
   readonly onResponse?: (response: TransportResponse, record: ResponseRecorder) => void;
-}
-
-/**
- * What `onResponse` records into.
- *
- * Deliberately narrow: increment a counter, record a number. Both are merged across worker threads
- * by `metrics/`, which is the only reason a claim about a whole run can be made at all.
- */
-export interface ResponseRecorder {
-  /** Adds to a named counter for this scenario. `by` defaults to 1. */
-  readonly count: (name: string, by?: number) => void;
-  /**
-   * Records a number into a named distribution for this scenario — percentiles, not just a total.
-   *
-   * Milliseconds by name, because that is what every distribution in this tool is measured in and
-   * a unitless one would be the first number nobody could interpret.
-   */
-  readonly recordMs: (name: string, valueMs: number) => void;
 }
 
 /**
@@ -105,10 +96,17 @@ export interface StampedeConfig<TSetup = undefined> {
    * assert exactly one seat sold. Throwing here fails the run with exit 1, like a violated
    * threshold — because that is what it is.
    *
-   * **An assertion hook, not a cleanup hook.** It does not run when the run itself failed: a
-   * teardown written to assert would otherwise report "the invariant did not hold" about a storm
-   * that never happened, and mask the real reason. Anything that must be cleaned up regardless
-   * belongs in the harness around `stampede`, not here.
+   * **An assertion hook, not a cleanup hook.** It does not run when the load could not be generated
+   * at all — a config that would not load, a `setup()` that threw, a scenario that recorded no
+   * responses — because a teardown written to assert would report "the invariant did not hold"
+   * about a storm that never happened, and mask the real reason.
+   *
+   * It *does* run when the storm happened and something else about the run was broken: a check that
+   * threw, a metric name that was refused. Those exit 2, but the requests were real and so is
+   * whatever they did to the target, so the invariant is still worth asking about — and its answer
+   * is reported alongside the other reasons rather than instead of them.
+   *
+   * Anything that must be cleaned up regardless belongs in the harness around `stampede`, not here.
    */
   readonly teardown?: (setupState: TSetup) => void | Promise<void>;
   /** At least one. Several run concurrently, each with its own metrics (D1-05). */

@@ -42,6 +42,17 @@ export class FakeClock implements Clock {
     return this.#nowMs;
   }
 
+  /**
+   * Moves time forward without waking anything — wall clock spent inside a synchronous callback.
+   *
+   * Distinct from `sleep`/`oversleepNext`, which are the loop waiting. This is how a test spends
+   * time the way a user's slow `check` does: the clock advances, no timer fires, and nothing else
+   * gets a turn.
+   */
+  burn(durationMs: number): void {
+    this.#nowMs += Math.max(0, durationMs);
+  }
+
   sleep(durationMs: number): Promise<void> {
     const wakeAtMs = this.#nowMs + Math.max(0, durationMs);
     this.#order += 1;

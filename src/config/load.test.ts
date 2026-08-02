@@ -98,6 +98,81 @@ await loadConfig(${JSON.stringify(file)}).catch((error) => {
     await expect(loadConfig(file)).rejects.toThrow(/constantRate\(\), ramp\(\), burst\(\)/);
   });
 
+  /**
+   * The assertion surface's own edges. Each of these type-checks perfectly and fails silently at
+   * runtime — which is why they are startup errors rather than something a reader has to notice in
+   * a report at the end of a twenty-minute run.
+   */
+  describe("checks and onResponse", () => {
+    const withScenario = (extra: string): string =>
+      VALID.replace(
+        `request: () => ({ url: "http://localhost:1/" }) },`,
+        `request: () => ({ url: "http://localhost:1/" }), ${extra} },`,
+      );
+
+    it("refuses an async check, which would otherwise pass forever", async () => {
+      // `async (r) => r.status === 201` returns a promise. A promise is truthy and is never
+      // `false`, so every response would be recorded as passing a check that verified nothing.
+      await expect(
+        loadConfig(writeConfig(withScenario(`checks: { created: async () => true }`))),
+      ).rejects.toThrow(/check "created".*is `async`.*Drop the `async` keyword/s);
+    });
+
+    it("refuses an async onResponse", async () => {
+      await expect(
+        loadConfig(writeConfig(withScenario(`onResponse: async () => undefined`))),
+      ).rejects.toThrow(/`onResponse` in scenario "reads" is `async`/);
+    });
+
+    it("refuses a check name in stampede's own metric namespace", async () => {
+      // Otherwise the check's tally and the engine's drop counter share a key, and the run reports
+      // a drop count the user wrote.
+      await expect(
+        loadConfig(writeConfig(withScenario(`checks: { "stampede.dropped": () => true }`))),
+      ).rejects.toThrow(/check name "stampede.dropped" starts with `stampede.`, which is reserved/);
+    });
+
+    it("refuses a scenario name in that namespace too", async () => {
+      await expect(
+        loadConfig(writeConfig(VALID.replace("reads: {", '"stampede.internal": {'))),
+      ).rejects.toThrow(/scenario name "stampede.internal" starts with/);
+    });
+
+    it("refuses a check name too long to attribute a break to", async () => {
+      // The registry silently refuses an over-long name rather than throwing, so this would cost
+      // the "which check broke" attribution at exactly the moment someone needed it.
+      const long = "c".repeat(115);
+      await expect(
+        loadConfig(writeConfig(withScenario(`checks: { "${long}": () => true }`))),
+        // The quoted figure is the budget minus the derived counter's prefix. Quoting the raw
+        // 120 would name a length that still fails, which is worse than saying nothing.
+      ).rejects.toThrow(/is too long — a check name may be at most 99 characters/);
+    });
+
+    it("says what an onResponse has to be when it is not a function", async () => {
+      await expect(
+        loadConfig(writeConfig(withScenario(`onResponse: "please count things"`))),
+      ).rejects.toThrow(/scenario "reads" has an `onResponse` that is not a function/);
+    });
+
+    it("caps how many checks one scenario may declare", async () => {
+      // Every check reserves a counter slot for its broken tally. Unbounded, a config starves its
+      // own counters and is then told the counters are at fault.
+      const many = Array.from({ length: 65 }, (_, i) => `c${String(i)}: () => true`).join(", ");
+      await expect(loadConfig(writeConfig(withScenario(`checks: { ${many} }`)))).rejects.toThrow(
+        /declares 65 checks; the limit is 64/,
+      );
+    });
+
+    it("accepts a plain synchronous check", async () => {
+      const config = await loadConfig(
+        writeConfig(withScenario(`checks: { created: (r) => r.status === 201 }`)),
+      );
+
+      expect(Object.keys(config.scenarios.reads?.checks ?? {})).toEqual(["created"]);
+    });
+  });
+
   it("refuses a threshold that is not a named predicate", async () => {
     const file = writeConfig(`
 import { burst } from "${REPO_ROOT}src/engine/arrival-profiles.ts";

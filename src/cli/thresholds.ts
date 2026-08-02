@@ -24,6 +24,73 @@ export interface Verdict {
 }
 
 /**
+ * Points at the knob the counts actually implicate.
+ *
+ * "check the target is reachable" is one hypothesis, and printing it while the same sentence says
+ * `10 dropped` sends the user to the wrong place — that is `maxInFlight`, not the network.
+ */
+const adviceFor = (scenario: RunSummary["scenarios"][number]): string => {
+  // First, because it is the only one of these where the *config* is at fault: nothing was sent, so
+  // no advice about the target or its cap can be right. "check the target is reachable" for a
+  // `request()` that threw on every ordinal sends someone to inspect a server that was never asked.
+  if (scenario.requestErrorCount >= scenario.scheduledCount && scenario.requestErrorCount > 0) {
+    return "every request threw while being built; fix `request()` in the config.";
+  }
+  if (scenario.droppedCount >= scenario.dispatchedCount && scenario.droppedCount > 0) {
+    return "almost everything was refused by the in-flight cap; raise `maxInFlight`.";
+  }
+  if (scenario.abandonedCount > 0 && scenario.errorCount === 0) {
+    return "the requests went out but nothing came back in time; raise `drainTimeoutMs`.";
+  }
+  return "check the target is reachable.";
+};
+
+/**
+ * A scenario whose numbers are *incomplete*, rather than bad.
+ *
+ * Cardinality caps refuse recordings rather than throwing, which is right — a run must not die at
+ * minute nineteen because a config asked for one name too many. But a threshold reading a counter
+ * that was refused reads a confident `0`, and reports a violation the target never caused. So the
+ * refusals fail the run on the run-failed code, naming the cap.
+ */
+export const findRefusedRecordings = (summary: RunSummary): string | undefined => {
+  for (const scenario of summary.scenarios) {
+    if (scenario.refusedRecordings > 0) {
+      return (
+        `scenario "${scenario.name}" refused ${String(scenario.refusedRecordings)} recordings — ` +
+        `it asked for more distinct metric names than a per-scenario cap allows (512 counters, ` +
+        `512 checks, 32 distributions), or for a name over 120 characters. ` +
+        `The values that were recorded are real, but some are missing entirely, so a threshold ` +
+        `reading one of them would read 0 rather than the truth. Use fewer distinct names — ` +
+        `a counter or a trend per seat is a cardinality bomb; one per outcome is not.`
+      );
+    }
+  }
+  return undefined;
+};
+
+/**
+ * A scenario whose *assertions* are broken, rather than whose target is.
+ *
+ * D2-04: a check that threw or returned a non-boolean is a bug in the claim, so the run fails —
+ * but on the run-failed code, with the assertion named. Reporting it as a violated threshold would
+ * blame the target for a typo, which is the confusion the exit-code contract exists to prevent.
+ */
+export const findBrokenObservations = (summary: RunSummary): string | undefined => {
+  for (const scenario of summary.scenarios) {
+    if (scenario.brokenObservations > 0) {
+      return (
+        `scenario "${scenario.name}" had ${String(scenario.brokenObservations)} broken observations — ` +
+        `a check or onResponse threw, returned something other than true/false, or asked for a ` +
+        `metric name in stampede's own namespace. ` +
+        `The run's numbers are real, but at least one of its claims is not.`
+      );
+    }
+  }
+  return undefined;
+};
+
+/**
  * A scenario that recorded nothing fails the **run**, before any threshold is evaluated.
  *
  * D1-02 makes an empty histogram `undefined` rather than `0`, because zero latency is a lie about a
@@ -35,29 +102,14 @@ export interface Verdict {
  * Exit 2 rather than 1 is the honest classification: a scenario that issued requests and got nothing
  * back is broken, not violated.
  */
-/**
- * Points at the knob the counts actually implicate.
- *
- * "check the target is reachable" is one hypothesis, and printing it while the same sentence says
- * `10 dropped` sends the user to the wrong place — that is `maxInFlight`, not the network.
- */
-const adviceFor = (scenario: RunSummary["scenarios"][number]): string => {
-  if (scenario.droppedCount >= scenario.dispatchedCount && scenario.droppedCount > 0) {
-    return "almost everything was refused by the in-flight cap; raise `maxInFlight`.";
-  }
-  if (scenario.abandonedCount > 0 && scenario.errorCount === 0) {
-    return "the requests went out but nothing came back in time; raise `drainTimeoutMs`.";
-  }
-  return "check the target is reachable.";
-};
-
 export const findUnmeasuredScenario = (summary: RunSummary): string | undefined => {
   for (const scenario of summary.scenarios) {
     if (scenario.scheduledCount > 0 && scenario.responseCount === 0) {
       return (
         `scenario "${scenario.name}" recorded no responses at all ` +
         `(${String(scenario.dispatchedCount)} dispatched, ${String(scenario.errorCount)} failed, ` +
-        `${String(scenario.droppedCount)} dropped, ${String(scenario.abandonedCount)} abandoned). ` +
+        `${String(scenario.droppedCount)} dropped, ${String(scenario.requestErrorCount)} not built, ` +
+        `${String(scenario.abandonedCount)} abandoned). ` +
         `There is nothing to publish a percentile from — ${adviceFor(scenario)}`
       );
     }

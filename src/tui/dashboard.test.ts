@@ -31,6 +31,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   scheduledCount: 100,
   dispatchedCount: 40,
   droppedCount: 0,
+  requestErrorCount: 0,
   responseCount: 38,
   errorCount: 0,
   abandonedCount: 0,
@@ -43,6 +44,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   checks: {},
   trends: {},
   brokenObservations: 0,
+  refusedRecordings: 0,
   ...over,
 });
 
@@ -129,6 +131,25 @@ describe("frameFor", () => {
     const frame = frameFor(summaryOf(scenario())).join("\n");
 
     expect(frame).toContain("p99 16.0ms · queued p99 64.0ms");
+  });
+
+  it("surfaces a failing check the moment it fails, not at the end", () => {
+    // Waiting for the summary to reveal that every response has been failing for eight minutes is
+    // the same mistake as hiding drops, which this file already refuses (D2-05).
+    const frame = frameFor(
+      summaryOf(scenario({ checks: { noDoubleSell: { passed: 10, failed: 3, broken: 0 } } })),
+    ).join("\n");
+
+    expect(frame).toContain("✗ noDoubleSell 3");
+  });
+
+  it("stays quiet about checks that are passing", () => {
+    // A live view is for what needs attention; a passing check does not.
+    const frame = frameFor(
+      summaryOf(scenario({ checks: { fine: { passed: 10, failed: 0, broken: 0 } } })),
+    ).join("\n");
+
+    expect(frame).not.toContain("✗");
   });
 
   it("gives every scenario its own block", () => {

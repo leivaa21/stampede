@@ -39,6 +39,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   scheduledCount: 500,
   dispatchedCount: 498,
   droppedCount: 2,
+  requestErrorCount: 0,
   responseCount: 497,
   errorCount: 1,
   abandonedCount: 0,
@@ -51,6 +52,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   checks: {},
   trends: {},
   brokenObservations: 0,
+  refusedRecordings: 0,
   ...over,
 });
 
@@ -68,7 +70,7 @@ const context: ReportContext = {
   workerCount: 4,
   maxInFlight: 500,
   drainTimeoutMs: 30_000,
-  failure: undefined,
+  failures: [],
   supersededSnapshots: 0,
   generatedAt: new Date("2026-07-31T12:00:00.000Z"),
 };
@@ -237,6 +239,104 @@ describe("renderMarkdownReport", () => {
     );
   });
 
+  it("prints the checks table the contract asked for by name", () => {
+    const text = render(
+      summaryOf(
+        scenario({
+          checks: {
+            oneWinnerOrConflict: { passed: 500, failed: 0, broken: 0 },
+            noDoubleSell: { passed: 480, failed: 20, broken: 0 },
+          },
+        }),
+      ),
+    );
+
+    // Whole rows, terminated: `toContain("| PASS | oneWinnerOrConflict | 500 | 0 |")` also matches
+    // a row with a fourth column after it, so the assertion survived the column being added.
+    expect(text).toContain("|  | check | passed | failed | broken |\n");
+    expect(text).toContain("| PASS | oneWinnerOrConflict | 500 | 0 | 0 |\n");
+    // Bold, so a failure survives a skim of a pasted table.
+    expect(text).toContain("| **FAIL** | noDoubleSell | 480 | 20 | 0 |\n");
+  });
+
+  it("publishes a broken check as BROKEN, never as a pass and never as a target failure", () => {
+    // This table gets pasted into a README and outlives the run that produced it. `| PASS |` here
+    // is a green claim nobody verified; `| **FAIL** |` accuses the target of double-selling 500
+    // seats because a predicate had a typo (D2-04).
+    const text = render(
+      summaryOf(
+        scenario({ checks: { oneWinnerOrConflict: { passed: 0, failed: 0, broken: 500 } } }),
+      ),
+    );
+
+    expect(text).toContain("| **BROKEN** | oneWinnerOrConflict | 0 | 0 | 500 |\n");
+  });
+
+  it("marks a check broken even when most responses passed it", () => {
+    // A check that broke on 40 of 500 responses is not a check anyone should read a verdict from,
+    // and 460 passes must not out-vote the fact that the predicate is unsound.
+    const text = render(
+      summaryOf(scenario({ checks: { parsesBody: { passed: 460, failed: 0, broken: 40 } } })),
+    );
+
+    expect(text).toContain("| **BROKEN** | parsesBody | 460 | 0 | 40 |\n");
+  });
+
+  it("says when recordings were refused, so a missing counter is not read as a zero", () => {
+    const text = render(summaryOf(scenario({ refusedRecordings: 88 })));
+
+    expect(text).toContain("**88 recordings refused**");
+  });
+
+  it("names requests the config could not build in the shortfall", () => {
+    const text = render(
+      summaryOf(scenario({ scheduledCount: 100, dispatchedCount: 90, requestErrorCount: 10 })),
+    );
+
+    expect(text).toContain("10 not built");
+  });
+
+  it("prints counters and recorded distributions when a scenario has them", () => {
+    const text = render(
+      summaryOf(
+        scenario({
+          counters: { reserved201: 1 },
+          trends: {
+            behindMs: {
+              count: 3,
+              minMs: 1,
+              maxMs: 40,
+              meanMs: 20,
+              p50Ms: 18,
+              p95Ms: 38,
+              p99Ms: 39,
+              p999Ms: 40,
+              overflowCount: 0,
+              saturated: false,
+              isLowerBound: false,
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(text).toContain("| counter | total |");
+    expect(text).toContain("| reserved201 | 1 |");
+    expect(text).toContain("| recorded | p50 | p99 | max |");
+    expect(text).toContain("| behindMs | 18.0ms | 39.0ms | 40.0ms |");
+  });
+
+  it("omits the tables entirely when a scenario declared none", () => {
+    // An empty table would read as "checked, found nothing" rather than "asserted nothing".
+    expect(render(summaryOf(scenario()))).not.toContain("| check | passed |");
+  });
+
+  it("says when the assertions themselves are broken", () => {
+    expect(render(summaryOf(scenario({ brokenObservations: 3 })))).toContain(
+      "**3 broken observations**",
+    );
+  });
+
   it("gives each scenario its own section", () => {
     const text = render(summaryOf(scenario({ name: "reads" }), scenario({ name: "writes" })));
 
@@ -281,17 +381,51 @@ describe("renderMarkdownReport", () => {
 
   it("leads with FAILED, and does not claim the run asserted nothing", () => {
     // The worst artefact this tool could produce: a green-looking table published for a run whose
-    // invariant broke. A teardown failure returns `verdict: undefined`, which used to render as
-    // "no thresholds were declared — this run measured, but asserted nothing".
+    // invariant broke.
     const text = renderMarkdownReport(summaryOf(scenario()), undefined, {
       ...context,
-      failure: "teardown() failed — the invariant did not hold after the run: double sell",
+      failures: ["teardown() failed — the invariant did not hold after the run: double sell"],
     });
 
     expect(text).toContain("**FAILED** — teardown() failed");
     expect(text).toContain("double sell");
     expect(text).not.toContain("asserted nothing");
-    expect(text).toContain("Not evaluated — the run failed first");
+  });
+
+  it("does not claim a failed run asserted nothing when its verdict is merely empty", () => {
+    // The shape the CLI really emits on the teardown path: thresholds *are* evaluated now, so a
+    // config that declared none gets an empty verdict rather than no verdict. Keying the sentence
+    // on `verdict === undefined` published "this run measured, but asserted nothing" directly
+    // under "**FAILED** — double sell: 2 sold".
+    const text = renderMarkdownReport(
+      summaryOf(scenario()),
+      { results: [], violated: [], broken: [] },
+      { ...context, failures: ["teardown() failed — double sell: 2 sold"] },
+    );
+
+    expect(text).toContain("double sell: 2 sold");
+    expect(text).not.toContain("asserted nothing");
+  });
+
+  it("lists several failures rather than running them into one paragraph", () => {
+    // `cell()` flattens newlines, so a joined failure string became a single 700-character
+    // sentence with the double sell buried at the end of a clause about cardinality caps.
+    const text = renderMarkdownReport(
+      summaryOf(scenario()),
+      { results: [], violated: [], broken: [] },
+      {
+        ...context,
+        failures: [
+          "a threshold predicate threw: throws",
+          'scenario "reads" had 600 broken observations — a check threw',
+          "teardown() failed — double sell: 2 sold",
+        ],
+      },
+    );
+
+    expect(text).toContain("**FAILED** — several things went wrong:");
+    expect(text).toContain("- teardown() failed — double sell: 2 sold");
+    expect(text).toContain("- a threshold predicate threw: throws");
   });
 
   it("leads with FAILED when a threshold was violated", () => {

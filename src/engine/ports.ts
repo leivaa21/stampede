@@ -57,6 +57,27 @@ export interface TransportResponse {
 }
 
 /**
+ * What `onResponse` records into. Defined here, once, beside the response it accompanies.
+ *
+ * `config/types.ts`, `run-spec.ts` and `observe.ts` all restated this shape inline — three copies
+ * of a contract that will grow a `fail(name)` one day, which is a drift waiting to happen.
+ */
+export interface ResponseRecorder {
+  /** Adds to a named counter for this scenario. `by` defaults to 1. */
+  readonly count: (name: string, by?: number) => void;
+  /**
+   * Records a number into a named distribution — percentiles, not just a total.
+   *
+   * Milliseconds by name, because that is what every distribution in this tool is measured in and
+   * a unitless one would be the first number nobody could interpret.
+   */
+  readonly recordMs: (name: string, valueMs: number) => void;
+}
+
+/** A named predicate over a response, counted pass/fail and reported as a row. */
+export type ResponseCheck = (response: TransportResponse) => boolean;
+
+/**
  * Sends one request and waits for the response.
  *
  * Generic in the request because the engine does not know what a request *is*. `http-transport.ts`

@@ -1,8 +1,8 @@
 import { MetricsRegistry, type ScenarioMetrics } from "../metrics/index.ts";
 import { InFlight } from "./in-flight.ts";
 import { recordLatencies } from "./latency.ts";
-import { observeResponse, type ResponseObservers } from "./observe.ts";
-import { EngineMetric } from "./metric-names.ts";
+import { observeResponse, recorderFor, type ResponseObservers } from "./observe.ts";
+import { brokenCheckCounter, EngineMetric, ENGINE_COUNTERS } from "./metric-names.ts";
 import type { Clock, Transport, TransportResponse } from "./ports.ts";
 import {
   assertRunSpec,
@@ -70,6 +70,39 @@ export interface RunOutcome {
   readonly progress: RunProgress;
 }
 
+const observersFor = <TRequest>(
+  scenarioMetrics: ScenarioMetrics,
+  scenario: Scenario<TRequest>,
+): ResponseObservers => ({
+  checks: Object.entries(scenario.checks ?? {}),
+  onResponse: scenario.onResponse,
+  recorder: recorderFor(scenarioMetrics),
+});
+
+/**
+ * Claims every name the engine will need before user code can take the slots.
+ *
+ * The counter map is bounded, and an `onResponse` writing one counter per seat — contract run 2's
+ * own shape — reaches that bound legitimately. Whatever the engine has not yet incremented by then
+ * is refused, and the report goes quiet about drops, request errors and broken checks precisely in
+ * the run that generated the most of them. These names are known before a single request goes out,
+ * so there is no reason to be racing user code for them.
+ */
+const reserveEngineNames = <TRequest>(
+  scenarioMetrics: ScenarioMetrics,
+  scenario: Scenario<TRequest>,
+): void => {
+  for (const name of ENGINE_COUNTERS) {
+    scenarioMetrics.counters.reserve(name);
+  }
+  // Per-check, and declared in the config, so these are known too. Without them a check that
+  // starts breaking late — an HTML 503 page where JSON was expected — loses its attribution at the
+  // exact moment it is earned.
+  for (const checkName of Object.keys(scenario.checks ?? {})) {
+    scenarioMetrics.counters.reserve(brokenCheckCounter(checkName));
+  }
+};
+
 /**
  * Runs one open-loop dispatch loop to completion and reports what really happened.
  *
@@ -101,13 +134,19 @@ export const runDispatch = async <TRequest>(
   const metrics = ports.metrics ?? new MetricsRegistry();
   // Namespaces are created up front, so a scenario name the metrics registry refuses fails the
   // run before any load is generated rather than on its first response.
-  const states: ScenarioState<TRequest>[] = spec.scenarios.map((scenario) => ({
-    ...scenario,
-    metrics: metrics.scenario(scenario.name),
-    observers: { checks: scenario.checks, onResponse: scenario.onResponse },
-    lastDispatchElapsedMs: undefined,
-    pendingCount: 0,
-  }));
+  const states: ScenarioState<TRequest>[] = spec.scenarios.map((scenario) => {
+    const scenarioMetrics = metrics.scenario(scenario.name);
+    reserveEngineNames(scenarioMetrics, scenario);
+    return {
+      ...scenario,
+      metrics: scenarioMetrics,
+      // Flattened and built once per scenario: `Object.entries` and two closures per *response*
+      // would allocate for something constant for the whole run.
+      observers: observersFor(scenarioMetrics, scenario),
+      lastDispatchElapsedMs: undefined,
+      pendingCount: 0,
+    };
+  });
 
   const inFlight = new InFlight();
   const startedAtMs = clock.now();

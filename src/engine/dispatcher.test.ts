@@ -15,6 +15,40 @@ import { runDispatch } from "./dispatcher.ts";
 import { EngineMetric } from "./metric-names.ts";
 import type { RunSpec } from "./run-spec.ts";
 
+describe("runDispatch refuses a run it cannot report honestly", () => {
+  it("rejects a shard that would send every buyer to the same seat", async () => {
+    // `{ index: 0, count: 0 }` makes `shard.index + ordinal * shard.count` zero for every dispatch,
+    // so a run asking for 500 distinct seats sends 500 requests for seat 0 and reports success —
+    // the exact bug D2-02 exists to detect, reintroduced through the door D2-02 opened. `shard` is
+    // a public field on a public type, so a programmatic caller can hand this over.
+    await expect(
+      runDispatch(
+        {
+          scenarios: [scenario("reads", burst({ count: 4 }))],
+          maxInFlight: 10,
+          shard: { index: 0, count: 0 },
+        },
+        { clock: new FakeClock(), transport: new FakeTransport({ clock: new FakeClock() }) },
+      ),
+    ).rejects.toThrow(/count/);
+  });
+
+  it("accepts the shard a single-threaded run is", async () => {
+    const clock = new FakeClock();
+    const outcome = await runToCompletion(
+      {
+        scenarios: [scenario("reads", burst({ count: 4 }))],
+        maxInFlight: 10,
+        shard: { index: 0, count: 1 },
+      },
+      clock,
+      new FakeTransport({ clock }),
+    );
+
+    expect(summaryOf(outcome, "reads").dispatchedCount).toBe(4);
+  });
+});
+
 describe("runDispatch keeps the schedule", () => {
   it("dispatches every instant the profile asked for, when it asked for it", async () => {
     const clock = new FakeClock();

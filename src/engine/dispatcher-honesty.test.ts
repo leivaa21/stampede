@@ -6,9 +6,21 @@ import {
   summaryOf,
 } from "../test-support/dispatch-fixtures.ts";
 import { FakeClock } from "../test-support/fake-clock.ts";
-import { FakeTransport, synchronouslyThrowingTransport } from "../test-support/fake-transport.ts";
+import {
+  FakeTransport,
+  synchronouslyThrowingTransport,
+  type FakeRequest,
+} from "../test-support/fake-transport.ts";
 import { burst, constantRate } from "./arrival-profiles.ts";
+import type { Transport, TransportResponse } from "./ports.ts";
+
 import { EngineMetric } from "./metric-names.ts";
+/** The reference target's answer, when it is answering. */
+const okResponse = (): TransportResponse => ({
+  status: 200,
+  headers: {},
+  text: JSON.stringify({ ok: true }),
+});
 
 /**
  * The guards that make this a measuring instrument rather than a benchmark generator.
@@ -160,6 +172,163 @@ describe("one bad request cannot cost the whole run", () => {
   });
 });
 
+describe("user code cannot starve the engine's own bookkeeping", () => {
+  /**
+   * The counter map is bounded, and `record.count(`seat-${id}`)` — contract run 2's own shape —
+   * reaches that bound legitimately. Engine counters are created lazily on their first increment,
+   * so before the engine reserved its names, whatever had not yet fired by then was refused.
+   *
+   * **The ordering is the whole test.** A burst whose dispatches all happen before any response
+   * cannot show this: `dispatched` and `requestErrors` claim their slots in that first batch, and
+   * the check loop claims `brokenChecks` before `onResponse` writes its first name. The counters
+   * that actually starve are the ones whose first increment arrives *after* user code has filled
+   * the map — drops, abandonment, transport errors, and a check that starts breaking late. So the
+   * target here answers a few hundred requests instantly, and only then stops answering at all.
+   */
+  it("keeps counting drops and abandonment after a user has filled the name budget", async () => {
+    const clock = new FakeClock();
+    let answered = 0;
+    // Answers the first 600 instantly, then never again — a target that falls over mid-run.
+    // 600 is above the 512-name cap on purpose: the map has to be full before the first drop.
+    const transport: Transport<FakeRequest> = {
+      send: () => {
+        answered += 1;
+        return answered <= 600 ? Promise.resolve(okResponse()) : new Promise(() => undefined);
+      },
+    };
+
+    let names = 0;
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: constantRate({ ratePerSecond: 1_000, durationMs: 1_000 }),
+            requestFor: () => ({ label: "reads" }),
+            checks: {
+              // Sound until the target stops answering, then broken on every response after —
+              // a JSON check meeting an HTML 503 page. Its per-name counter is claimed on the
+              // first *breakage*, which is deliberately after the map is full.
+              parsesBody: (response) => (JSON.parse(response.text) as { ok: boolean }).ok,
+            },
+            // One name per response: 600 distinct names against a 512-name cap, every slot taken
+            // before the first drop happens.
+            onResponse: (_response, record) => {
+              names += 1;
+              record.count(`seat-${String(names)}`);
+            },
+          },
+        ],
+        maxInFlight: 50,
+        drainTimeoutMs: 100,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    // The counters that only exist because the target fell over. Without reservation these are
+    // refused and the run reports a clean sweep of a thousand requests it never completed.
+    expect(reads.droppedCount).toBeGreaterThan(0);
+    expect(reads.abandonedCount).toBeGreaterThan(0);
+    expect(reads.dispatchedCount + reads.droppedCount + reads.requestErrorCount).toBe(
+      reads.scheduledCount,
+    );
+    expect(reads.responseCount + reads.errorCount + reads.abandonedCount).toBe(
+      reads.dispatchedCount,
+    );
+    // And the refusals themselves are published rather than absorbed: 600 names asked for, 512
+    // slots in the map, nine of them already claimed by the engine plus one for the check.
+    expect(reads.refusedRecordings).toBe(600 - (512 - 10));
+  });
+
+  it("keeps attributing a check that only starts breaking once the budget is full", async () => {
+    const clock = new FakeClock();
+    let answered = 0;
+    const transport: Transport<FakeRequest> = {
+      send: () => {
+        answered += 1;
+        return Promise.resolve(
+          answered <= 600 ? okResponse() : { ...okResponse(), text: "<html>" },
+        );
+      },
+    };
+
+    let names = 0;
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: constantRate({ ratePerSecond: 1_000, durationMs: 1_000 }),
+            requestFor: () => ({ label: "reads" }),
+            checks: { parsesBody: (response) => (JSON.parse(response.text) as { ok: boolean }).ok },
+            onResponse: (_response, record) => {
+              names += 1;
+              record.count(`seat-${String(names)}`);
+            },
+          },
+        ],
+        maxInFlight: 1_000,
+        drainTimeoutMs: 500,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    // 600 good responses fill the map; every one after breaks the predicate. Losing the per-name
+    // counter here publishes `PASS parsesBody 600 / 0 / 0` for a run in which 400 responses broke
+    // it outright — and losing the total publishes exit 0 for the same run.
+    // Pinned against a constant, not against `responseCount`: `expect(x).toBe(responseCount - 600)`
+    // decays into `expect(0).toBe(0)` the day a tighter drain lets fewer than 600 responses land.
+    expect(reads.responseCount).toBe(1_000);
+    expect(reads.checks.parsesBody?.passed).toBe(600);
+    expect(reads.checks.parsesBody?.broken).toBe(400);
+    expect(reads.brokenObservations).toBe(400);
+  });
+});
+
+describe("user code on the response path cannot bend the numbers", () => {
+  it("measures latency before running the scenario's checks", async () => {
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ clock, latencyMs: 40 });
+
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            // One request, so the claim under test is the ordering *within* one response. With
+            // several in flight the check's 60 ms would also delay the next response's callback —
+            // which is real, and honestly reported, but a different fact.
+            ...scenario("reads", burst({ count: 1 })),
+            // 60 ms of the user's own CPU per response — `JSON.parse` on a large body is the
+            // realistic version. Half again as long as the target took, so if it landed in the
+            // measurement the test could not miss it.
+            checks: {
+              slow: () => {
+                clock.burn(60);
+                return true;
+              },
+            },
+          },
+        ],
+        maxInFlight: 10,
+        drainTimeoutMs: 500,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    // The target took 40 ms and the report says 40 ms. Observing before recording would publish
+    // 100 ms — a target blamed for time the assertion spent, in a tool whose pitch is honest
+    // numbers. Checks still all ran.
+    expectMs(reads.latencyMs?.maxMs, 40);
+    expect(reads.checks.slow).toEqual({ passed: 1, failed: 0, broken: 0 });
+  });
+});
+
 describe("the accounting adds up", () => {
   it("keeps both identities across a mixed run under a binding cap", async () => {
     const clock = new FakeClock();
@@ -182,10 +351,49 @@ describe("the accounting adds up", () => {
     // every instant the profile asked for was either sent or refused, and every request that
     // went out either answered, failed, or was abandoned at the deadline.
     for (const s of outcome.summary.scenarios) {
-      expect(s.dispatchedCount + s.droppedCount).toBe(s.scheduledCount);
+      expect(s.dispatchedCount + s.droppedCount + s.requestErrorCount).toBe(s.scheduledCount);
       expect(s.responseCount + s.errorCount + s.abandonedCount).toBe(s.dispatchedCount);
     }
     expect(outcome.summary.maxObservedInFlight).toBeLessThanOrEqual(12);
+  });
+
+  it("keeps the first identity true when request() itself is what failed", async () => {
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ clock });
+
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: burst({ count: 10 }),
+            // Every third seat is missing from the pool `setup()` built — an ordinary config bug.
+            requestFor: (ordinal) => {
+              if (ordinal % 3 === 0) {
+                throw new Error("no seat for that ordinal");
+              }
+              return { label: "reads" };
+            },
+          },
+        ],
+        maxInFlight: 50,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    // Counted apart from `errorCount`, deliberately: nothing was sent, so the target cannot be
+    // what went wrong. Folding these into transport errors would send the reader to inspect a
+    // server that was never asked, and reading them as drops would blame `maxInFlight`.
+    expect(reads.requestErrorCount).toBe(4);
+    expect(reads.errorCount).toBe(0);
+    expect(reads.droppedCount).toBe(0);
+    expect(reads.dispatchedCount).toBe(6);
+    expect(transport.sentCount).toBe(6);
+    expect(reads.dispatchedCount + reads.droppedCount + reads.requestErrorCount).toBe(
+      reads.scheduledCount,
+    );
   });
 
   it("hands out a frozen summary, all the way down", () => {
@@ -204,6 +412,11 @@ describe("the accounting adds up", () => {
       expect(Object.isFrozen(outcome.summary.scenarios)).toBe(true);
       expect(Object.isFrozen(outcome.summary.scenarios[0])).toBe(true);
       expect(Object.isFrozen(outcome.summary.scenarios[0]?.latencyMs)).toBe(true);
+      // The maps built fresh per summary are the easiest ones to leave thawed, and they are the
+      // ones a threshold predicate reaches into by name.
+      expect(Object.isFrozen(outcome.summary.scenarios[0]?.counters)).toBe(true);
+      expect(Object.isFrozen(outcome.summary.scenarios[0]?.checks)).toBe(true);
+      expect(Object.isFrozen(outcome.summary.scenarios[0]?.trends)).toBe(true);
     });
   });
 });
@@ -255,6 +468,35 @@ describe("what never came back is counted, never guessed at", () => {
     // landed. They are not recorded: the run already published its numbers, and a percentile that
     // keeps moving after the report was written is worse than a sample that is honestly missing.
     expect(outcome.metrics.scenario("reads").findHistogram(EngineMetric.latency)).toBeUndefined();
+    // And neither are their checks. A check recorded against a response the run refused to time
+    // would put a claim in the report that no published number covers.
+    expect(reads.checks).toEqual({});
+  });
+
+  it("does not run a scenario's checks against responses that arrived too late", async () => {
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ clock, latencyMs: 200 });
+
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            ...scenario("reads", burst({ count: 3 })),
+            checks: { answered: () => true },
+          },
+        ],
+        maxInFlight: 10,
+        drainTimeoutMs: 0,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    expect(reads.abandonedCount).toBe(3);
+    // Three responses did eventually land, and a check that ran on them would report
+    // "PASS answered 3/3" for a run whose own summary says nothing came back in time.
+    expect(reads.checks.answered).toBeUndefined();
   });
 
   it("waits out the drain for responses that arrive in time", async () => {
