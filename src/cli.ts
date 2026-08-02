@@ -137,8 +137,12 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
       `note: ${String(report.supersededSnapshots)} worker snapshots arrived out of order and were discarded`,
     );
   }
-  if (report.verdict !== undefined) {
-    out(renderVerdict(report.verdict, report.failures.length > 0));
+  // `renderVerdict` is empty when a failed run declared no thresholds — printing it would add a
+  // stray blank line between the summary and the reasons.
+  const verdictText =
+    report.verdict === undefined ? "" : renderVerdict(report.verdict, report.failures.length > 0);
+  if (verdictText.length > 0) {
+    out(verdictText);
   }
   // One prefixed line per reason. Joined into a single string they lost their `stampede: ` prefix
   // from the second reason on, so three of four reasons read as stray output in a CI log.

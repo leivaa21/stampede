@@ -13,7 +13,8 @@ export const defineConfig = <TSetup = undefined>(
 ): StampedeConfig<TSetup> => config;
 
 export { assertConfigShape } from "./assert-shape.ts";
-export { ConfigLoadError, configUrlFor, loadConfig } from "./load.ts";
+export { ConfigLoadError } from "./errors.ts";
+export { configUrlFor, loadConfig } from "./load.ts";
 export {
   DEFAULT_MAX_IN_FLIGHT,
   defaultWorkerCount,

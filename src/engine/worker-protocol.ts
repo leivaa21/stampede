@@ -34,6 +34,15 @@ export type WorkerMessage =
   | { readonly kind: "finished"; readonly snapshot: unknown; readonly progress: RunProgress }
   | { readonly kind: "failed"; readonly message: string };
 
+/**
+ * Deliberately *not* the same as `config/assert-shape.ts`'s `isRecord`, which also rejects arrays.
+ *
+ * There, an array slipping through means a config's `scenarios: [...]` loads fine and publishes a
+ * report section called `0`. Here every field is narrowed by `kind` immediately below, so an array
+ * fails the very next check — and this side parses messages from a worker we spawned rather than
+ * input a user wrote. Two helpers with one name and different meanings is a copy-paste hazard, so:
+ * if this ever grows a branch that trusts the shape without narrowing it, take the array guard too.
+ */
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 

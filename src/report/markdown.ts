@@ -176,27 +176,24 @@ const verdictSection = (
   verdict: Verdict | undefined,
   failures: readonly string[],
 ): readonly string[] => {
-  // Two very different situations that must not share a sentence, and the difference is whether
-  // anything went wrong — not whether a verdict object exists. A run that failed in `teardown` now
-  // carries an *empty* verdict rather than none, so keying on `verdict === undefined` published
-  // "this run measured, but asserted nothing" directly beneath "**FAILED** — double sell: 2 sold".
-  const nothingAsserted =
-    failures.length === 0
-      ? "_No thresholds were declared — this run measured, but asserted nothing._"
-      : "_None were declared, and the run failed for the reasons above._";
+  // Two independent facts — were thresholds evaluated, and did anything go wrong — and all four
+  // combinations say something different. Collapsing any pair of them is how "this run measured,
+  // but asserted nothing" ended up printed directly beneath "**FAILED** — double sell: 2 sold".
+  const noThresholdRows = (evaluated: boolean): readonly string[] => [
+    "### Thresholds",
+    "",
+    failures.length > 0
+      ? evaluated
+        ? "_None were declared, and the run failed for the reasons above._"
+        : "_Not evaluated — the run failed first. See the verdict above._"
+      : "_No thresholds were declared — this run measured, but asserted nothing._",
+  ];
 
   if (verdict === undefined) {
-    // No verdict at all: the run failed before thresholds could be evaluated.
-    return [
-      "### Thresholds",
-      "",
-      failures.length === 0
-        ? "_No thresholds were declared — this run measured, but asserted nothing._"
-        : "_Not evaluated — the run failed first. See the verdict above._",
-    ];
+    return noThresholdRows(false);
   }
   if (verdict.results.length === 0) {
-    return ["### Thresholds", "", nothingAsserted];
+    return noThresholdRows(true);
   }
   return [
     "### Thresholds",

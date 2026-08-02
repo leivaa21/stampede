@@ -4,7 +4,7 @@ import {
   MAX_DISTINCT_SCENARIOS,
   MAX_METRIC_NAME_LENGTH,
 } from "../metrics/validate.ts";
-import { ConfigLoadError } from "./load.ts";
+import { ConfigLoadError } from "./errors.ts";
 import type { StampedeConfig } from "./types.ts";
 
 /**

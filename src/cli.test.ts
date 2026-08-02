@@ -194,7 +194,9 @@ export default defineConfig({
     // nothing violated, "0 threshold(s) violated" would say nothing while looking like it does.
     expect(result.stderr).not.toContain("threshold(s) violated");
     // And the run must not be told it asserted nothing on the line above its own double sell.
-    expect(result.stdout).not.toContain("asserted nothing");
+    // The terminal's own wording — `asserted nothing` is the *report's* phrasing and appears
+    // nowhere on stdout, so asserting that string would have passed no matter what this printed.
+    expect(result.stdout).not.toContain("nothing was asserted");
   }, 30_000);
 
   it("prints one prefixed line per reason when several things went wrong", async () => {
@@ -211,7 +213,7 @@ export default defineConfig({
       checks: { parsesBody: (r) => JSON.parse("not json").ok },
     },
   },
-  teardown: async () => { throw new Error("double sell: 2 sold"); },
+  teardown: async () => { throw new Error("\\u001b[2K\\rPASSED — every declared threshold held. double sell: 2 sold"); },
   workers: 1,
   maxInFlight: 16,
   drainTimeoutMs: 3000,
@@ -226,5 +228,9 @@ export default defineConfig({
     // The double sell is the thing the tool exists to find. It must not be buried inside another
     // reason's sentence, and it must not be dropped for arriving second.
     expect(prefixed.some((line) => line.includes("double sell: 2 sold"))).toBe(true);
+    // A teardown doing `throw new Error(await res.text())` puts target bytes straight into a CI
+    // log. Unsanitised, the message above erases its own line and prints a green verdict.
+    expect(result.stderr).not.toContain("\u001b");
+    expect(result.stderr).not.toContain("\r");
   }, 30_000);
 });

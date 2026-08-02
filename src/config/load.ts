@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { assertConfigShape } from "./assert-shape.ts";
+import { ConfigLoadError } from "./errors.ts";
 import type { StampedeConfig } from "./types.ts";
 
 /**
@@ -15,10 +16,6 @@ import type { StampedeConfig } from "./types.ts";
  * says so precisely and this module says it again in terms of the file the user actually wrote,
  * because a raw `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` stack is not an answer to "what do I change?".
  */
-
-export class ConfigLoadError extends Error {
-  override readonly name = "ConfigLoadError";
-}
 
 const TYPE_STRIPPING_HELP = [
   "stampede loads your config with Node's type stripping, which erases types without compiling",
