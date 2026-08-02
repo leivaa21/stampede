@@ -25,6 +25,9 @@ export interface FakeTransportOptions {
   /** A target that refuses: `send` rejects, as the port requires of a transport-level failure. */
   readonly fails?: boolean;
   readonly status?: number;
+  /** What the fake target answers with. Defaults to an empty JSON object. */
+  readonly body?: string;
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 interface SentRequest {
@@ -70,7 +73,11 @@ export class FakeTransport implements Transport<FakeRequest> {
     if (latencyMs > 0) {
       await this.#options.clock.sleep(latencyMs);
     }
-    return { status: this.#options.status ?? OK };
+    return {
+      status: this.#options.status ?? OK,
+      headers: this.#options.headers ?? {},
+      text: this.#options.body ?? "{}",
+    };
   }
 
   #latencyMsFor(request: FakeRequest): number {
