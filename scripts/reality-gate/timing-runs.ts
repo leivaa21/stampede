@@ -117,7 +117,7 @@ const gateRun = async ({
       `${String(profile.count)} instants for ${String(expectedCount)} requested`,
     );
     claim(
-      "every instant the loop consumed is accounted for",
+      "the loop consumed the whole schedule, and every instant landed in exactly one bucket",
       summary.dispatchedCount + summary.droppedCount + summary.requestErrorCount === expectedCount,
       `${String(expectedCount)} = ${String(summary.dispatchedCount)} sent + ${String(summary.droppedCount)} dropped + ${String(summary.requestErrorCount)} not built`,
     );
@@ -137,7 +137,7 @@ export const timingRuns = async (): Promise<void> => {
     ratePerSecond: 20,
     durationMs: 2_000,
     expectedCount: 40,
-    check: (summary, stats) => {
+    check: (summary, stats, expectedCount) => {
       const p50 = summary.latencyMs?.p50Ms ?? 0;
       claim("p50 lands on the target's real 50ms", p50 >= 48 && p50 <= 65, `${p50.toFixed(1)}ms`);
       claim(
@@ -147,8 +147,8 @@ export const timingRuns = async (): Promise<void> => {
       );
       claim(
         "nothing dropped against a healthy target, and every request went out",
-        summary.droppedCount === 0 && summary.dispatchedCount === 40,
-        `${String(summary.droppedCount)} drops, ${String(summary.dispatchedCount)} of 40 sent`,
+        summary.droppedCount === 0 && summary.dispatchedCount === expectedCount,
+        `${String(summary.droppedCount)} drops, ${String(summary.dispatchedCount)} of ${String(expectedCount)} sent`,
       );
       // Nothing in runs 1-4 asserted that what went out came *back*, so a regression that lost
       // responses left the latency percentiles drawn from a subset and every claim green.
@@ -204,11 +204,13 @@ export const timingRuns = async (): Promise<void> => {
         summary.dispatchedCount >= 550,
         `dispatched ${String(summary.dispatchedCount)} while the target completed ${String(stats.completed)}`,
       );
-      // The identity itself is now asserted for every run, against the independently declared
-      // size. What is left here is the part specific to this run: its request builder is a
-      // constant, so nothing should have failed to build even while the cap is dropping requests.
+      // The identity is asserted for every run against its independently declared size. What is
+      // left here is specific: this run's request builder is a constant, so nothing should ever
+      // fail to build. Drops are printed as context, not claimed — the cap never binds in this
+      // run and structurally cannot (in-flight peaks near 450 against a cap of 500), so a label
+      // promising otherwise would be contradicted by its own detail four words later.
       claim(
-        "every request was built, even while the cap was dropping them",
+        "every request was built",
         summary.requestErrorCount === 0,
         `${String(summary.requestErrorCount)} not built, ${String(summary.droppedCount)} dropped`,
       );

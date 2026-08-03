@@ -39,8 +39,8 @@ export interface TargetStats {
  * Bounded, because undici's default header timeout is five minutes.
  *
  * A socket that accepts and never writes — a target stopped in a debugger, a non-HTTP listener —
- * left `pnpm gate:two` mute with no output at all, which is the failure mode this harness exists
- * to name rather than produce.
+ * left `pnpm gate:two` sitting under a printed run header in silence, which is the failure
+ * mode this harness exists to name rather than produce.
  */
 const STATS_TIMEOUT_MS = 2_000;
 
@@ -94,9 +94,10 @@ export class MalformedStatsError extends Error {}
  * `undici` rejects a refused connection with a plain `TypeError` whose cause carries the code, so
  * the class alone cannot tell "nothing is listening yet" from "our reading of the stats is wrong".
  *
- * The cause may be an `AggregateError` when a name resolves to several addresses, and its `code` is
- * copied from the *first* member — so a host where `::1` fails with `ENETUNREACH` while IPv4
- * refuses would not match on `code` alone. Every member is checked instead.
+ * The `AggregateError` branch is **unreachable while `TARGET_URL` is a literal address**, and kept
+ * so the predicate survives that becoming a name again: a name resolving to several addresses
+ * produces a cause whose `code` is copied from the *first* member only, so a host where `::1` fails
+ * with `ENETUNREACH` while IPv4 refuses would not match on `code` alone.
  *
  * A cause-less `TypeError` is deliberately **not** retried: Node always attaches one to a network
  * failure, so a bare one is a programming error inside `readTargetStats` — exactly the "the target

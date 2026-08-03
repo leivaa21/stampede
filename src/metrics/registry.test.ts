@@ -62,11 +62,14 @@ const expectSameSnapshot = (actual: RegistrySnapshot, expected: RegistrySnapshot
         // Narrowed rather than asserted: a metric present on one side only is its own failure,
         // and it should name the metric rather than throw inside the diff.
         const counterpart = other?.[kind].get(metric);
+        // `toEqual` throws when the metric is missing, which names it and ends the walk; the
+        // `else` is what tells the type-checker so, without a statement behind an assertion that
+        // always throws — the shape this file has already removed twice.
         if (counterpart === undefined) {
           expect({ scenario, metric, present: false }).toEqual({ scenario, metric, present: true });
-          continue;
+        } else {
+          expectSameHistogram(histogram, counterpart, { scenario, metric });
         }
-        expectSameHistogram(histogram, counterpart, { scenario, metric });
       }
     }
     expect({ scenario, counters: metrics.counters, checks: metrics.checks }).toEqual({

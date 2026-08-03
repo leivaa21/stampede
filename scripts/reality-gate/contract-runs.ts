@@ -230,7 +230,9 @@ export const hotShowManySeats = async (): Promise<void> => {
     claim(
       "every buyer got a seat of their own",
       created?.failed === 0 && created.passed === BUYERS,
-      `${String(created?.passed ?? 0)} of ${String(BUYERS)} created, ${String(created?.failed ?? 0)} conflicts`,
+      // `created.failed` is every non-201 — a 500 or an HTML error page is not a collision — so
+      // the conflict number comes from the referee, which knows the difference.
+      `${String(created?.passed ?? 0)} of ${String(BUYERS)} created, ${String(created?.failed ?? 0)} not created, ${String(stats.conflicts)} conflicts`,
     );
     claim(
       "the target sold one seat per buyer, no collisions",
