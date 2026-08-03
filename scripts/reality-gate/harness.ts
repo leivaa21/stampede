@@ -59,7 +59,34 @@ export const readTargetStats = async (): Promise<TargetStats> => {
  * connect errors and a stack trace pointing at the dispatcher, for a syntax error two files away.
  * Polling costs nothing when the target is healthy and names the real problem when it is not.
  */
+/**
+ * The port is held by a target this run did not start.
+ *
+ * A class rather than a string match: the readiness loop retries connection failures and rethrows
+ * everything else, and telling those apart by `message.includes(...)` is a sentinel one rename
+ * away from being silently retried until the deadline.
+ */
+export class StaleTargetError extends Error {}
+
+const staleTarget = (pid: number): StaleTargetError =>
+  new StaleTargetError(
+    `port ${String(TARGET_PORT)} is held by a stale reality-gate target (pid ${String(pid)}); kill it and re-run`,
+  );
+
 export const startTarget = async (args: readonly string[]): Promise<ChildProcess> => {
+  // Checked *before* spawning, because our child loses this race: it dies of EADDRINUSE within
+  // milliseconds, so a post-spawn poll reports "exited with code 1" — the symptom — while the
+  // cause is a target a previous run left behind. One request, and the diagnosis is exact.
+  const squatter = await fetch(`${TARGET_URL}__stats`).catch(() => undefined);
+  if (squatter !== undefined) {
+    const body: unknown = await squatter.json().catch(() => undefined);
+    const pid =
+      typeof body === "object" && body !== null
+        ? (body as { readonly pid?: unknown }).pid
+        : undefined;
+    throw staleTarget(typeof pid === "number" ? pid : 0);
+  }
+
   const server = spawn(
     process.execPath,
     [fileURLToPath(new URL("target-server.ts", import.meta.url)), ...args],
@@ -67,6 +94,7 @@ export const startTarget = async (args: readonly string[]): Promise<ChildProcess
   );
 
   const deadline = 10_000;
+  let stalePid: number | undefined;
   for (let waited = 0; waited < deadline; waited += 50) {
     if (server.exitCode !== null) {
       throw new Error(
@@ -79,21 +107,31 @@ export const startTarget = async (args: readonly string[]): Promise<ChildProcess
       // uncleanly leaves its server bound, the first poll succeeds before our child has had time
       // to fail on EADDRINUSE, and the gate goes green against a server it never configured —
       // measured at 7/7 PASS with a projection 8× faster than the one the run asked for.
+      //
+      // Recorded and retried rather than thrown on sight: a *dying* predecessor answers for a few
+      // milliseconds too, and turning that transient into "kill it and re-run" would be its own
+      // false diagnosis. If it is still there at the deadline, it is not dying.
       if (stats.pid !== server.pid) {
-        server.kill();
-        throw new Error(
-          `port ${String(TARGET_PORT)} is held by a stale reality-gate target (pid ${String(stats.pid)}); kill it and re-run`,
-        );
+        stalePid = stats.pid;
+        await sleep(50);
+        continue;
       }
       return server;
     } catch (error: unknown) {
-      if (error instanceof Error && error.message.includes("stale reality-gate target")) {
+      // Only a connection failure means "not up yet". A malformed stats body means the target is
+      // answering and the *contract* is wrong — retrying that for ten seconds and then reporting
+      // "did not answer" is the misdiagnosis this loop exists to prevent.
+      if (!(error instanceof TypeError)) {
+        server.kill();
         throw error;
       }
       await sleep(50);
     }
   }
   server.kill();
+  if (stalePid !== undefined) {
+    throw staleTarget(stalePid);
+  }
   throw new Error(`the reality-gate target did not answer within ${String(deadline)}ms`);
 };
 

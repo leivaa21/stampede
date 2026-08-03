@@ -39,9 +39,15 @@ const profile = constantRate({ ratePerSecond: RATE_PER_SECOND, durationMs: DURAT
  */
 export const BUYERS = profile.count;
 
-interface ReservationBody {
-  readonly behindMs?: number;
-}
+/** Narrowed rather than asserted — `parse, then narrow` is the rule this repo states everywhere. */
+const behindMsOf = (text: string): number | undefined => {
+  const body: unknown = JSON.parse(text);
+  if (typeof body !== "object" || body === null) {
+    return undefined;
+  }
+  const { behindMs } = body as { readonly behindMs?: unknown };
+  return typeof behindMs === "number" ? behindMs : undefined;
+};
 
 export default defineConfig<SeatGateState>({
   scenarios: {
@@ -64,9 +70,9 @@ export default defineConfig<SeatGateState>({
         // ways. Without it every claim in this run passes with `workerCount: 1`, while the run's
         // title and the README both lean on "4 threads".
         record.count(`thread-${String(threadId)}`);
-        const body = JSON.parse(response.text) as ReservationBody;
-        if (typeof body.behindMs === "number") {
-          record.recordMs("behindMs", body.behindMs);
+        const behindMs = behindMsOf(response.text);
+        if (behindMs !== undefined) {
+          record.recordMs("behindMs", behindMs);
         }
       },
     },

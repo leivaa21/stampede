@@ -106,7 +106,11 @@ export const timingRuns = async (): Promise<void> => {
         stats.received === summary.dispatchedCount,
         `${String(stats.received)} received vs ${String(summary.dispatchedCount)} dispatched`,
       );
-      claim("nothing dropped against a healthy target", summary.droppedCount === 0, "0 drops");
+      claim(
+        "nothing dropped against a healthy target",
+        summary.droppedCount === 0,
+        `${String(summary.droppedCount)} drops`,
+      );
     },
   });
 
@@ -150,11 +154,16 @@ export const timingRuns = async (): Promise<void> => {
         summary.dispatchedCount >= 550,
         `dispatched ${String(summary.dispatchedCount)} while the target completed ${String(stats.completed)}`,
       );
+      // All three terms in the detail, and the third pinned to zero. Printing only two made a run
+      // with 40 request errors satisfy the claim while displaying an equation that visibly did not
+      // add up — an identity that survives anything proves nothing. This run expects drops, so it
+      // cannot pin those; the request builder is a constant, so it can pin these.
       claim(
-        "every scheduled request is accounted for",
+        "every scheduled request is accounted for, and every one was built",
         summary.scheduledCount ===
-          summary.dispatchedCount + summary.droppedCount + summary.requestErrorCount,
-        `${String(summary.scheduledCount)} = ${String(summary.dispatchedCount)} sent + ${String(summary.droppedCount)} dropped`,
+          summary.dispatchedCount + summary.droppedCount + summary.requestErrorCount &&
+          summary.requestErrorCount === 0,
+        `${String(summary.scheduledCount)} = ${String(summary.dispatchedCount)} sent + ${String(summary.droppedCount)} dropped + ${String(summary.requestErrorCount)} not built`,
       );
     },
   });
@@ -169,10 +178,12 @@ export const timingRuns = async (): Promise<void> => {
     check: (summary) => {
       const achieved = summary.achievedRatePerSecond ?? 0;
       const lag = summary.scheduleLagMs?.maxMs ?? 0;
+      // Bounded below as well: "far below 50,000" is also true of a run that dispatched five
+      // requests, and the point of this run is that the generator kept working while falling behind.
       claim(
-        "admits an achieved rate far below the requested one",
-        achieved < 50_000,
-        `${achieved.toFixed(0)} rps of 50,000, ${String(summary.droppedCount)} dropped`,
+        "admits an achieved rate far below the requested one, having really tried",
+        achieved < 50_000 && summary.dispatchedCount > 1_000,
+        `${achieved.toFixed(0)} rps of 50,000, ${String(summary.dispatchedCount)} sent, ${String(summary.droppedCount)} dropped`,
       );
       claim("surfaces its own backlog as schedule lag", lag > 50, `${lag.toFixed(0)}ms`);
       claim(

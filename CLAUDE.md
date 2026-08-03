@@ -8,7 +8,7 @@
 > security, docs, git) apply here in full; this file only adds what's specific to this project.
 > Read this file before every task and re-read the **Current state** line.
 
-> **Current state (2026-08-02):** **M2 is complete — stampede proves invariants, not just
+> **Current state (2026-08-03):** **M2 is complete — stampede proves invariants, not just
 > percentiles.** 512 tests, audit clean, every slice through the implementer → reviewer loop.
 >
 > M1 built the instrument: HDR-style histograms whose merge is exact and order-independent, an
@@ -33,7 +33,7 @@
 > **Gate two (`pnpm gate:two`) is the proof, and it runs the shipped code.** A manual milestone
 > gate rather than a CI job — it spawns servers and leans on real timing. Numbers below are from a
 > 16-core dev box; the _relationships_ are what the claims assert, not the absolute throughput.
-> Seven runs, 28 claims: a 50 ms
+> Seven runs, 30 claims: a 50 ms
 > target reads 52 ms; a target slower than the load offered reports p99 5910 ms against its 200 ms
 > service time without throttling itself; asked for 50,000 rps on one thread it admits 6,181
 > achieved and puts its own 130 ms backlog into `scheduledLatency`; a 4-thread pooled run is

@@ -225,9 +225,11 @@ RUN 7 — contract runs 2 & 4: 200 buyers, 200 distinct seats, 4 threads
 
     PASS  the target sold one seat per buyer, no collisions — 200 distinct seats sold
     PASS  every recorded lag sample survived the merge across four threads — 200 of 200
+    PASS  the projection really did fall behind, so there was a lag to measure — 464ms
+          peak, against a 125ms floor
     PASS  the recorded projection lag matches the target's own peak — 464.1ms recorded
           vs 464ms the target measured itself
-    PASS  the schedule really was split across four threads — 4 threads, 50/50/50/50 each
+    PASS  the schedule really was split evenly across four threads — 50/50/50/50 each
 ```
 
 Run 7 is the one that cannot be faked. Four threads that restarted their numbering would send four
@@ -242,7 +244,9 @@ verdict on the ordinal mapping delivered by something that is not stampede. Brea
 
 And the `behindMs` the config recorded through `onResponse` is cross-checked twice: **every one of
 the 200 samples survived the merge** across four worker threads, and the peak agrees with the one
-the target latched for itself to within the histogram's own rounding (the gate allows 3 ms).
+the target latched for itself to within the histogram's own rounding — under 0.1 % plus a
+millisecond, a rule rather than a constant, so it encodes no assumption about how large the peak
+gets.
 
 The sample count is the claim that matters. Shards interleave by stride, so every worker holds
 samples spread across the whole run — losing an entire worker's trend moves the peak by under a

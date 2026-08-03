@@ -3,8 +3,17 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { burst, httpTransport, runDispatch, systemClock } from "../../src/engine/index.ts";
 import type { HttpRequestSpec } from "../../src/engine/http-transport.ts";
 import { runPool } from "../../src/engine/worker-pool.ts";
-import { claim, ms, readTargetStats, row, section, startTarget, TARGET_URL } from "./harness.ts";
-import { BUYERS, WORKER_COUNT } from "./seats-scenario.ts";
+import {
+  claim,
+  ms,
+  readTargetStats,
+  row,
+  section,
+  startTarget,
+  TARGET_PORT,
+  TARGET_URL,
+} from "./harness.ts";
+import { BUYERS, DURATION_MS, RATE_PER_SECOND, WORKER_COUNT } from "./seats-scenario.ts";
 
 /**
  * The runs open-ticket wrote down as its load contract, produced against a target that can be
@@ -18,33 +27,46 @@ import { BUYERS, WORKER_COUNT } from "./seats-scenario.ts";
 const BUYERS_ON_ONE_SEAT = 200;
 
 /**
- * Both sides now measure the *same instants*: the target latches its peak when it accepts a sale,
- * and stampede records the value that sale's response carried. So the only legitimate difference
- * is the histogram rounding a sample up to its bucket top — under 0.1%, which is well under a
- * millisecond at these magnitudes.
+ * How far stampede's recorded peak may sit above the target's own.
  *
- * It used to be 60ms, justified as "one tick of slack". That was the wrong mechanism: the target's
- * free-running peak kept climbing after the load stopped, so the budget was really covering the
- * gap between `runPool` resolving and the gate getting around to reading `/__stats` — a race that
- * consumed 63% of it under CPU load and would have failed a *correct* tool on a slower box.
- */
-/**
- * Relative, because the error it budgets for is relative: a histogram reports the top of the
- * sample's bucket, which is under 0.1% high — 512µs of slack at 460ms but 4096µs once a peak
- * passes ~4.19s. A flat 3ms silently encoded "peaks stay under four seconds" and would have failed
- * a correct tool the first time one did not.
+ * Both sides latch at the *same instants* — the target when it accepts a sale, stampede when the
+ * response carrying that sale's `behindMs` comes back — so the only legitimate difference is the
+ * histogram reporting the top of a sample's bucket. That error is relative (under 0.1%), so the
+ * budget is too: a flat constant silently encodes a ceiling on how big the peak may get, and 3ms
+ * would have failed a correct tool the first time a peak passed ~4.19s.
+ *
+ * It used to be 60ms, justified as sampling slack. That was the wrong mechanism entirely — the
+ * target's peak used to keep climbing after the load stopped, so the budget was really covering the
+ * gap between `runPool` resolving and the gate reading `/__stats`, a race that ate 63% of it under
+ * CPU load. Latching removed the race; this replaced the guess.
  */
 const lagToleranceMs = (recordedMs: number): number => recordedMs / 1024 + 1;
+
+/** Sales the reference target's projection applies per 50ms tick — 80/s against 100/s arriving. */
+const PROJECTION_RATE_PER_TICK = 4;
+const PROJECTION_TICK_MS = 50;
 
 /**
  * The lag the run has to actually produce before the agreement above means anything.
  *
- * Both sides of that comparison now derive from the same `behindMs` the target emitted, which is
- * what makes them comparable — and also what makes them jointly satisfiable by a target that
- * reports a constant, or a near-zero. Contract run 4 exists to measure a projection that *fell
- * behind*; without this floor the run could pass having measured a projection that kept up.
+ * Both sides of that comparison derive from the same `behindMs` the target emitted, which is what
+ * makes them comparable — and also what makes them jointly satisfiable by a target reporting a
+ * near-zero. Contract run 4 exists to measure a projection that *fell behind*; without a floor the
+ * run could pass having measured one that kept up, which is what the stale-target hijack did.
+ *
+ * Derived rather than picked: arrivals outrun the projection by
+ * `RATE_PER_SECOND − PROJECTION_RATE_PER_TICK × (1000 / PROJECTION_TICK_MS)` per second, and the
+ * backlog that accumulates over `DURATION_MS` drains at the projection's rate — about 400ms here.
+ * A quarter of that is a floor the run clears by 4× idle and still clears under heavy CPU load,
+ * where every effect pushes the lag *up*. It also moves with the constants instead of pinning them.
  */
-const MIN_REAL_LAG_MS = 100;
+const MIN_REAL_LAG_MS = Math.round(
+  (((RATE_PER_SECOND - PROJECTION_RATE_PER_TICK * (1000 / PROJECTION_TICK_MS)) *
+    (DURATION_MS / 1000)) /
+    (PROJECTION_RATE_PER_TICK * (1000 / PROJECTION_TICK_MS)) /
+    4) *
+    1000,
+);
 
 /**
  * Contract run 1 — the namesake. N buyers, one seat, and the claim is not a percentile: exactly
@@ -54,7 +76,7 @@ export const theStampede = async (): Promise<void> => {
   section(
     `RUN 6 — contract run 1: ${String(BUYERS_ON_ONE_SEAT)} buyers, one seat, exactly one wins`,
   );
-  const target = await startTarget(["--port", "5999", "--delay", "2"]);
+  const target = await startTarget(["--port", String(TARGET_PORT), "--delay", "2"]);
   try {
     const outcome = await runDispatch<HttpRequestSpec>(
       {
@@ -118,10 +140,18 @@ export const theStampede = async (): Promise<void> => {
       stats.salesIssued === 1 && stats.conflicts === BUYERS_ON_ONE_SEAT - 1,
       `${String(stats.salesIssued)} sold + ${String(stats.conflicts)} conflicts, counted by the target itself`,
     );
+    // Against `BUYERS_ON_ONE_SEAT`, never against `responseCount`: the latter is whatever subset
+    // stampede happened to observe, so an engine regression that abandoned 117 of 200 responses
+    // left this printing a flattering "83 of 83" and the namesake run exiting 0.
     claim(
-      "every response was a win or a conflict",
-      answered?.failed === 0 && answered.passed === summary.responseCount,
-      `${String(answered?.passed ?? 0)} of ${String(summary.responseCount)}`,
+      "every buyer got a win or a conflict",
+      answered?.failed === 0 && answered.broken === 0 && answered.passed === BUYERS_ON_ONE_SEAT,
+      `${String(answered?.passed ?? 0)} of ${String(BUYERS_ON_ONE_SEAT)}`,
+    );
+    claim(
+      "the target saw every buyer stampede sent",
+      stats.received === summary.dispatchedCount && summary.dispatchedCount === BUYERS_ON_ONE_SEAT,
+      `${String(stats.received)} received vs ${String(summary.dispatchedCount)} dispatched`,
     );
     claim(
       "no claim was broken",
@@ -146,7 +176,14 @@ export const hotShowManySeats = async (): Promise<void> => {
   section(
     `RUN 7 — contract runs 2 & 4: ${String(BUYERS)} buyers, ${String(BUYERS)} distinct seats, 4 threads`,
   );
-  const target = await startTarget(["--port", "5999", "--delay", "2", "--projection-rate", "4"]);
+  const target = await startTarget([
+    "--port",
+    String(TARGET_PORT),
+    "--delay",
+    "2",
+    "--projection-rate",
+    String(PROJECTION_RATE_PER_TICK),
+  ]);
   try {
     const outcome = await runPool({
       modulePath: fileURLToPath(new URL("seats-scenario.ts", import.meta.url)),
@@ -217,6 +254,13 @@ export const hotShowManySeats = async (): Promise<void> => {
       stats.maxBehindMs > MIN_REAL_LAG_MS,
       `${String(stats.maxBehindMs)}ms peak, against a ${String(MIN_REAL_LAG_MS)}ms floor`,
     );
+    // A constant would satisfy both the floor and the agreement — the two claims compare a peak to
+    // a peak. Contract run 4 is about a lag that *grew*, and only a distribution can say so.
+    claim(
+      "the lag was a distribution, not a constant the target invented",
+      behind !== undefined && behind.p50Ms < behind.maxMs,
+      `p50 ${ms(behind?.p50Ms)} against max ${ms(behind?.maxMs)}`,
+    );
     claim(
       "the recorded projection lag matches the target's own peak",
       behind !== undefined &&
@@ -232,10 +276,15 @@ export const hotShowManySeats = async (): Promise<void> => {
     // against a number the profile did not produce, and `BUYERS / WORKER_COUNT` puts that coupling
     // straight back — a rate of 90/s would fail this on a correct tool, for arithmetic reasons.
     const perThread = threads.map((name) => summary.counters[name] ?? 0);
+    // Banded, not merely non-zero: `197/1/1/1` is four threads and the right total, and it is not
+    // a stride split. The band is `floor`..`ceil` so it stays arithmetic-safe when the run size
+    // does not divide evenly by the worker count.
+    const lowest = Math.floor(BUYERS / WORKER_COUNT);
+    const highest = Math.ceil(BUYERS / WORKER_COUNT);
     claim(
-      "the schedule really was split across four threads",
+      "the schedule really was split evenly across four threads",
       threads.length === WORKER_COUNT &&
-        perThread.every((count) => count > 0) &&
+        perThread.every((count) => count >= lowest && count <= highest) &&
         perThread.reduce((a, b) => a + b, 0) === BUYERS,
       `${String(threads.length)} threads, ${perThread.join("/")} responses each`,
     );
