@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MetricsRegistry } from "./registry.ts";
+import { expectSameHistogram } from "../test-support/histogram-diff.ts";
 import type { RegistrySnapshot } from "./snapshots.ts";
 import { ScenarioMetrics } from "./scenario-metrics.ts";
 import {
@@ -52,28 +53,29 @@ const expectSameSnapshot = (actual: RegistrySnapshot, expected: RegistrySnapshot
   if (canonical(actual) === canonical(expected)) {
     return;
   }
-  // Narrowed before failing: `toBe` on two 90KB base64 walls names neither the scenario nor the
-  // metric, which is a worse failure message than the slow comparison this replaced.
-  for (const [name, scenario] of actual.scenarios) {
-    const other = expected.scenarios.get(name);
+  // Narrowed before failing, down to the bucket. `toBe` on two 90KB base64 walls names neither the
+  // scenario nor the metric, which is a worse failure message than the slow comparison it replaced.
+  for (const [scenario, metrics] of actual.scenarios) {
+    const other = expected.scenarios.get(scenario);
     for (const kind of ["histograms", "trends"] as const) {
-      for (const [metric, histogram] of scenario[kind]) {
-        expect({ scenario: name, metric, counts: [...histogram.counts] }).toEqual({
-          scenario: name,
-          metric,
-          counts: [...(other?.[kind].get(metric)?.counts ?? [])],
-        });
+      for (const [metric, histogram] of metrics[kind]) {
+        // Narrowed rather than asserted: a metric present on one side only is its own failure,
+        // and it should name the metric rather than throw inside the diff.
+        const counterpart = other?.[kind].get(metric);
+        if (counterpart === undefined) {
+          expect({ scenario, metric, present: false }).toEqual({ scenario, metric, present: true });
+          continue;
+        }
+        expectSameHistogram(histogram, counterpart, { scenario, metric });
       }
     }
-    expect({ scenario: name, counters: scenario.counters }).toEqual({
-      scenario: name,
+    expect({ scenario, counters: metrics.counters, checks: metrics.checks }).toEqual({
+      scenario,
       counters: other?.counters,
-    });
-    expect({ scenario: name, checks: scenario.checks }).toEqual({
-      scenario: name,
       checks: other?.checks,
     });
   }
+  // Anything the walk above did not reach — a scenario only `expected` has, a different sequence.
   expect(canonical(actual)).toBe(canonical(expected));
 };
 

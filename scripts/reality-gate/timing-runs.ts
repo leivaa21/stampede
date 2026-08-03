@@ -101,18 +101,27 @@ const gateRun = async ({
     row("schedule lag max (own backlog)", ms(summary.scheduleLagMs?.maxMs));
     process.stdout.write("\n");
 
-    // Two claims, not one, and neither is `x === x`: the profile's arithmetic has to match the
-    // number in the run's title, *and* the dispatcher has to have consumed that whole schedule.
+    // Two claims about two different things. The first is arithmetic: does the profile build the
+    // number of instants its title advertises. The second has to be an *observed* quantity —
+    // `scheduledCount` is a verbatim copy of `profile.count` (`dispatcher.ts`), so pinning it
+    // against `expectedCount` restates the first claim rather than checking the loop consumed the
+    // schedule. Truncating `constantRate`'s generator while leaving its `count` alone took run 4
+    // to a tenth of its load with both of those claims green and `100000 of 100000` printed two
+    // rows above `501 sent, 9499 dropped`.
+    //
+    // What the loop really produces is the disposition of every instant, so that is what is
+    // asserted. It subsumes run 3's accounting identity, and it is the shape run 5 already had.
     claim(
       "the profile built the schedule its title claims",
       profile.count === expectedCount,
-      `${String(profile.count)} instants for "${title}"`,
+      `${String(profile.count)} instants for ${String(expectedCount)} requested`,
     );
     claim(
-      "the run scheduled every one of them",
-      summary.scheduledCount === expectedCount,
-      `${String(summary.scheduledCount)} of ${String(expectedCount)}`,
+      "every instant the loop consumed is accounted for",
+      summary.dispatchedCount + summary.droppedCount + summary.requestErrorCount === expectedCount,
+      `${String(expectedCount)} = ${String(summary.dispatchedCount)} sent + ${String(summary.droppedCount)} dropped + ${String(summary.requestErrorCount)} not built`,
     );
+
     check(summary, stats, expectedCount);
   } finally {
     target.kill();
@@ -195,16 +204,13 @@ export const timingRuns = async (): Promise<void> => {
         summary.dispatchedCount >= 550,
         `dispatched ${String(summary.dispatchedCount)} while the target completed ${String(stats.completed)}`,
       );
-      // All three terms in the detail, and the third pinned to zero. Printing only two made a run
-      // with 40 request errors satisfy the claim while displaying an equation that visibly did not
-      // add up — an identity that survives anything proves nothing. This run expects drops, so it
-      // cannot pin those; the request builder is a constant, so it can pin these.
+      // The identity itself is now asserted for every run, against the independently declared
+      // size. What is left here is the part specific to this run: its request builder is a
+      // constant, so nothing should have failed to build even while the cap is dropping requests.
       claim(
-        "every scheduled request is accounted for, and every one was built",
-        summary.scheduledCount ===
-          summary.dispatchedCount + summary.droppedCount + summary.requestErrorCount &&
-          summary.requestErrorCount === 0,
-        `${String(summary.scheduledCount)} = ${String(summary.dispatchedCount)} sent + ${String(summary.droppedCount)} dropped + ${String(summary.requestErrorCount)} not built`,
+        "every request was built, even while the cap was dropping them",
+        summary.requestErrorCount === 0,
+        `${String(summary.requestErrorCount)} not built, ${String(summary.droppedCount)} dropped`,
       );
     },
   });

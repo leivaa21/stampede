@@ -76,7 +76,8 @@ export const workerPoolRun = async (): Promise<void> => {
         summary.dispatchedCount + summary.droppedCount + summary.requestErrorCount &&
         summary.responseCount + summary.errorCount + summary.abandonedCount ===
           summary.dispatchedCount,
-      `${String(summary.dispatchedCount)} sent, ${String(summary.responseCount)} answered`,
+      `${String(summary.scheduledCount)} = ${String(summary.dispatchedCount)} sent + ${String(summary.droppedCount)} dropped + ${String(summary.requestErrorCount)} not built; ` +
+        `${String(summary.dispatchedCount)} = ${String(summary.responseCount)} answered + ${String(summary.errorCount)} failed + ${String(summary.abandonedCount)} abandoned`,
     );
     claim(
       "no snapshot arrived out of order",

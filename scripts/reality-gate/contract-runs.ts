@@ -230,7 +230,7 @@ export const hotShowManySeats = async (): Promise<void> => {
     claim(
       "every buyer got a seat of their own",
       created?.failed === 0 && created.passed === BUYERS,
-      `${String(created?.passed ?? 0)} of ${String(BUYERS)} created, 0 conflicts`,
+      `${String(created?.passed ?? 0)} of ${String(BUYERS)} created, ${String(created?.failed ?? 0)} conflicts`,
     );
     claim(
       "the target sold one seat per buyer, no collisions",

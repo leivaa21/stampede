@@ -11,7 +11,14 @@ import { fileURLToPath } from "node:url";
  */
 
 export const TARGET_PORT = 5999;
-export const TARGET_URL = `http://localhost:${String(TARGET_PORT)}/`;
+/**
+ * `127.0.0.1`, not `localhost`, because that is the interface `target-server.ts` binds.
+ *
+ * On a host resolving `localhost` to `::1` only, the gate could never reach its own target — and
+ * on a dual-stack host the refusal arrives as an `AggregateError` whose `code` is taken from the
+ * *first* address family, which made "is this a refused connection?" depend on resolution order.
+ */
+export const TARGET_URL = `http://127.0.0.1:${String(TARGET_PORT)}/`;
 
 export interface TargetStats {
   /** The answering process. Guards against grading a run against a stale target — see `startTarget`. */
@@ -28,8 +35,19 @@ export interface TargetStats {
   readonly maxBehindMs: number;
 }
 
+/**
+ * Bounded, because undici's default header timeout is five minutes.
+ *
+ * A socket that accepts and never writes — a target stopped in a debugger, a non-HTTP listener —
+ * left `pnpm gate:two` mute with no output at all, which is the failure mode this harness exists
+ * to name rather than produce.
+ */
+const STATS_TIMEOUT_MS = 2_000;
+
 export const readTargetStats = async (): Promise<TargetStats> => {
-  const response = await fetch(`${TARGET_URL}__stats`);
+  const response = await fetch(`${TARGET_URL}__stats`, {
+    signal: AbortSignal.timeout(STATS_TIMEOUT_MS),
+  });
   const body: unknown = await response.json();
   if (typeof body !== "object" || body === null) {
     throw new MalformedStatsError("the target returned a malformed stats body");
@@ -74,14 +92,31 @@ export class MalformedStatsError extends Error {}
 
 /**
  * `undici` rejects a refused connection with a plain `TypeError` whose cause carries the code, so
- * the class alone cannot tell "nothing is listening yet" from "the stats contract drifted".
+ * the class alone cannot tell "nothing is listening yet" from "our reading of the stats is wrong".
+ *
+ * The cause may be an `AggregateError` when a name resolves to several addresses, and its `code` is
+ * copied from the *first* member — so a host where `::1` fails with `ENETUNREACH` while IPv4
+ * refuses would not match on `code` alone. Every member is checked instead.
+ *
+ * A cause-less `TypeError` is deliberately **not** retried: Node always attaches one to a network
+ * failure, so a bare one is a programming error inside `readTargetStats` — exactly the "the target
+ * answered and our reading is wrong" case this predicate exists to fail fast on.
  */
 const isConnectionRefused = (error: unknown): boolean => {
-  if (!(error instanceof TypeError)) {
+  if (!(error instanceof TypeError) || error.cause === undefined) {
     return false;
   }
-  const code = (error.cause as { readonly code?: unknown } | undefined)?.code;
-  return code === "ECONNREFUSED" || error.cause === undefined;
+  const cause = error.cause as { readonly code?: unknown; readonly errors?: unknown };
+  if (cause.code === "ECONNREFUSED") {
+    return true;
+  }
+  return (
+    Array.isArray(cause.errors) &&
+    cause.errors.length > 0 &&
+    cause.errors.every(
+      (member: unknown) => (member as { readonly code?: unknown }).code === "ECONNREFUSED",
+    )
+  );
 };
 
 const staleTarget = (pid: number): StaleTargetError =>
@@ -101,7 +136,18 @@ export const startTarget = async (args: readonly string[]): Promise<ChildProcess
   // Checked *before* spawning, because our child loses this race: it dies of EADDRINUSE within
   // milliseconds, so a post-spawn poll reports "exited with code 1" — the symptom — while the
   // cause is a target a previous run left behind. One request, and the diagnosis is exact.
-  const squatter = await fetch(`${TARGET_URL}__stats`).catch(() => undefined);
+  const squatter = await fetch(`${TARGET_URL}__stats`, {
+    signal: AbortSignal.timeout(STATS_TIMEOUT_MS),
+  }).catch((error: unknown) => {
+    // Timed out rather than refused: something owns the port and is not answering, which is its
+    // own diagnosis — and the one case where the gate would otherwise sit silent for minutes.
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error(
+        `something is holding port ${String(TARGET_PORT)} without answering; the gate cannot start`,
+      );
+    }
+    return undefined;
+  });
   if (squatter !== undefined) {
     const body: unknown = await squatter.json().catch(() => undefined);
     const pid =

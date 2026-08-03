@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Histogram } from "./histogram.ts";
-import type { HistogramSnapshot } from "./snapshots.ts";
+import { expectSameHistogram } from "../test-support/histogram-diff.ts";
 import { MAX_TRACKABLE_US } from "./histogram-layout.ts";
 
 /** xorshift32 — deterministic, so a failing merge property is reproducible from the seed alone. */
@@ -41,35 +41,6 @@ const permutations = <T>(items: readonly T[]): T[][] => {
 
 const mergeAll = (histograms: readonly Histogram[]): Histogram =>
   histograms.reduce((merged, histogram) => merged.merge(histogram), new Histogram());
-
-/**
- * Exact snapshot equality, without paying structural-equality prices on 17,408 buckets.
- *
- * `toEqual` walks an `Int32Array` element by element in JS. Twenty-four orderings of that is over
- * four hundred thousand comparisons, which pushed this file past vitest's 5s default timeout on a
- * loaded machine — twice, looking exactly like flakiness in a suite that is fully deterministic.
- * Comparing the buffers is the same assertion at native speed; the loop below only runs to name
- * *which* bucket differs when they are not equal, which is what makes a failure diagnosable.
- */
-const expectSameSnapshot = (actual: HistogramSnapshot, expected: HistogramSnapshot): void => {
-  expect(actual.overflowCount).toBe(expected.overflowCount);
-  expect(actual.saturated).toBe(expected.saturated);
-  // Length first: without it a prefix comparison could differ while `findIndex` returned -1, and
-  // the fallback below would then assert `{bucket: -1, count: undefined}` against itself and pass.
-  expect(actual.counts.length).toBe(expected.counts.length);
-  // `byteOffset`/`byteLength`, not the whole backing buffer — a view into a larger `ArrayBuffer`
-  // would otherwise compare bytes nobody asked about, in the helper whose point is byte-exactness.
-  const bytes = (counts: Int32Array): Buffer =>
-    Buffer.from(counts.buffer, counts.byteOffset, counts.byteLength);
-  if (bytes(actual.counts).equals(bytes(expected.counts))) {
-    return;
-  }
-  const at = actual.counts.findIndex((count, index) => count !== expected.counts[index]);
-  expect({ bucket: at, count: actual.counts[at] }).toEqual({
-    bucket: at,
-    count: at === -1 ? "buffers differ but no bucket does" : expected.counts[at],
-  });
-};
 
 describe("Histogram.merge", () => {
   it("leaves both operands untouched", () => {
@@ -134,7 +105,7 @@ describe("Histogram.merge", () => {
 
     expect(orderings).toHaveLength(24);
     for (const ordering of orderings) {
-      expectSameSnapshot(mergeAll(ordering).toSnapshot(), expected);
+      expectSameHistogram(mergeAll(ordering).toSnapshot(), expected);
     }
   });
 });
@@ -152,7 +123,7 @@ describe("Histogram merge across workers", () => {
     const merged = mergeAll(perWorker);
     const single = histogramOf(samples);
 
-    expectSameSnapshot(merged.toSnapshot(), single.toSnapshot());
+    expectSameHistogram(merged.toSnapshot(), single.toSnapshot());
     expect(merged.count).toBe(single.count);
     expect(merged.min).toBe(single.min);
     expect(merged.max).toBe(single.max);
@@ -169,6 +140,6 @@ describe("Histogram merge across workers", () => {
     const merged = histogramOf(slow).merge(histogramOf(fast));
     const single = histogramOf([...slow, ...fast]);
 
-    expectSameSnapshot(merged.toSnapshot(), single.toSnapshot());
+    expectSameHistogram(merged.toSnapshot(), single.toSnapshot());
   });
 });

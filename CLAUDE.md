@@ -57,7 +57,9 @@
 ## Identity
 
 - **Registry index:** 1 (see `../PROJECTS.md`)
-- **Ports:** none (CLI)
+- **Ports:** none in production — it is a CLI. `pnpm gate:two` binds **127.0.0.1:5999** for its
+  reference target: loopback only, test-only, and deliberately outside the workspace's `5 P S V`
+  range so it can never be mistaken for, or collide with, a real service.
 - **Repo:** github.com/leivaa21/stampede · **npm:** `@leivaa21/stampede` · **License:** MIT
 
 ## What it does & how it's shaped
