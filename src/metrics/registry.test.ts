@@ -49,6 +49,31 @@ const canonical = (snapshot: RegistrySnapshot): string =>
   });
 
 const expectSameSnapshot = (actual: RegistrySnapshot, expected: RegistrySnapshot): void => {
+  if (canonical(actual) === canonical(expected)) {
+    return;
+  }
+  // Narrowed before failing: `toBe` on two 90KB base64 walls names neither the scenario nor the
+  // metric, which is a worse failure message than the slow comparison this replaced.
+  for (const [name, scenario] of actual.scenarios) {
+    const other = expected.scenarios.get(name);
+    for (const kind of ["histograms", "trends"] as const) {
+      for (const [metric, histogram] of scenario[kind]) {
+        expect({ scenario: name, metric, counts: [...histogram.counts] }).toEqual({
+          scenario: name,
+          metric,
+          counts: [...(other?.[kind].get(metric)?.counts ?? [])],
+        });
+      }
+    }
+    expect({ scenario: name, counters: scenario.counters }).toEqual({
+      scenario: name,
+      counters: other?.counters,
+    });
+    expect({ scenario: name, checks: scenario.checks }).toEqual({
+      scenario: name,
+      checks: other?.checks,
+    });
+  }
   expect(canonical(actual)).toBe(canonical(expected));
 };
 

@@ -30,7 +30,10 @@ const numericArg = (name: string, fallback: number): number => {
 const port = numericArg("port", 5999);
 const delayMs = numericArg("delay", 50);
 const capacity = numericArg("capacity", Number.POSITIVE_INFINITY);
-/** Sales the projection can apply per 50ms tick. Low enough to fall behind under a burst. */
+/**
+ * Sales the projection applies per {@link PROJECTION_TICK_MS} tick — passed by the gate, which
+ * derives its lag floor from the same number. The default exists for running this server by hand.
+ */
 const projectionRate = numericArg("projection-rate", 4);
 
 interface Pending {

@@ -29,7 +29,15 @@ interface GateRun {
   readonly targetArgs: readonly string[];
   readonly ratePerSecond: number;
   readonly durationMs: number;
-  readonly check: (summary: ScenarioRunSummary, stats: TargetStats) => void;
+  /**
+   * How many requests this run's title says it makes, written down independently.
+   *
+   * Deriving it from the profile made the claim `profile.count === profile.count`: the dispatcher
+   * reads `scheduledCount` off the same object, so the comparison could not fail under any bug. A
+   * planted `constantRate` that produced a tenth of its requests printed "PASS — 4 of 4".
+   */
+  readonly expectedCount: number;
+  readonly check: (summary: ScenarioRunSummary, stats: TargetStats, expectedCount: number) => void;
 }
 
 const gateRun = async ({
@@ -38,11 +46,11 @@ const gateRun = async ({
   ratePerSecond,
   durationMs,
   check,
+  expectedCount,
 }: GateRun): Promise<void> => {
   section(title);
   const target = await startTarget(targetArgs);
   const profile = constantRate({ ratePerSecond, durationMs });
-  const expectedCount = profile.count;
   try {
     const outcome = await runDispatch<HttpRequestSpec>(
       {
@@ -93,16 +101,19 @@ const gateRun = async ({
     row("schedule lag max (own backlog)", ms(summary.scheduleLagMs?.maxMs));
     process.stdout.write("\n");
 
-    // Every run pins the size of the schedule it asked for, before anything else it claims.
-    // `stats.received === dispatchedCount` with neither side pinned is true of a run that
-    // scheduled four requests instead of forty — three green claims on a tenth of the load, which
-    // is the shape run 6 shipped with until this review.
+    // Two claims, not one, and neither is `x === x`: the profile's arithmetic has to match the
+    // number in the run's title, *and* the dispatcher has to have consumed that whole schedule.
     claim(
-      "the profile scheduled exactly what it asked for",
+      "the profile built the schedule its title claims",
+      profile.count === expectedCount,
+      `${String(profile.count)} instants for "${title}"`,
+    );
+    claim(
+      "the run scheduled every one of them",
       summary.scheduledCount === expectedCount,
       `${String(summary.scheduledCount)} of ${String(expectedCount)}`,
     );
-    check(summary, stats);
+    check(summary, stats, expectedCount);
   } finally {
     target.kill();
     await sleep(250);
@@ -116,6 +127,7 @@ export const timingRuns = async (): Promise<void> => {
     targetArgs: ["--port", String(TARGET_PORT), "--delay", "50"],
     ratePerSecond: 20,
     durationMs: 2_000,
+    expectedCount: 40,
     check: (summary, stats) => {
       const p50 = summary.latencyMs?.p50Ms ?? 0;
       claim("p50 lands on the target's real 50ms", p50 >= 48 && p50 <= 65, `${p50.toFixed(1)}ms`);
@@ -147,6 +159,7 @@ export const timingRuns = async (): Promise<void> => {
     targetArgs: ["--port", String(TARGET_PORT), "--delay", "1"],
     ratePerSecond: 100,
     durationMs: 3_000,
+    expectedCount: 300,
     check: (summary, stats) => {
       const achieved = summary.achievedRatePerSecond ?? 0;
       claim(
@@ -169,6 +182,7 @@ export const timingRuns = async (): Promise<void> => {
     targetArgs: ["--port", String(TARGET_PORT), "--delay", "200", "--capacity", "10"],
     ratePerSecond: 200,
     durationMs: 3_000,
+    expectedCount: 600,
     check: (summary, stats) => {
       const p99 = summary.scheduledLatencyMs?.p99Ms ?? 0;
       claim(
@@ -202,14 +216,20 @@ export const timingRuns = async (): Promise<void> => {
     targetArgs: ["--port", String(TARGET_PORT), "--delay", "1"],
     ratePerSecond: 50_000,
     durationMs: 2_000,
-    check: (summary) => {
+    expectedCount: 100_000,
+    check: (summary, _stats, expectedCount) => {
       const achieved = summary.achievedRatePerSecond ?? 0;
       const lag = summary.scheduleLagMs?.maxMs ?? 0;
       // Bounded below as well: "far below 50,000" is also true of a run that dispatched five
       // requests, and the point of this run is that the generator kept working while falling behind.
+      //
+      // Relative to the schedule, and generously, because this is the one number in the gate that
+      // is really about the host: my measurements span 1990-2604 dispatched, so a literal near
+      // that band would fail a correct tool on a slower box — which the README explicitly says to
+      // expect. Half a percent of the schedule still rules out "it dispatched five".
       claim(
         "admits an achieved rate far below the requested one, having really tried",
-        achieved < 50_000 && summary.dispatchedCount > 1_000,
+        achieved < 50_000 && summary.dispatchedCount > expectedCount / 200,
         `${achieved.toFixed(0)} rps of 50,000, ${String(summary.dispatchedCount)} sent, ${String(summary.droppedCount)} dropped`,
       );
       claim("surfaces its own backlog as schedule lag", lag > 50, `${lag.toFixed(0)}ms`);

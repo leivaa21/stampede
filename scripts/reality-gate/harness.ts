@@ -72,6 +72,18 @@ export class StaleTargetError extends Error {}
  */
 export class MalformedStatsError extends Error {}
 
+/**
+ * `undici` rejects a refused connection with a plain `TypeError` whose cause carries the code, so
+ * the class alone cannot tell "nothing is listening yet" from "the stats contract drifted".
+ */
+const isConnectionRefused = (error: unknown): boolean => {
+  if (!(error instanceof TypeError)) {
+    return false;
+  }
+  const code = (error.cause as { readonly code?: unknown } | undefined)?.code;
+  return code === "ECONNREFUSED" || error.cause === undefined;
+};
+
 const staleTarget = (pid: number): StaleTargetError =>
   new StaleTargetError(
     `port ${String(TARGET_PORT)} is held by a stale reality-gate target (pid ${String(pid)}); kill it and re-run`,
@@ -96,7 +108,15 @@ export const startTarget = async (args: readonly string[]): Promise<ChildProcess
       typeof body === "object" && body !== null
         ? (body as { readonly pid?: unknown }).pid
         : undefined;
-    throw staleTarget(typeof pid === "number" ? pid : 0);
+    // A pid-less body means something that is not this gate's target owns the port. It is not
+    // ours to diagnose or to kill, and calling it a stale gate target names the wrong cause — with
+    // a pid of 0 — to whoever has to clear it.
+    if (typeof pid !== "number") {
+      throw new Error(
+        `something that is not a reality-gate target is already listening on port ${String(TARGET_PORT)}`,
+      );
+    }
+    throw staleTarget(pid);
   }
 
   const server = spawn(
@@ -107,6 +127,7 @@ export const startTarget = async (args: readonly string[]): Promise<ChildProcess
 
   const deadline = 10_000;
   for (let waited = 0; waited < deadline; waited += 50) {
+    let answered: TargetStats;
     if (server.exitCode !== null) {
       throw new Error(
         `the reality-gate target exited with code ${String(server.exitCode)} before it could listen`,
@@ -119,24 +140,30 @@ export const startTarget = async (args: readonly string[]): Promise<ChildProcess
       // to fail on EADDRINUSE, and the gate goes green against a server it never configured —
       // measured at 7/7 PASS with a projection 8× faster than the one the run asked for.
       //
-      // Belt and braces after the pre-spawn probe, which is the check that actually fires. Kept
-      // because "the port answering is not the same as our target answering" is the invariant, and
-      // a check that states it costs one comparison.
-      if (stats.pid !== server.pid) {
-        server.kill();
-        throw staleTarget(stats.pid);
-      }
-      return server;
+      answered = stats;
     } catch (error: unknown) {
-      // Only a connection failure means "not up yet". A malformed stats body means the target is
-      // answering and the *contract* is wrong — retrying that for ten seconds and then reporting
-      // "did not answer" is the misdiagnosis this loop exists to prevent.
-      if (error instanceof MalformedStatsError) {
+      // Retried only when the port refused the connection — "not up yet". Everything else means
+      // the target *answered* and something is wrong with what it said, and retrying that for ten
+      // seconds before reporting "did not answer" is the misdiagnosis this loop exists to prevent.
+      //
+      // A deny-list, not an allow-list: the previous shape retried every class it did not name,
+      // so each new error type defaulted to ten seconds of silence.
+      if (!isConnectionRefused(error)) {
         server.kill();
         throw error;
       }
       await sleep(50);
+      continue;
     }
+
+    // Outside the `try`, deliberately. Thrown inside it, this was caught by the `catch` below,
+    // discarded, and retried to the deadline — and since `server.kill()` leaves `exitCode` null,
+    // nothing else tripped either. The diagnosis regressed to "did not answer".
+    if (answered.pid !== server.pid) {
+      server.kill();
+      throw staleTarget(answered.pid);
+    }
+    return server;
   }
   server.kill();
   throw new Error(`the reality-gate target did not answer within ${String(deadline)}ms`);

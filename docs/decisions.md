@@ -484,6 +484,9 @@ makes the claim depend on scheduling rather than on the merge.
 
 **Consequence.** Both sides now derive from the same emitted number, which is what makes them
 comparable and also what would let a target reporting a constant satisfy both. So the run
-additionally asserts a floor: the projection has to have actually fallen behind (>100 ms) for the
-agreement to be evidence of anything. Contract run 4 measures a lag that is real, or it measures
+additionally asserts a floor: the projection has to have actually fallen behind for the agreement
+to be evidence of anything. The floor is derived from the arrival and projection rates rather than
+picked — a quarter of the backlog's own drain time, 125 ms for the rates the gate ships with — and
+refuses to be non-positive, since a projection that keeps up would make the claim vacuous in exactly
+the configuration it exists to exclude. Contract run 4 measures a lag that is real, or it measures
 nothing.

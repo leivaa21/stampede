@@ -54,19 +54,26 @@ const PROJECTION_RATE_PER_TICK = 4;
  * near-zero. Contract run 4 exists to measure a projection that *fell behind*; without a floor the
  * run could pass having measured one that kept up, which is what the stale-target hijack did.
  *
- * Derived rather than picked: arrivals outrun the projection by
- * `RATE_PER_SECOND − PROJECTION_RATE_PER_TICK × (1000 / PROJECTION_TICK_MS)` per second, and the
- * backlog that accumulates over `DURATION_MS` drains at the projection's rate — about 400ms here.
- * A quarter of that is a floor the run clears by 4× idle and still clears under heavy CPU load,
- * where every effect pushes the lag *up*. It also moves with the constants instead of pinning them.
+ * Derived rather than picked. Arrivals outrun the projection by `RATE_PER_SECOND − applied` per
+ * second, so `DURATION_MS` leaves a backlog, and the projection's view is stale by however long
+ * that backlog takes *it* to work through: `backlog ÷ applied`, which is 500ms for the rates the
+ * gate ships with (40 events of excess over 2s, drained at 80/s). A quarter of that is a floor the
+ * run clears by 3.5–5× measured, and every effect of a loaded machine pushes the real lag further
+ * above it. It moves with the constants rather than pinning them.
  */
+const APPLIED_PER_SECOND = PROJECTION_RATE_PER_TICK * (1000 / PROJECTION_TICK_MS);
 const MIN_REAL_LAG_MS = Math.round(
-  (((RATE_PER_SECOND - PROJECTION_RATE_PER_TICK * (1000 / PROJECTION_TICK_MS)) *
-    (DURATION_MS / 1000)) /
-    (PROJECTION_RATE_PER_TICK * (1000 / PROJECTION_TICK_MS)) /
-    4) *
-    1000,
+  (((RATE_PER_SECOND - APPLIED_PER_SECOND) * (DURATION_MS / 1000)) / APPLIED_PER_SECOND / 4) * 1000,
 );
+
+// A projection that keeps up produces no lag to measure, and a floor of zero — or a negative one,
+// which `maxBehindAtRecordMs` can never go below — would make the claim that exists to stop the lag
+// agreement being vacuous become vacuous itself. A tick budget of 6 is all it takes.
+if (MIN_REAL_LAG_MS <= 0) {
+  throw new RangeError(
+    `the reality gate's projection applies ${String(APPLIED_PER_SECOND)}/s against ${String(RATE_PER_SECOND)}/s arriving, so it never falls behind and contract run 4 has no lag to measure`,
+  );
+}
 
 /**
  * Contract run 1 — the namesake. N buyers, one seat, and the claim is not a percentile: exactly

@@ -54,13 +54,20 @@ const mergeAll = (histograms: readonly Histogram[]): Histogram =>
 const expectSameSnapshot = (actual: HistogramSnapshot, expected: HistogramSnapshot): void => {
   expect(actual.overflowCount).toBe(expected.overflowCount);
   expect(actual.saturated).toBe(expected.saturated);
-  if (Buffer.from(actual.counts.buffer).equals(Buffer.from(expected.counts.buffer))) {
+  // Length first: without it a prefix comparison could differ while `findIndex` returned -1, and
+  // the fallback below would then assert `{bucket: -1, count: undefined}` against itself and pass.
+  expect(actual.counts.length).toBe(expected.counts.length);
+  // `byteOffset`/`byteLength`, not the whole backing buffer — a view into a larger `ArrayBuffer`
+  // would otherwise compare bytes nobody asked about, in the helper whose point is byte-exactness.
+  const bytes = (counts: Int32Array): Buffer =>
+    Buffer.from(counts.buffer, counts.byteOffset, counts.byteLength);
+  if (bytes(actual.counts).equals(bytes(expected.counts))) {
     return;
   }
   const at = actual.counts.findIndex((count, index) => count !== expected.counts[index]);
   expect({ bucket: at, count: actual.counts[at] }).toEqual({
     bucket: at,
-    count: expected.counts[at],
+    count: at === -1 ? "buffers differ but no bucket does" : expected.counts[at],
   });
 };
 
