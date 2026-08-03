@@ -28,7 +28,23 @@ const BUYERS_ON_ONE_SEAT = 200;
  * gap between `runPool` resolving and the gate getting around to reading `/__stats` — a race that
  * consumed 63% of it under CPU load and would have failed a *correct* tool on a slower box.
  */
-const LAG_TOLERANCE_MS = 3;
+/**
+ * Relative, because the error it budgets for is relative: a histogram reports the top of the
+ * sample's bucket, which is under 0.1% high — 512µs of slack at 460ms but 4096µs once a peak
+ * passes ~4.19s. A flat 3ms silently encoded "peaks stay under four seconds" and would have failed
+ * a correct tool the first time one did not.
+ */
+const lagToleranceMs = (recordedMs: number): number => recordedMs / 1024 + 1;
+
+/**
+ * The lag the run has to actually produce before the agreement above means anything.
+ *
+ * Both sides of that comparison now derive from the same `behindMs` the target emitted, which is
+ * what makes them comparable — and also what makes them jointly satisfiable by a target that
+ * reports a constant, or a near-zero. Contract run 4 exists to measure a projection that *fell
+ * behind*; without this floor the run could pass having measured a projection that kept up.
+ */
+const MIN_REAL_LAG_MS = 100;
 
 /**
  * Contract run 1 — the namesake. N buyers, one seat, and the claim is not a percentile: exactly
@@ -197,21 +213,31 @@ export const hotShowManySeats = async (): Promise<void> => {
     // symmetric — under-reporting means the merge lost the peak, over-reporting means stampede
     // invented lag the target never had. Only the histogram's round-up-to-bucket-top is allowed.
     claim(
+      "the projection really did fall behind, so there was a lag to measure",
+      stats.maxBehindMs > MIN_REAL_LAG_MS,
+      `${String(stats.maxBehindMs)}ms peak, against a ${String(MIN_REAL_LAG_MS)}ms floor`,
+    );
+    claim(
       "the recorded projection lag matches the target's own peak",
       behind !== undefined &&
         behind.maxMs >= stats.maxBehindMs &&
-        behind.maxMs - stats.maxBehindMs <= LAG_TOLERANCE_MS,
+        behind.maxMs - stats.maxBehindMs <= lagToleranceMs(behind.maxMs),
       `${ms(behind?.maxMs)} recorded vs ${String(stats.maxBehindMs)}ms the target measured itself`,
     );
     // Run 6 asserts these; run 7 must too, or half the trend could vanish into broken observations
     // while `reserved201` stayed at 200 and every other claim held.
     // Otherwise every claim in this run holds with one worker, while its title says four.
     const threads = Object.keys(summary.counters).filter((name) => name.startsWith("thread-"));
+    // Summed, not divided: `BUYERS` is read off the profile precisely so the gate never asserts
+    // against a number the profile did not produce, and `BUYERS / WORKER_COUNT` puts that coupling
+    // straight back — a rate of 90/s would fail this on a correct tool, for arithmetic reasons.
+    const perThread = threads.map((name) => summary.counters[name] ?? 0);
     claim(
       "the schedule really was split across four threads",
       threads.length === WORKER_COUNT &&
-        threads.every((name) => summary.counters[name] === BUYERS / WORKER_COUNT),
-      `${String(threads.length)} threads, ${threads.map((n) => String(summary.counters[n])).join("/")} responses each`,
+        perThread.every((count) => count > 0) &&
+        perThread.reduce((a, b) => a + b, 0) === BUYERS,
+      `${String(threads.length)} threads, ${perThread.join("/")} responses each`,
     );
     claim(
       "no claim was broken and no recording refused",

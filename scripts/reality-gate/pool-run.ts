@@ -62,6 +62,14 @@ export const workerPoolRun = async (): Promise<void> => {
       stats.received === summary.dispatchedCount,
       `${String(stats.received)} received vs ${String(summary.dispatchedCount)} dispatched`,
     );
+    // Against a healthy target these are zero, and saying so is the point: adding
+    // `requestErrorCount` to the identity made it hold for a run with 44 request errors, where the
+    // two-term version would have failed loudly. An identity that survives anything proves nothing.
+    claim(
+      "nothing was dropped and every request was built",
+      summary.droppedCount === 0 && summary.requestErrorCount === 0,
+      `${String(summary.droppedCount)} dropped, ${String(summary.requestErrorCount)} not built`,
+    );
     claim(
       "the merged accounting adds up",
       summary.scheduledCount ===

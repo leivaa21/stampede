@@ -52,14 +52,18 @@ describe("Projection.behindMs", () => {
     expect(projection.unappliedCount).toBe(0);
 
     const behind = new Projection(1);
+    const lags: number[] = [];
     for (let i = 0; i < 10; i += 1) {
       behind.record(i * 100);
-      behind.record(i * 100 + 50); // two arrivals per tick against a budget of one
+      lags.push(behind.record(i * 100 + 50)); // two arrivals per tick against a budget of one
       behind.tick();
     }
 
     expect(behind.unappliedCount).toBe(10);
-    expect(behind.behindMs(1_000)).toBeGreaterThan(0);
+    // Monotonically, which is what "grows" has to mean: asserting only that the last value is
+    // above zero would pass for a lag that spiked once and recovered.
+    expect(lags).toEqual([...lags].sort((a, b) => a - b));
+    expect(lags.at(-1)).toBeGreaterThan(lags[0] ?? 0);
   });
 });
 

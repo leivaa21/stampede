@@ -461,3 +461,29 @@ The _reasons_ are not ranked, only the code: all of them print.
 **Rejected.** Reporting only the first reason. A config with a typo'd check and a seat that sold
 twice printed only the typo, losing the double sell — the thing the tool exists to find. One
 failure hiding behind another is how a second bug survives a fix for the first.
+
+## 2026-08-03 — The reality gate's target latches its lag peak at sale-acceptance
+
+**Decision.** The reference target records its projection lag _at the instant it accepts a sale_
+and keeps the maximum over those instants. It does not sample on a timer, and its peak stops moving
+when the load stops.
+
+**Why.** The gate compares the lag stampede recorded — through `onResponse`, a trend, and a merge
+across four worker threads — against the lag the target measured for itself. That comparison only
+means something if both sides describe the same instants.
+
+A free-running peak does not. After the last sale the backlog keeps draining while the clock runs
+on, so the target's maximum climbs for hundreds of milliseconds afterwards, and the "tolerance"
+between the two numbers was really covering the gap between the run finishing and the gate getting
+around to reading `/__stats`. Measured, that gap ate 63 % of a 60 ms budget under CPU load — a
+correct tool would have failed on a slower machine. Latching drops the tolerance to the histogram's
+own rounding.
+
+**Rejected.** Comparing against the target's _live_ `behindMs` at read time — same problem, and it
+makes the claim depend on scheduling rather than on the merge.
+
+**Consequence.** Both sides now derive from the same emitted number, which is what makes them
+comparable and also what would let a target reporting a constant satisfy both. So the run
+additionally asserts a floor: the projection has to have actually fallen behind (>100 ms) for the
+agreement to be evidence of anything. Contract run 4 measures a lag that is real, or it measures
+nothing.

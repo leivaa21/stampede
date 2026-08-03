@@ -83,6 +83,10 @@ const serve = (pending: Pending): void => {
 const stats = (): string => {
   const elapsedMs = firstAtMs === undefined ? 0 : (lastAtMs ?? performance.now()) - firstAtMs;
   return JSON.stringify({
+    // Which process is actually answering on this port. `startTarget` checks it against the child
+    // it spawned, because a target orphaned by an unclean abort of a previous run will happily
+    // answer — and the gate would then grade stampede against a server it never configured.
+    pid: process.pid,
     received,
     completed,
     maxInFlight,
@@ -144,12 +148,11 @@ createServer((request, response) => {
       // signalled a conflict with a 200 would let a check written against 201 pass by accident.
       if (soldSeats.has(seatId)) {
         conflicts += 1;
-        reply(response, 409, {
-          ok: false,
-          seatId,
-          reason: "already sold",
-          behindMs: projection.behindMs(performance.now()),
-        });
+        // Deliberately no `behindMs`: only the sale path latches into the target's own peak, so a
+        // lag reported here would be a sample stampede records that the referee never saw. Inert
+        // in a healthy run — but conflicts appear exactly when the ordinal mapping breaks, and a
+        // clean "the seats collided" diagnosis should not grow a spurious lag failure beside it.
+        reply(response, 409, { ok: false, seatId, reason: "already sold" });
         return;
       }
       soldSeats.add(seatId);

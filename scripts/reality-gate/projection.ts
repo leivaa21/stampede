@@ -55,9 +55,11 @@ export class Projection {
       return 0;
     }
     // Before the first tick there is no applied event, so the oldest unapplied one is the best
-    // available answer — the projection's view is as stale as the first thing it has not seen.
-    const lastApplied = this.#lastAppliedAtMs ?? this.#unapplied[0];
-    return Math.round(nowMs - (lastApplied ?? nowMs));
+    // available answer — the projection's view is as stale as the first thing it has not seen. The
+    // guard above means the array is non-empty, so `[0]` is always there; `?? nowMs` only satisfies
+    // `noUncheckedIndexedAccess`, and reads as 0 lag rather than as a number nobody meant.
+    const lastApplied = this.#lastAppliedAtMs ?? this.#unapplied[0] ?? nowMs;
+    return Math.round(nowMs - lastApplied);
   }
 
   /** The peak lag any recorded event observed. Stops moving when recording stops. */

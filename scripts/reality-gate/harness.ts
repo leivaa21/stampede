@@ -14,6 +14,8 @@ export const TARGET_PORT = 5999;
 export const TARGET_URL = `http://localhost:${String(TARGET_PORT)}/`;
 
 export interface TargetStats {
+  /** The answering process. Guards against grading a run against a stale target — see `startTarget`. */
+  readonly pid: number;
   readonly received: number;
   readonly completed: number;
   readonly achievedRps: number;
@@ -32,9 +34,10 @@ export const readTargetStats = async (): Promise<TargetStats> => {
   if (typeof body !== "object" || body === null) {
     throw new TypeError("the target returned a malformed stats body");
   }
-  const { received, completed, achievedRps, sold, salesIssued, conflicts, maxBehindMs } =
+  const { pid, received, completed, achievedRps, sold, salesIssued, conflicts, maxBehindMs } =
     body as Record<string, unknown>;
   if (
+    typeof pid !== "number" ||
     typeof received !== "number" ||
     typeof completed !== "number" ||
     typeof achievedRps !== "number" ||
@@ -45,7 +48,7 @@ export const readTargetStats = async (): Promise<TargetStats> => {
   ) {
     throw new TypeError("the target's stats are missing a count");
   }
-  return { received, completed, achievedRps, sold, salesIssued, conflicts, maxBehindMs };
+  return { pid, received, completed, achievedRps, sold, salesIssued, conflicts, maxBehindMs };
 };
 
 /**
@@ -71,9 +74,22 @@ export const startTarget = async (args: readonly string[]): Promise<ChildProcess
       );
     }
     try {
-      await fetch(`${TARGET_URL}__stats`);
+      const stats = await readTargetStats();
+      // The port answering is not the same as *our* target answering. A previous run killed
+      // uncleanly leaves its server bound, the first poll succeeds before our child has had time
+      // to fail on EADDRINUSE, and the gate goes green against a server it never configured —
+      // measured at 7/7 PASS with a projection 8× faster than the one the run asked for.
+      if (stats.pid !== server.pid) {
+        server.kill();
+        throw new Error(
+          `port ${String(TARGET_PORT)} is held by a stale reality-gate target (pid ${String(stats.pid)}); kill it and re-run`,
+        );
+      }
       return server;
-    } catch {
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message.includes("stale reality-gate target")) {
+        throw error;
+      }
       await sleep(50);
     }
   }

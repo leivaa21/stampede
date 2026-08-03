@@ -205,8 +205,8 @@ backlog into `scheduledLatency` — 241ms against a raw 163ms. A tool that repor
 describing a machine that was never under that load.
 
 **The worker pool, cross-checked by the target itself**: 4 threads, 480 scheduled, 480 dispatched,
-**480 received by the server**, accounting balanced, zero out-of-order snapshots. A merge bug cannot
-fool an independent observer.
+**480 received by the server**, nothing dropped, accounting balanced, zero out-of-order snapshots.
+A merge bug cannot fool an independent observer.
 
 **The invariants, not just the percentiles.** The last two runs are
 [open-ticket](https://github.com/leivaa21/open-ticket)'s load contract, produced against a target
@@ -214,15 +214,20 @@ that counts seats for itself:
 
 ```
 RUN 6 — contract run 1: 200 buyers, one seat, exactly one wins
-    201s counted by stampede                  1
-    seats the target says it sold             1
-    check oneWinnerOrConflict                 200 pass · 0 fail · 0 broken
+    PASS  exactly one buyer won — 1 of 200
+    PASS  the target issued exactly one sale, and N−1 conflicts — 1 sold + 199 conflicts,
+          counted by the target itself
 
 RUN 7 — contract runs 2 & 4: 200 buyers, 200 distinct seats, 4 threads
-    201s counted by stampede                  200
-    seats the target says it sold             200
-    projection lag — p50 / p99 / max          240.1ms / 451.1ms / 461.1ms
-    target's own max behind                   462ms
+    lag samples merged / expected             200 / 200
+    projection lag — p50 / p99 / max          253.1ms / 454.1ms / 464.1ms
+    target's own max behind                   464ms
+
+    PASS  the target sold one seat per buyer, no collisions — 200 distinct seats sold
+    PASS  every recorded lag sample survived the merge across four threads — 200 of 200
+    PASS  the recorded projection lag matches the target's own peak — 464.1ms recorded
+          vs 464ms the target measured itself
+    PASS  the schedule really was split across four threads — 4 threads, 50/50/50/50 each
 ```
 
 Run 7 is the one that cannot be faked. Four threads that restarted their numbering would send four
@@ -249,7 +254,7 @@ millisecond and would sail past a peak-only check. It does not sail past this on
 loading · real HTTP transport · `stampede run` with setup/teardown, thresholds and exit codes ·
 markdown report · live dashboard — and, from M2, named per-response **checks** counted three ways,
 **custom counters and trends** merged across worker threads, and **per-request variation** keyed on
-the run's ordinal. **504 tests**, zero known vulnerabilities, gate two green across seven runs.
+the run's ordinal. **512 tests**, zero known vulnerabilities, gate two green across seven runs.
 
 **Next (M3): SSE / long-lived streaming requests** — open-ticket's contract run 5. Two debts M2
 surfaced are named rather than forgotten: there is no way to express a bounded-cardinality counter
