@@ -165,6 +165,11 @@ twice. So there is a second gate:
 pnpm gate:two
 ```
 
+**A manual milestone gate, not a CI job** — it spawns servers and leans on real timing, which a
+shared runner would make flaky, and a flaky gate is one people learn to ignore. It is run before a
+milestone is called done, and the numbers below are from a 16-core dev box; a smaller machine will
+report different throughput and the same _relationships_, which are what the claims are about.
+
 It starts a reference server — fixed delay, bounded concurrency, queueing the rest, **selling seats
 at most once each** and keeping its own count of everything — then drives seven runs against it
 through the real system clock and real HTTP, checking stampede's numbers against the server's.
@@ -230,8 +235,13 @@ verdict on the ordinal mapping delivered by something that is not stampede. Brea
     FAIL  the target sold one seat per buyer, no collisions — 50 distinct seats sold
 ```
 
-And the `behindMs` the config recorded through `onResponse` — merged across four worker threads —
-lands within a millisecond of the lag the target measured on itself.
+And the `behindMs` the config recorded through `onResponse` is cross-checked twice: **every one of
+the 200 samples survived the merge** across four worker threads, and the peak agrees with the one
+the target latched for itself to within the histogram's own rounding (the gate allows 3 ms).
+
+The sample count is the claim that matters. Shards interleave by stride, so every worker holds
+samples spread across the whole run — losing an entire worker's trend moves the peak by under a
+millisecond and would sail past a peak-only check. It does not sail past this one.
 
 ## Status
 

@@ -4,7 +4,7 @@ import { burst, httpTransport, runDispatch, systemClock } from "../../src/engine
 import type { HttpRequestSpec } from "../../src/engine/http-transport.ts";
 import { runPool } from "../../src/engine/worker-pool.ts";
 import { claim, ms, readTargetStats, row, section, startTarget, TARGET_URL } from "./harness.ts";
-import { BUYERS } from "./seats-scenario.ts";
+import { BUYERS, WORKER_COUNT } from "./seats-scenario.ts";
 
 /**
  * The runs open-ticket wrote down as its load contract, produced against a target that can be
@@ -18,12 +18,17 @@ import { BUYERS } from "./seats-scenario.ts";
 const BUYERS_ON_ONE_SEAT = 200;
 
 /**
- * The projection is sampled on a 50ms tick, so the peak stampede's responses observed and the peak
- * the target recorded for itself are two samples of the same curve taken at different instants.
- * One tick of slack, and no more — a trend that merged wrongly across four threads would miss by
- * far more than this.
+ * Both sides now measure the *same instants*: the target latches its peak when it accepts a sale,
+ * and stampede records the value that sale's response carried. So the only legitimate difference
+ * is the histogram rounding a sample up to its bucket top — under 0.1%, which is well under a
+ * millisecond at these magnitudes.
+ *
+ * It used to be 60ms, justified as "one tick of slack". That was the wrong mechanism: the target's
+ * free-running peak kept climbing after the load stopped, so the budget was really covering the
+ * gap between `runPool` resolving and the gate getting around to reading `/__stats` — a race that
+ * consumed 63% of it under CPU load and would have failed a *correct* tool on a slower box.
  */
-const LAG_TOLERANCE_MS = 60;
+const LAG_TOLERANCE_MS = 3;
 
 /**
  * Contract run 1 — the namesake. N buyers, one seat, and the claim is not a percentile: exactly
@@ -88,10 +93,14 @@ export const theStampede = async (): Promise<void> => {
       winners === 1,
       `${String(winners)} of ${String(BUYERS_ON_ONE_SEAT)}`,
     );
+    // `sold` is a `Set`, so on its own it only says "at least one 201" — it cannot tell one sale
+    // from five, and the exactly-one property would rest entirely on stampede's own counter.
+    // `salesIssued` and `conflicts` are the tallies that make this independent evidence, and
+    // together they state open-ticket's contract literally: one winner, N−1 conflicts.
     claim(
-      "the target agrees it sold one seat",
-      stats.sold === 1,
-      `${String(stats.sold)} sold, counted by the target itself`,
+      "the target issued exactly one sale, and N−1 conflicts",
+      stats.salesIssued === 1 && stats.conflicts === BUYERS_ON_ONE_SEAT - 1,
+      `${String(stats.salesIssued)} sold + ${String(stats.conflicts)} conflicts, counted by the target itself`,
     );
     claim(
       "every response was a win or a conflict",
@@ -125,7 +134,7 @@ export const hotShowManySeats = async (): Promise<void> => {
   try {
     const outcome = await runPool({
       modulePath: fileURLToPath(new URL("seats-scenario.ts", import.meta.url)),
-      workerCount: 4,
+      workerCount: WORKER_COUNT,
       maxInFlight: 400,
       drainTimeoutMs: 5_000,
       snapshotIntervalMs: 250,
@@ -150,6 +159,7 @@ export const hotShowManySeats = async (): Promise<void> => {
       "check created",
       `${String(created?.passed ?? 0)} pass · ${String(created?.failed ?? 0)} fail · ${String(created?.broken ?? 0)} broken`,
     );
+    row("lag samples merged / expected", `${String(behind?.count ?? 0)} / ${String(BUYERS)}`);
     row(
       "projection lag — p50 / p99 / max",
       `${ms(behind?.p50Ms)} / ${ms(behind?.p99Ms)} / ${ms(behind?.maxMs)}`,
@@ -172,14 +182,41 @@ export const hotShowManySeats = async (): Promise<void> => {
       (summary.counters.reserved201 ?? 0) === BUYERS,
       `reserved201 = ${String(summary.counters.reserved201 ?? 0)}`,
     );
-    // Contract run 4's number: a lag the user's own `onResponse` recorded, checked against the lag
-    // the projection really had. A trend that merged wrongly across threads would miss the peak.
+    // *The* claim about the merge, and the one the peak comparison below cannot make on its own.
+    // Shards interleave by stride, so every worker holds samples spread across the whole run:
+    // losing a worker's entire trend barely moves the max. Discarding one worker's samples left
+    // the old peak claim passing at 150/200 samples; discarding three left it passing at 50/200.
+    // The count is what proves nothing was lost crossing the thread boundary.
+    claim(
+      "every recorded lag sample survived the merge across four threads",
+      behind?.count === BUYERS,
+      `${String(behind?.count ?? 0)} of ${String(BUYERS)} samples`,
+    );
+    // Contract run 4's number: a lag the config recorded through `onResponse`, checked against the
+    // peak the projection latched at the same instants. Directional, because the two errors are not
+    // symmetric — under-reporting means the merge lost the peak, over-reporting means stampede
+    // invented lag the target never had. Only the histogram's round-up-to-bucket-top is allowed.
     claim(
       "the recorded projection lag matches the target's own peak",
       behind !== undefined &&
-        behind.maxMs > 50 &&
-        Math.abs(behind.maxMs - stats.maxBehindMs) <= LAG_TOLERANCE_MS,
+        behind.maxMs >= stats.maxBehindMs &&
+        behind.maxMs - stats.maxBehindMs <= LAG_TOLERANCE_MS,
       `${ms(behind?.maxMs)} recorded vs ${String(stats.maxBehindMs)}ms the target measured itself`,
+    );
+    // Run 6 asserts these; run 7 must too, or half the trend could vanish into broken observations
+    // while `reserved201` stayed at 200 and every other claim held.
+    // Otherwise every claim in this run holds with one worker, while its title says four.
+    const threads = Object.keys(summary.counters).filter((name) => name.startsWith("thread-"));
+    claim(
+      "the schedule really was split across four threads",
+      threads.length === WORKER_COUNT &&
+        threads.every((name) => summary.counters[name] === BUYERS / WORKER_COUNT),
+      `${String(threads.length)} threads, ${threads.map((n) => String(summary.counters[n])).join("/")} responses each`,
+    );
+    claim(
+      "no claim was broken and no recording refused",
+      summary.brokenObservations === 0 && summary.refusedRecordings === 0,
+      `${String(summary.brokenObservations)} broken, ${String(summary.refusedRecordings)} refused`,
     );
   } finally {
     target.kill();

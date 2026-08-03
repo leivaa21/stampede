@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { Projection } from "./projection.ts";
 
 /**
  * A target whose behaviour is known in advance, so stampede's numbers can be checked against
@@ -49,42 +50,19 @@ const queue: Pending[] = [];
  * Seats, sold at most once each — the referee for the contract runs.
  *
  * The decision happens when the request is *served*, not when it arrives, which is what a
- * serialized reservation really does. A tool claiming "exactly one 201" can then be checked
- * against a count kept by something that is not the tool.
+ * serialized reservation really does. A tool claiming "exactly one 201" can then be checked against
+ * counts kept by something that is not the tool: `soldSeats` for how many *distinct* seats went,
+ * `salesIssued` for how many 201s were actually handed out, and `conflicts` for the 409s. The
+ * distinct count alone cannot tell one sale from five — it is a `Set` — so "exactly one" needs its
+ * own tally or the claim rests entirely on stampede's own counter.
  */
 const soldSeats = new Set<string>();
+let salesIssued = 0;
+let conflicts = 0;
 
-/**
- * A projection that applies sales at a fixed rate, so it can fall behind.
- *
- * `behindMs` is now minus the recorded time of the last applied sale, `0` when caught up — the
- * same definition open-ticket's M4 settled on, so contract run 4's shape can be produced here
- * rather than waited on.
- */
-const unapplied: number[] = [];
-let lastAppliedAtMs: number | undefined;
-let maxBehindMs = 0;
-
-const behindMs = (): number => {
-  // Open-ticket's definition, literally: now minus the recorded time of the last *applied* event,
-  // and 0 when caught up. Not "now minus the oldest unapplied", which is a different number and
-  // would make the gate agree with itself rather than with the contract.
-  if (unapplied.length === 0) {
-    return 0;
-  }
-  return Math.round(performance.now() - (lastAppliedAtMs ?? unapplied[0] ?? performance.now()));
-};
-
+const projection = new Projection(projectionRate);
 setInterval(() => {
-  // Measured *before* draining: the peak lag is what it was when the projector woke up, and
-  // sampling after it caught up would report a serene 0 for a projection that was 400ms behind a
-  // moment earlier — the exact flattery this whole repo exists to refuse.
-  maxBehindMs = Math.max(maxBehindMs, behindMs());
-  // A fixed budget per tick: the projector is the bottleneck when sales arrive faster than this,
-  // which is exactly the condition contract run 4 measures.
-  for (let applied = 0; applied < projectionRate && unapplied.length > 0; applied += 1) {
-    lastAppliedAtMs = unapplied.shift();
-  }
+  projection.tick();
 }, 50).unref();
 
 const serve = (pending: Pending): void => {
@@ -112,13 +90,17 @@ const stats = (): string => {
     elapsedMs: Math.round(elapsedMs),
     // The server's own view of throughput — the independent check on stampede's claim.
     achievedRps: elapsedMs > 0 ? Math.round((completed / elapsedMs) * 1000) : 0,
-    // The referee's own tally: how many seats it really sold, and how far its projection fell
-    // behind. Nothing stampede reports about seats is believed unless these agree.
+    // The referee's own tallies. Nothing stampede reports about seats is believed unless these
+    // agree, and they are kept apart on purpose: `sold` is distinct seats, `salesIssued` is 201s,
+    // and only the second can tell one sale from five.
     sold: soldSeats.size,
-    unapplied: unapplied.length,
-    maxBehindMs,
-    lastAppliedAgoMs:
-      lastAppliedAtMs === undefined ? 0 : Math.round(performance.now() - lastAppliedAtMs),
+    salesIssued,
+    conflicts,
+    unapplied: projection.unappliedCount,
+    // The peak measured at the instants sales were accepted — not a free-running maximum, which
+    // would keep climbing after the load stopped and make the gate's tolerance a race between the
+    // run finishing and the gate getting around to asking.
+    maxBehindMs: projection.maxBehindAtRecordMs,
   });
 };
 
@@ -161,12 +143,21 @@ createServer((request, response) => {
       // 409, not 200-with-a-flag: the contract runs assert on the status, and a target that
       // signalled a conflict with a 200 would let a check written against 201 pass by accident.
       if (soldSeats.has(seatId)) {
-        reply(response, 409, { ok: false, seatId, reason: "already sold", behindMs: behindMs() });
+        conflicts += 1;
+        reply(response, 409, {
+          ok: false,
+          seatId,
+          reason: "already sold",
+          behindMs: projection.behindMs(performance.now()),
+        });
         return;
       }
       soldSeats.add(seatId);
-      unapplied.push(performance.now());
-      reply(response, 201, { ok: true, seatId, behindMs: behindMs() });
+      salesIssued += 1;
+      // `record` returns the lag at this instant and latches it into the target's own peak, so the
+      // number the gate compares against is the maximum over exactly the instants the responses
+      // reported — the same set stampede's trend should have merged.
+      reply(response, 201, { ok: true, seatId, behindMs: projection.record(performance.now()) });
     },
   };
 

@@ -1,3 +1,4 @@
+import { threadId } from "node:worker_threads";
 import { defineConfig } from "../../src/config/index.ts";
 import { constantRate } from "../../src/engine/arrival-profiles.ts";
 
@@ -25,8 +26,18 @@ export interface SeatGateState {
 
 export const RATE_PER_SECOND = 100;
 export const DURATION_MS = 2_000;
-/** Derived, so the gate's claims cannot drift away from the profile they are checking. */
-export const BUYERS = (RATE_PER_SECOND * DURATION_MS) / 1000;
+export const WORKER_COUNT = 4;
+
+const profile = constantRate({ ratePerSecond: RATE_PER_SECOND, durationMs: DURATION_MS });
+
+/**
+ * Read off the profile, not re-derived from its inputs.
+ *
+ * `rate × duration / 1000` happens to equal `profile.count` today. It stops the moment the rate and
+ * duration stop dividing evenly, and then the gate would be asserting against a number the profile
+ * never produced — a claim that looks independent and is not.
+ */
+export const BUYERS = profile.count;
 
 interface ReservationBody {
   readonly behindMs?: number;
@@ -35,7 +46,7 @@ interface ReservationBody {
 export default defineConfig<SeatGateState>({
   scenarios: {
     buyers: {
-      profile: constantRate({ ratePerSecond: RATE_PER_SECOND, durationMs: DURATION_MS }),
+      profile,
       request: (state, index) => ({
         method: "POST",
         url: `${state.url}seats/seat-${String(index)}`,
@@ -49,6 +60,10 @@ export default defineConfig<SeatGateState>({
         if (response.status === 201) {
           record.count("reserved201");
         }
+        // One counter per worker thread, so the gate can assert the schedule really was split four
+        // ways. Without it every claim in this run passes with `workerCount: 1`, while the run's
+        // title and the README both lean on "4 threads".
+        record.count(`thread-${String(threadId)}`);
         const body = JSON.parse(response.text) as ReservationBody;
         if (typeof body.behindMs === "number") {
           record.recordMs("behindMs", body.behindMs);

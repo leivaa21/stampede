@@ -30,7 +30,10 @@
 > published number that fails the run, because a threshold reading a refused counter reads a
 > confident 0.
 >
-> **Gate two (`pnpm gate:two`) is the proof, and it runs the shipped code.** Seven runs: a 50 ms
+> **Gate two (`pnpm gate:two`) is the proof, and it runs the shipped code.** A manual milestone
+> gate rather than a CI job — it spawns servers and leans on real timing. Numbers below are from a
+> 16-core dev box; the _relationships_ are what the claims assert, not the absolute throughput.
+> Seven runs, 26 claims: a 50 ms
 > target reads 52 ms; a target slower than the load offered reports p99 5910 ms against its 200 ms
 > service time without throttling itself; asked for 50,000 rps on one thread it admits 6,181
 > achieved and puts its own 130 ms backlog into `scheduledLatency`; a 4-thread pooled run is
@@ -38,8 +41,10 @@
 > produced against a reference target that **sells seats and counts them itself** — 200 buyers on
 > one seat yield exactly one 201 and the target agrees it sold one; 200 buyers on 200 distinct
 > seats across 4 threads yield 200 sales with zero collisions, which is the ordinal mapping proved
-> by something other than stampede; and the projection lag the config recorded matches the lag the
-> target measured on itself.
+> by something other than stampede; and every one of the 200 projection-lag samples the config
+> recorded through `onResponse` survives the merge, with the peak agreeing to within the histogram's
+> rounding. The sample count is the load-bearing claim there — losing a whole worker's trend moves
+> the peak by under a millisecond, so a peak-only check would have passed at 150 of 200 samples.
 >
 > **Not done:** not published to npm (`@leivaa21/stampede` is reserved, `publishConfig` is set) —
 > leivaa's call, not a task to pick up. **M3 is SSE / long-lived streaming**, open-ticket's contract
