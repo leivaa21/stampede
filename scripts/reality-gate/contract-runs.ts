@@ -13,6 +13,7 @@ import {
   TARGET_PORT,
   TARGET_URL,
 } from "./harness.ts";
+import { PROJECTION_TICK_MS } from "./projection.ts";
 import { BUYERS, DURATION_MS, RATE_PER_SECOND, WORKER_COUNT } from "./seats-scenario.ts";
 
 /**
@@ -42,9 +43,8 @@ const BUYERS_ON_ONE_SEAT = 200;
  */
 const lagToleranceMs = (recordedMs: number): number => recordedMs / 1024 + 1;
 
-/** Sales the reference target's projection applies per 50ms tick — 80/s against 100/s arriving. */
+/** Sales the reference target's projection applies per tick — 80/s against 100/s arriving. */
 const PROJECTION_RATE_PER_TICK = 4;
-const PROJECTION_TICK_MS = 50;
 
 /**
  * The lag the run has to actually produce before the agreement above means anything.
@@ -270,17 +270,17 @@ export const hotShowManySeats = async (): Promise<void> => {
     );
     // Run 6 asserts these; run 7 must too, or half the trend could vanish into broken observations
     // while `reserved201` stayed at 200 and every other claim held.
-    // Otherwise every claim in this run holds with one worker, while its title says four.
     const threads = Object.keys(summary.counters).filter((name) => name.startsWith("thread-"));
-    // Summed, not divided: `BUYERS` is read off the profile precisely so the gate never asserts
-    // against a number the profile did not produce, and `BUYERS / WORKER_COUNT` puts that coupling
-    // straight back — a rate of 90/s would fail this on a correct tool, for arithmetic reasons.
+    // Banded floor..ceil rather than equal-to-a-quotient. `shardedCount` really does hand each
+    // shard one of those two sizes, so this asserts the stride split without re-deriving a number
+    // the profile never published: a rate of 90/s gives 180 buyers and 45/45/45/45, and passes.
     const perThread = threads.map((name) => summary.counters[name] ?? 0);
     // Banded, not merely non-zero: `197/1/1/1` is four threads and the right total, and it is not
     // a stride split. The band is `floor`..`ceil` so it stays arithmetic-safe when the run size
     // does not divide evenly by the worker count.
     const lowest = Math.floor(BUYERS / WORKER_COUNT);
     const highest = Math.ceil(BUYERS / WORKER_COUNT);
+    // Without this every claim in the run holds with one worker, while its title says four.
     claim(
       "the schedule really was split evenly across four threads",
       threads.length === WORKER_COUNT &&

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MetricsRegistry } from "./registry.ts";
+import type { RegistrySnapshot } from "./snapshots.ts";
 import { ScenarioMetrics } from "./scenario-metrics.ts";
 import {
   MAX_DISTINCT_DISTRIBUTIONS,
@@ -20,6 +21,36 @@ const populate = (registry: MetricsRegistry, scenario: string, seed: number): Me
 
 const registryOf = (scenario: string, seed: number): MetricsRegistry =>
   populate(new MetricsRegistry(), scenario, seed);
+
+/**
+ * Exact snapshot equality without walking 17,408 buckets per histogram in JS.
+ *
+ * `toEqual` on a `RegistrySnapshot` compares every `Int32Array` element by element, and seven
+ * orderings of a registry holding several histograms is enough to push this file past vitest's 5s
+ * default on a loaded machine — which looks exactly like flakiness in a suite that is deterministic
+ * by construction. Canonicalising to a string keeps the comparison exact (nothing is hashed or
+ * sampled) and moves the byte-level work into `Buffer`.
+ */
+const canonical = (snapshot: RegistrySnapshot): string =>
+  JSON.stringify(snapshot, (_key: string, value: unknown) => {
+    if (value instanceof Int32Array) {
+      return Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("base64");
+    }
+    if (value instanceof Map) {
+      // Sorted, so two equal snapshots cannot differ by insertion order — which `toEqual` would
+      // have ignored and a naive stringify would not.
+      return Object.fromEntries(
+        [...(value as ReadonlyMap<string, unknown>)].sort(([a], [b]) =>
+          a < b ? -1 : a > b ? 1 : 0,
+        ),
+      );
+    }
+    return value;
+  });
+
+const expectSameSnapshot = (actual: RegistrySnapshot, expected: RegistrySnapshot): void => {
+  expect(canonical(actual)).toBe(canonical(expected));
+};
 
 describe("MetricsRegistry", () => {
   it("keeps each scenario's metrics apart", () => {
@@ -267,10 +298,10 @@ describe("MetricsRegistry.merge", () => {
         new MetricsRegistry(),
       );
 
-      expect(merged.toSnapshot(1)).toEqual(expected);
+      expectSameSnapshot(merged.toSnapshot(1), expected);
     }
 
-    expect(a.merge(b.merge(c)).toSnapshot(1)).toEqual(expected);
+    expectSameSnapshot(a.merge(b.merge(c)).toSnapshot(1), expected);
   });
 
   it("equals recording every worker's samples into one registry", () => {

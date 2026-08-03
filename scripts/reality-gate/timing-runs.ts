@@ -41,13 +41,15 @@ const gateRun = async ({
 }: GateRun): Promise<void> => {
   section(title);
   const target = await startTarget(targetArgs);
+  const profile = constantRate({ ratePerSecond, durationMs });
+  const expectedCount = profile.count;
   try {
     const outcome = await runDispatch<HttpRequestSpec>(
       {
         scenarios: [
           {
             name: "reads",
-            profile: constantRate({ ratePerSecond, durationMs }),
+            profile,
             requestFor: () => ({ url: TARGET_URL }),
           },
         ],
@@ -73,6 +75,13 @@ const gateRun = async ({
       `${String(summary.dispatchedCount)} / ${String(summary.droppedCount)} / ${String(summary.errorCount)}`,
     );
     row("target received / completed", `${String(stats.received)} / ${String(stats.completed)}`);
+    // Printed because run 3 is the one where it is guaranteed non-zero: its published p99 excludes
+    // the slowest responses, which understates the truth, and a page that hides that is flattering
+    // by omission — the one thing this file exists not to do.
+    row(
+      "answered / failed / abandoned",
+      `${String(summary.responseCount)} / ${String(summary.errorCount)} / ${String(summary.abandonedCount)}`,
+    );
     row(
       "latency p50 / p99 (the target)",
       `${ms(summary.latencyMs?.p50Ms)} / ${ms(summary.latencyMs?.p99Ms)}`,
@@ -84,6 +93,15 @@ const gateRun = async ({
     row("schedule lag max (own backlog)", ms(summary.scheduleLagMs?.maxMs));
     process.stdout.write("\n");
 
+    // Every run pins the size of the schedule it asked for, before anything else it claims.
+    // `stats.received === dispatchedCount` with neither side pinned is true of a run that
+    // scheduled four requests instead of forty — three green claims on a tenth of the load, which
+    // is the shape run 6 shipped with until this review.
+    claim(
+      "the profile scheduled exactly what it asked for",
+      summary.scheduledCount === expectedCount,
+      `${String(summary.scheduledCount)} of ${String(expectedCount)}`,
+    );
     check(summary, stats);
   } finally {
     target.kill();
@@ -107,9 +125,18 @@ export const timingRuns = async (): Promise<void> => {
         `${String(stats.received)} received vs ${String(summary.dispatchedCount)} dispatched`,
       );
       claim(
-        "nothing dropped against a healthy target",
-        summary.droppedCount === 0,
-        `${String(summary.droppedCount)} drops`,
+        "nothing dropped against a healthy target, and every request went out",
+        summary.droppedCount === 0 && summary.dispatchedCount === 40,
+        `${String(summary.droppedCount)} drops, ${String(summary.dispatchedCount)} of 40 sent`,
+      );
+      // Nothing in runs 1-4 asserted that what went out came *back*, so a regression that lost
+      // responses left the latency percentiles drawn from a subset and every claim green.
+      claim(
+        "every request that went out came back",
+        summary.responseCount === summary.dispatchedCount &&
+          summary.errorCount === 0 &&
+          summary.abandonedCount === 0,
+        `${String(summary.responseCount)} answered, ${String(summary.errorCount)} failed, ${String(summary.abandonedCount)} abandoned`,
       );
     },
   });

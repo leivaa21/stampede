@@ -33,10 +33,11 @@
 > **Gate two (`pnpm gate:two`) is the proof, and it runs the shipped code.** A manual milestone
 > gate rather than a CI job — it spawns servers and leans on real timing. Numbers below are from a
 > 16-core dev box; the _relationships_ are what the claims assert, not the absolute throughput.
-> Seven runs, 30 claims: a 50 ms
+> Seven runs, 35 claims: a 50 ms
 > target reads 52 ms; a target slower than the load offered reports p99 5910 ms against its 200 ms
-> service time without throttling itself; asked for 50,000 rps on one thread it admits 6,181
-> achieved and puts its own 130 ms backlog into `scheduledLatency`; a 4-thread pooled run is
+> service time without throttling itself; asked for 50,000 rps on one thread it admits about a
+> thousand achieved and puts its own ~490 ms backlog into `scheduledLatency` (this one is the least
+> reproducible number in the gate — read the relationship, not the digits); a 4-thread pooled run is
 > cross-checked by the target's own request count; and open-ticket's contract runs 1, 2 and 4 are
 > produced against a reference target that **sells seats and counts them itself** — 200 buyers on
 > one seat yield exactly one 201 and the target agrees it sold one; 200 buyers on 200 distinct

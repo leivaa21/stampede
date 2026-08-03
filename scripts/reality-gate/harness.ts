@@ -32,7 +32,7 @@ export const readTargetStats = async (): Promise<TargetStats> => {
   const response = await fetch(`${TARGET_URL}__stats`);
   const body: unknown = await response.json();
   if (typeof body !== "object" || body === null) {
-    throw new TypeError("the target returned a malformed stats body");
+    throw new MalformedStatsError("the target returned a malformed stats body");
   }
   const { pid, received, completed, achievedRps, sold, salesIssued, conflicts, maxBehindMs } =
     body as Record<string, unknown>;
@@ -46,19 +46,13 @@ export const readTargetStats = async (): Promise<TargetStats> => {
     typeof conflicts !== "number" ||
     typeof maxBehindMs !== "number"
   ) {
-    throw new TypeError("the target's stats are missing a count");
+    throw new MalformedStatsError(
+      "the target's stats are missing a count — the gate and the target disagree about the contract",
+    );
   }
   return { pid, received, completed, achievedRps, sold, salesIssued, conflicts, maxBehindMs };
 };
 
-/**
- * Spawns the reference target and **waits for it to answer**, rather than sleeping and hoping.
- *
- * A fixed sleep turns "the target failed to start" into an ECONNREFUSED storm from the first run
- * that touches it — which is what a parameter property in the projection model produced: a wall of
- * connect errors and a stack trace pointing at the dispatcher, for a syntax error two files away.
- * Polling costs nothing when the target is healthy and names the real problem when it is not.
- */
 /**
  * The port is held by a target this run did not start.
  *
@@ -68,11 +62,29 @@ export const readTargetStats = async (): Promise<TargetStats> => {
  */
 export class StaleTargetError extends Error {}
 
+/**
+ * The target answered and its stats did not match the shape the gate reads.
+ *
+ * Its own class because `undici` rejects `fetch` with a plain `TypeError` on a refused connection,
+ * so "is this a `TypeError`?" cannot tell "not up yet" from "the contract drifted" — which put the
+ * second case on the retry path and turned a renamed field into ten seconds of stalling followed by
+ * "the target did not answer", the exact misdiagnosis the polling loop exists to prevent.
+ */
+export class MalformedStatsError extends Error {}
+
 const staleTarget = (pid: number): StaleTargetError =>
   new StaleTargetError(
     `port ${String(TARGET_PORT)} is held by a stale reality-gate target (pid ${String(pid)}); kill it and re-run`,
   );
 
+/**
+ * Spawns the reference target and **waits for it to answer**, rather than sleeping and hoping.
+ *
+ * A fixed sleep turns "the target failed to start" into an ECONNREFUSED storm from the first run
+ * that touches it — which is what a parameter property in the projection model produced: a wall of
+ * connect errors and a stack trace pointing at the dispatcher, for a syntax error two files away.
+ * Polling costs nothing when the target is healthy and names the real problem when it is not.
+ */
 export const startTarget = async (args: readonly string[]): Promise<ChildProcess> => {
   // Checked *before* spawning, because our child loses this race: it dies of EADDRINUSE within
   // milliseconds, so a post-spawn poll reports "exited with code 1" — the symptom — while the
@@ -94,7 +106,6 @@ export const startTarget = async (args: readonly string[]): Promise<ChildProcess
   );
 
   const deadline = 10_000;
-  let stalePid: number | undefined;
   for (let waited = 0; waited < deadline; waited += 50) {
     if (server.exitCode !== null) {
       throw new Error(
@@ -108,20 +119,19 @@ export const startTarget = async (args: readonly string[]): Promise<ChildProcess
       // to fail on EADDRINUSE, and the gate goes green against a server it never configured —
       // measured at 7/7 PASS with a projection 8× faster than the one the run asked for.
       //
-      // Recorded and retried rather than thrown on sight: a *dying* predecessor answers for a few
-      // milliseconds too, and turning that transient into "kill it and re-run" would be its own
-      // false diagnosis. If it is still there at the deadline, it is not dying.
+      // Belt and braces after the pre-spawn probe, which is the check that actually fires. Kept
+      // because "the port answering is not the same as our target answering" is the invariant, and
+      // a check that states it costs one comparison.
       if (stats.pid !== server.pid) {
-        stalePid = stats.pid;
-        await sleep(50);
-        continue;
+        server.kill();
+        throw staleTarget(stats.pid);
       }
       return server;
     } catch (error: unknown) {
       // Only a connection failure means "not up yet". A malformed stats body means the target is
       // answering and the *contract* is wrong — retrying that for ten seconds and then reporting
       // "did not answer" is the misdiagnosis this loop exists to prevent.
-      if (!(error instanceof TypeError)) {
+      if (error instanceof MalformedStatsError) {
         server.kill();
         throw error;
       }
@@ -129,9 +139,6 @@ export const startTarget = async (args: readonly string[]): Promise<ChildProcess
     }
   }
   server.kill();
-  if (stalePid !== undefined) {
-    throw staleTarget(stalePid);
-  }
   throw new Error(`the reality-gate target did not answer within ${String(deadline)}ms`);
 };
 

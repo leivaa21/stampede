@@ -193,16 +193,24 @@ as though it were the user's experience.
 **The generator itself as the bottleneck** — asking 50,000rps from one thread:
 
 ```
-    achieved rate — stampede vs target        6181 rps vs 6271 rps
-    dispatched / dropped / errors             12698 / 87302 / 0
-    latency p50 / p99 (the target)            40.6ms / 162.9ms
-    scheduledLatency p50 / p99 (D1-01)        124.5ms / 241.3ms
-    schedule lag max (own backlog)            130.0ms
+    achieved rate — stampede vs target        1073 rps vs 1074 rps
+    dispatched / dropped / errors             2606 / 97394 / 0
+    latency p50 / p99 (the target)            203.1ms / 814.1ms
+    scheduledLatency p50 / p99 (D1-01)        559.6ms / 1031.7ms
+    schedule lag max (own backlog)            489.2ms
 ```
 
-It admits **6,181rps of the 50,000 requested**, counts **87,302 drops**, and puts its own 130ms
-backlog into `scheduledLatency` — 241ms against a raw 163ms. A tool that reported the 163ms would be
-describing a machine that was never under that load.
+It admits **about a thousand rps of the 50,000 requested**, counts **97,394 drops**, and puts its own
+489ms backlog into `scheduledLatency` — 1032ms against a raw 814ms. A tool that reported the 814ms
+would be describing a machine that was never under that load.
+
+The absolute throughput here is the least reproducible number in the gate — three consecutive runs
+on the same idle box gave 995, 1302 and 1073rps, because it is dominated by per-response work in the
+host process. Read the _relationships_, which is what the claims assert: achieved ≪ requested, every
+undispatched instant counted rather than absorbed, and the backlog landing in `scheduledLatency`
+rather than being hidden. (An earlier version of this page quoted 6,181rps from a run predating
+M2 — reading the response body for checks costs real time per response, and nobody re-measured. The
+gate now runs on every milestone for exactly that reason.)
 
 **The worker pool, cross-checked by the target itself**: 4 threads, 480 scheduled, 480 dispatched,
 **480 received by the server**, nothing dropped, accounting balanced, zero out-of-order snapshots.

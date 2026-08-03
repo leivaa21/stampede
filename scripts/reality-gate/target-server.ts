@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { Projection } from "./projection.ts";
+import { Projection, PROJECTION_TICK_MS } from "./projection.ts";
 
 /**
  * A target whose behaviour is known in advance, so stampede's numbers can be checked against
@@ -63,7 +63,7 @@ let conflicts = 0;
 const projection = new Projection(projectionRate);
 setInterval(() => {
   projection.tick();
-}, 50).unref();
+}, PROJECTION_TICK_MS).unref();
 
 const serve = (pending: Pending): void => {
   inFlight += 1;

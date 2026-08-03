@@ -10,6 +10,13 @@
  * number — that one measures the age of the backlog's head rather than the staleness of the view,
  * and it is what a projection would report if it were grading its own homework.
  */
+/**
+ * How often the projection applies its budget. Exported so the gate's floor derives from the same
+ * number the server ticks on — two copies silently made a 100ms tick keep a 125ms floor that should
+ * have been 750ms, six times too lenient.
+ */
+export const PROJECTION_TICK_MS = 50;
+
 export class Projection {
   readonly #unapplied: number[] = [];
   #lastAppliedAtMs: number | undefined;
