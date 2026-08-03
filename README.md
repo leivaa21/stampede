@@ -5,117 +5,467 @@ describe scenarios in typed TypeScript, and get a live terminal dashboard plus a
 markdown report — with named checks, custom counters merged across worker threads, and thresholds
 that decide the exit code.
 
-> **M1 is done, and M2 lands the assertion machinery.** Named checks, custom counters merged across
-> worker threads, and per-_request_ variation all work today. The numbers below are from real runs,
-> not intentions — see [Proving the numbers](#proving-the-numbers).
+```bash
+stampede run scenarios.ts --report out.md --ci
+```
+
+> **`0`** every threshold held · **`1`** your system broke an invariant · **`2`** the run itself
+> failed. A violated invariant fails CI instead of printing a red number.
+
+---
+
+**Contents** — [Install](#install) · [Quickstart](#quickstart) · [The CLI](#the-cli) ·
+[Writing scenarios](#writing-scenarios) · [Arrival profiles](#arrival-profiles) ·
+[Checks](#checks) · [Counters and trends](#counters-and-trends) · [Thresholds](#thresholds) ·
+[setup and teardown](#setup-and-teardown) · [Tuning a run](#tuning-a-run) ·
+[Reading the output](#reading-the-output) · [Gotchas](#gotchas) ·
+[Programmatic use](#programmatic-use) · [Why it exists](#why-it-exists) ·
+[Proving the numbers](#proving-the-numbers) · [Architecture](#architecture) · [Status](#status)
+
+## Install
+
+Requires **Node 24+**. Scenario configs are TypeScript loaded by Node's own type-stripping — no
+build step, no bundler, no dependency.
+
+```bash
+# Once published:
+pnpm add -D @leivaa21/stampede
+npx stampede run scenarios.ts
+
+# Today — from source:
+git clone https://github.com/leivaa21/stampede && cd stampede
+pnpm install && pnpm build
+node dist/cli.js run /path/to/scenarios.ts
+```
+
+## Quickstart
+
+Write `scenarios.ts`:
+
+```ts
+import { constantRate, defineConfig } from "@leivaa21/stampede";
+
+export default defineConfig({
+  scenarios: {
+    health: {
+      profile: constantRate({ ratePerSecond: 50, durationMs: 5_000 }),
+      request: () => ({ url: "http://localhost:3000/health" }),
+      checks: {
+        ok: (res) => res.status === 200,
+      },
+    },
+  },
+
+  thresholds: [
+    {
+      name: "p99 under 250ms",
+      assert: (s) => (s.scenarios[0]!.latencyMs?.p99Ms ?? Infinity) < 250,
+    },
+    { name: "nothing failed", assert: (s) => s.scenarios[0]!.checks.ok?.failed === 0 },
+  ],
+});
+```
+
+Run it:
+
+```bash
+stampede run scenarios.ts
+```
+
+```
+stampede · 5.0s · in flight ≤ 15
+  health
+    ████████████████████████ 250/250 · 250 answered
+    rate 50/s asked · 50/s so far
+    p50 1.9ms · p99 42.9ms · queued p99 43.7ms
+```
+
+…and when it finishes, the same numbers as a summary plus a verdict:
+
+```
+run finished in 5.0s · peak in flight ≤ 15 (sum of per-thread peaks)
+
+  health
+    requests    250 scheduled · 250 sent · 250 answered
+    rate        50/s requested · 50/s achieved
+    latency     p50 1.9ms · p95 35.8ms · p99 42.9ms
+    as queued   p50 2.4ms · p95 36.4ms · p99 43.7ms
+    backlog     3.4ms max — the generator's own lateness, not the target's
+    check       PASS  ok
+thresholds
+  PASS    p99 under 250ms
+  PASS    nothing failed
+```
+
+250 requests at a steady 50/s, every response checked, and a process that exits non-zero if either
+threshold fails. Everything below is how to say more than that.
+
+## The CLI
+
+```
+stampede run <scenarios.ts>                   run the scenarios in a config file
+stampede run <scenarios.ts> --workers 4       override the worker-thread count
+stampede run <scenarios.ts> --report out.md   write a markdown report
+stampede run <scenarios.ts> --ci              no live dashboard, even on a terminal
+stampede --help | --version
+```
+
+| Flag              | Default          | What it does                                                              |
+| ----------------- | ---------------- | ------------------------------------------------------------------------- |
+| `--workers <n>`   | cores − 1, min 1 | Threads to split the schedule across. Overrides the config's `workers`.   |
+| `--report <path>` | none             | Writes a markdown report — tables meant to be pasted into a PR or README. |
+| `--ci`            | off when a TTY   | Suppresses the live dashboard. The final summary still prints.            |
+
+**Exit codes** are the contract CI acts on:
+
+| Code | Meaning                                                                                         |
+| ---- | ----------------------------------------------------------------------------------------------- |
+| `0`  | Every declared threshold held.                                                                  |
+| `1`  | A threshold was violated, or `teardown()` threw — **your system** broke an invariant.           |
+| `2`  | The run itself failed: bad config, unreachable target, nothing measured, or a **broken check**. |
+
+The `1`/`2` split is deliberate. Exit `1` is a claim about the system under test; exit `2` says
+stampede could not make a claim at all — so a typo in a predicate never gets reported as your
+service double-selling a seat.
+
+## Writing scenarios
+
+`defineConfig` is the whole API. There is no scripting language: a profile is a function call, a
+request is an object, a threshold is a typed predicate, and your editor autocompletes all of it.
+
+```ts
+export default defineConfig({
+  setup: async () => ({ showId: "abc" }), // once, main thread, before any load
+  scenarios: {/* one or more, run concurrently, each with its own metrics */},
+  teardown: async (state) => {
+    // once, main thread, after the storm
+    /* prove the invariant here */
+  },
+  thresholds: [/* named claims about the whole run */],
+
+  workers: 4, // default: cores − 1
+  maxInFlight: 1_000, // default: 1000
+  drainTimeoutMs: 30_000, // default: 30s
+});
+```
+
+A **scenario** is a name, an arrival profile, and a request builder:
+
+```ts
+scenarios: {
+  reads: {
+    profile: constantRate({ ratePerSecond: 200, durationMs: 10_000 }),
+    request: (state, ordinal) => ({
+      method: "GET",
+      url: `http://localhost:3000/shows/${state.showId}/seats`,
+      headers: { authorization: `Bearer ${state.token}` },
+    }),
+  },
+}
+```
+
+`request(state, ordinal)` is called **once per dispatch**:
+
+- **`state`** is whatever `setup()` returned.
+- **`ordinal`** is the request's position **in the whole run**, from `0` — global, not per-worker,
+  so four threads still produce N distinct values. This is what makes "N buyers, N distinct seats"
+  expressible: `seatIds: [seats[ordinal % seats.length]]`. Ignore it and every request is identical,
+  which is the namesake run.
+
+It must be a **pure function of `(state, ordinal)`** — every worker gets its own structured clone of
+the state, so a builder that consumes shared state (`state.seats.pop()`) hands four threads the same
+four values. If it throws, that request is counted as `not built` and the run continues.
+
+What it returns:
+
+```ts
+{ url: string, method?: string, headers?: Record<string, string>, body?: unknown }
+```
+
+A string `body` is sent as-is; anything else is JSON-encoded and given a JSON content type.
+
+## Arrival profiles
+
+Profiles decide **when** requests go out. They are pure and lazy, and are evaluated when the module
+is imported — before `setup()` runs — so they cannot read setup state.
+
+```ts
+import { burst, constantRate, ramp, stages } from "@leivaa21/stampede";
+
+constantRate({ ratePerSecond: 100, durationMs: 30_000 });
+ramp({ fromRatePerSecond: 10, toRatePerSecond: 500, durationMs: 60_000 });
+burst({ count: 500 }); // all at t = 0
+stages(
+  // back to back
+  ramp({ fromRatePerSecond: 0, toRatePerSecond: 200, durationMs: 10_000 }),
+  constantRate({ ratePerSecond: 200, durationMs: 60_000 }),
+);
+```
+
+`burst` is the namesake: 500 requests at the same instant, which is how you make N clients race for
+one row.
+
+**Arrivals are open-loop.** stampede does not wait for a response before sending the next request —
+if your target slows down, the schedule keeps going and the lateness lands in the numbers rather
+than hiding in them. See [Why it exists](#why-it-exists).
+
+## Checks
+
+A check is a **named predicate over one response**, counted and printed as a row.
+
+```ts
+checks: {
+  oneWinnerOrConflict: (res) => res.status === 201 || res.status === 409,
+  isJson: (res) => res.headers["content-type"]?.startsWith("application/json") === true,
+}
+```
+
+The response is `{ status: number, headers: Record<string, string>, text: string }` — `text` is the
+body as a string, always read.
+
+Name the **claim**, not the expression: `oneWinnerOrConflict` beats `status2xxOr409`, because the
+name is what a failing CI job prints.
+
+Checks have **three** outcomes, not two:
+
+| Outcome    | Meaning                          | Effect                                                   |
+| ---------- | -------------------------------- | -------------------------------------------------------- |
+| **pass**   | returned `true`                  | —                                                        |
+| **fail**   | returned `false`                 | Your target broke the claim. Threshold-facing, exit `1`. |
+| **broken** | threw, or returned a non-boolean | _Your predicate_ is wrong. Fails the run, exit `2`.      |
+
+That third state exists because a typo in a check must never be reported as your service violating
+an invariant — it sends someone hunting a race condition that was never there.
+
+Checks must be **synchronous**. `async (res) => …` is rejected at startup: it returns a promise,
+which is truthy and never `false`, so every check would pass forever.
+
+A scenario may declare at most **64** checks — each one reserves a slot in the same metric budget
+your own counters draw on, so an unbounded number would starve them and then blame the counters.
+
+## Counters and trends
+
+A check answers yes or no. `onResponse` is for everything else, and runs once per response:
+
+```ts
+onResponse: (res, record) => {
+  if (res.status === 201) record.count("reserved201");
+  if (res.status === 409) record.count("conflicts");
+
+  const body = JSON.parse(res.text) as { behindMs?: number };
+  if (typeof body.behindMs === "number") record.recordMs("behindMs", body.behindMs);
+},
+```
+
+- **`record.count(name, by = 1)`** — a monotonic counter, merged across every worker thread.
+- **`record.recordMs(name, valueMs)`** — a distribution, so you get p50/p99/max rather than a total.
+
+Both land on the scenario's summary, in the report, and in reach of a threshold.
+
+Keep the **names bounded**: one counter per outcome is fine, one per seat id is a cardinality bomb.
+The caps are 512 counters, 512 checks and 32 distributions per scenario, and a run that exceeds them
+**fails** rather than silently dropping recordings — a threshold reading a name that was refused
+would otherwise read a confident `0`.
+
+Like checks, `onResponse` must be synchronous, and a throw is counted rather than allowed to end the
+run.
+
+## Thresholds
+
+A threshold is a **named claim about the whole run**, and it decides the exit code.
+
+```ts
+thresholds: [
+  { name: "exactly one buyer wins", assert: (s) => s.scenarios[0]!.counters.reserved201 === 1 },
+  { name: "no double sells", assert: (s) => s.scenarios[0]!.checks.noDoubleSell?.failed === 0 },
+  { name: "p99 under 250ms", assert: (s) => (s.scenarios[0]!.latencyMs?.p99Ms ?? Infinity) < 250 },
+  { name: "kept up", assert: (s) => (s.scenarios[0]!.achievedRatePerSecond ?? 0) >= 190 },
+];
+```
+
+What the `summary` gives you:
+
+```ts
+summary.elapsedMs
+summary.maxObservedInFlight
+summary.scenarios[i].{
+  name,
+  scheduledCount, dispatchedCount, droppedCount, requestErrorCount,
+  responseCount, errorCount, abandonedCount,
+  requestedRatePerSecond, achievedRatePerSecond,
+  latencyMs, scheduledLatencyMs, scheduleLagMs,
+  counters, checks, trends,
+  brokenObservations, refusedRecordings,
+}
+```
+
+Distributions — `latencyMs`, `scheduledLatencyMs`, `scheduleLagMs`, and anything in `trends` — are:
+
+```ts
+{
+  (count,
+    minMs,
+    maxMs,
+    meanMs,
+    p50Ms,
+    p95Ms,
+    p99Ms,
+    p999Ms,
+    overflowCount,
+    saturated,
+    isLowerBound);
+}
+```
+
+…or **`undefined`** when nothing was recorded. That is deliberate: it stops `(s.p99Ms ?? 0) < 250`
+letting a scenario that never ran pass its own threshold.
+
+Two latency distributions, and the difference is the point:
+
+- **`latencyMs`** — send → response. What your target took.
+- **`scheduledLatencyMs`** — _scheduled instant_ → response. What a user waiting in line
+  experienced, generator backlog included. **This is the headline number.**
+
+A predicate that throws or returns a non-boolean is a broken claim, not a violated one: exit `2`,
+with the threshold named.
+
+## setup and teardown
+
+```ts
+setup: async () => {
+  const res = await fetch("http://localhost:3000/shows", { method: "POST" });
+  const { showId, seatId } = (await res.json()) as { showId: string; seatId: string };
+  return { showId, seatId }; // structured-cloneable data — an id, not a client
+},
+
+teardown: async ({ showId, seatId }) => {
+  const res = await fetch(`http://localhost:3000/shows/${showId}/seats/${seatId}`);
+  const seat = (await res.json()) as { soldCount: number };
+  if (seat.soldCount !== 1) throw new Error(`double sell: ${String(seat.soldCount)} sold`);
+},
+```
+
+`setup()` runs **once, on the main thread**, before any load. Its return value reaches every worker
+by structured clone — functions cannot cross that boundary, so create the show here and keep the
+client inside the scenario.
+
+`teardown()` runs **once, after the storm and after the drain**. It is an **assertion hook, not a
+cleanup hook**: this is where an invariant gets _proven_ rather than observed, because "exactly one
+seat sold" is a question you can only ask once the race is over. Throwing fails the run with exit
+`1`, like a violated threshold — because that is what it is.
+
+It does not run when the load could not be generated at all. Anything that must be cleaned up
+regardless belongs in the harness around `stampede`.
+
+## Tuning a run
+
+| Option           | Default   | When to change it                                                                                                                                        |
+| ---------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workers`        | cores − 1 | Raise to generate more load. The schedule is split by stride, so shards reproduce the single-threaded run exactly.                                       |
+| `maxInFlight`    | `1000`    | The cap on outstanding requests, run-wide. Open-loop dispatch against a dead target is otherwise unbounded memory. Breaches are **dropped and counted**. |
+| `drainTimeoutMs` | `30_000`  | How long to keep waiting after the last dispatch. Whatever is still outstanding is counted as `abandoned` and left out of the percentiles.               |
+
+Drops against a healthy target mean `maxInFlight` is too low. Abandoned requests mean
+`drainTimeoutMs` is — or that your target really is that slow, which is worth knowing.
+
+## Reading the output
+
+```
+run finished in 5.0s · peak in flight ≤ 12 (sum of per-thread peaks)
+
+  theStampede
+    requests    500 scheduled · 500 sent · 500 answered
+    rate        n/a — a burst asks for a count, not a rate
+    latency     p50 170.6ms · p95 237.7ms · p99 238.1ms
+    as queued   p50 220.7ms · p95 302.6ms · p99 307.2ms
+    backlog     71.2ms max — the generator's own lateness, not the target's
+    check       PASS  oneWinnerOrConflict
+    counter     reserved201 = 1
+thresholds
+  PASS    exactly one buyer wins
+  PASS    every response was a win or a conflict
+```
+
+Lines you only see when they are non-zero, and what each one tells you:
+
+| Line                               | Meaning                                                                    |
+| ---------------------------------- | -------------------------------------------------------------------------- |
+| `shortfall … N dropped`            | The in-flight cap refused them. Raise `maxInFlight`.                       |
+| `shortfall … N not built`          | Your `request()` threw. The target was never asked — fix the config.       |
+| `shortfall … N failed`             | Transport-level failures: refused, DNS, timeout. Counted, never timed.     |
+| `shortfall … N abandoned`          | Still outstanding at the drain deadline. Left out of the percentiles.      |
+| `check BROKEN n <name>`            | That predicate threw or returned a non-boolean. Exit `2`.                  |
+| `⚠ N recordings refused`           | More distinct metric names than the caps allow. Some are missing entirely. |
+| `⚠ … percentiles are lower bounds` | Samples exceeded the histogram ceiling (67s). The numbers understate.      |
+
+Every rounding errs **away** from flattering your target: percentiles report the top of their
+bucket, a clamped value is a labelled lower bound rather than a bare number, and a scenario that
+recorded nothing **fails the run** instead of quietly passing its thresholds.
+
+`--report out.md` writes the same numbers as markdown tables, with the run's own provenance
+(version, config path, worker count, settings, timestamp) so a pasted table cannot be mistaken for a
+different run.
+
+## Gotchas
+
+- **Erasable syntax only.** Node strips types without compiling them, so configs cannot use `enum`,
+  parameter properties, or `namespace`. stampede translates the resulting Node error into a message
+  naming the file and the construct.
+- **`setup()` returns data, not objects with methods** — it crosses a worker boundary by structured
+  clone.
+- **`request` must be pure** in `(state, ordinal)`.
+- **No `async` checks or `onResponse`** — refused at startup, with the offender named.
+- **Metric names are bounded**, and the `stampede.` prefix is reserved for the engine's own counters.
+- **Scenario names must be unique** — they namespace the metrics, so duplicates would silently
+  average two different things together.
+
+## Programmatic use
+
+The engine has no UI imports and is exported, if you want to drive it yourself:
+
+```ts
+import { constantRate, httpTransport, runDispatch, systemClock } from "@leivaa21/stampede";
+
+const { summary } = await runDispatch(
+  {
+    scenarios: [
+      {
+        name: "reads",
+        profile: constantRate({ ratePerSecond: 50, durationMs: 2_000 }),
+        requestFor: () => ({ url: "http://localhost:3000/" }),
+        checks: { ok: (res) => res.status === 200 },
+      },
+    ],
+    maxInFlight: 500,
+  },
+  { clock: systemClock, transport: httpTransport },
+);
+
+console.log(summary.scenarios[0]?.latencyMs?.p99Ms);
+```
+
+`runPool` does the same across worker threads, and `renderMarkdownReport` turns a summary into the
+report the CLI writes.
+
+---
 
 ## Why it exists
 
 Most load tools answer _"how fast is it?"_. The question that actually blocks a launch is _"is it
 still correct when 500 people hit the same row at once?"_ — and that is a claim about a **run**, not
-a request. stampede makes those claims first-class:
+a request.
 
-```ts
-// scenarios.ts — this runs today
-import { burst, defineConfig } from "@leivaa21/stampede";
+The measurement side rests on one decision: **arrivals are open-loop, and latency is timed from the
+_scheduled_ instant**. A closed-loop generator waits for a response before sending the next request,
+so when your target slows down the generator slows with it — latency samples come
+disproportionately from healthy moments and p99 flatters the system exactly when it shouldn't. That
+is **coordinated omission**, and it is why a tool can report 200 ms while your users wait five
+seconds. stampede sends on schedule regardless, and the time it spends backed up lands _in_ the
+number instead of being hidden by it.
 
-export default defineConfig({
-  // Runs once, on the main thread, before any load. Its return value reaches every worker by
-  // structured clone, so it must be plain data — an id, not a client.
-  setup: async () => {
-    const res = await fetch("http://localhost:5210/shows", { method: "POST" });
-    const { showId, seatId } = (await res.json()) as { showId: string; seatId: string };
-    return { showId, seatId };
-  },
-
-  scenarios: {
-    theStampede: {
-      profile: burst({ count: 500 }), // 500 buyers, same seat, all at once
-      request: ({ showId, seatId }) => ({
-        method: "POST",
-        url: `http://localhost:5210/shows/${showId}/reservations`,
-        body: { seatIds: [seatId] },
-      }),
-
-      // Named claims about every response, counted pass/fail and printed as a row.
-      checks: {
-        oneWinnerOrConflict: (res) => res.status === 201 || res.status === 409,
-      },
-
-      // Counters and distributions a check cannot express. Merged across every worker thread.
-      onResponse: (res, record) => {
-        if (res.status === 201) record.count("reserved201");
-      },
-    },
-  },
-
-  // Runs after the storm. This is where the invariant is *proven* rather than observed —
-  // "exactly one seat sold" is a claim about the run, and only askable once it is over.
-  teardown: async ({ showId, seatId }) => {
-    const res = await fetch(`http://localhost:5210/shows/${showId}/seats/${seatId}`);
-    const seat = (await res.json()) as { soldCount: number };
-    if (seat.soldCount !== 1) throw new Error(`double sell: ${String(seat.soldCount)} sold`);
-  },
-
-  thresholds: [
-    { name: "exactly one buyer wins", assert: (s) => s.scenarios[0]!.counters.reserved201 === 1 },
-    {
-      name: "every response was a win or a conflict",
-      assert: (s) => s.scenarios[0]!.checks.oneWinnerOrConflict?.failed === 0,
-    },
-    {
-      name: "p99 under 250ms",
-      assert: (s) => (s.scenarios[0]!.latencyMs?.p99Ms ?? Infinity) < 250,
-    },
-  ],
-});
-```
-
-Every buyer above wants **the same seat**. To give each one a seat of their own, take the request's
-ordinal — it is the **run's**, not the worker's, so four threads still produce 500 distinct seats:
-
-```ts
-scenarios: {
-  hotShow: {
-    profile: constantRate({ ratePerSecond: 250, durationMs: 2_000 }),
-    // `ordinal % length`, so a run longer than the seat list wraps instead of sending `undefined`.
-    request: ({ showId, seatIds }, ordinal) => ({
-      method: "POST",
-      url: `http://localhost:5210/shows/${showId}/reservations`,
-      body: { seatIds: [seatIds[ordinal % seatIds.length]] },
-    }),
-    checks: { created: (res) => res.status === 201 },
-  },
-},
-```
-
-```bash
-stampede run scenarios.ts                      # live TUI
-stampede run scenarios.ts --report out.md --ci # headless, thresholds → exit code
-```
-
-A violated invariant **fails CI** (exit `1`) instead of printing a red number.
-
-## Quickstart
-
-```bash
-pnpm install
-pnpm dev -- run scenarios.ts                    # live dashboard
-pnpm dev -- run scenarios.ts --report out.md    # + a report to paste into a README
-pnpm dev -- run scenarios.ts --ci               # no dashboard, for CI
-```
-
-```
-stampede · 3.0s · in flight ≤ 9
-  theStampede
-    ████████████████████████ 360/360 · 355 answered
-    rate 120/s asked · 120/s so far
-    p50 41.2ms · p99 44.7ms · queued p99 45.7ms
-```
-
-Scenario configs are plain TypeScript loaded directly by Node, so they must use **erasable syntax
-only**: no `enum`, no parameter properties, no `namespace`. stampede translates the resulting Node
-error into a message that names the file and the construct.
+Honesty is a design rule, not a feature: dropped requests, histogram overflow, request-build
+failures and achieved-vs-requested rate are always reported. If the tool cannot keep up, the report
+says so — and every rounding errs _away_ from flattering the target.
 
 ## Architecture
 
@@ -137,10 +487,7 @@ independent consumers of its typed event stream.
 
 The four that shaped everything else — full rationale in [`docs/decisions.md`](docs/decisions.md):
 
-- **Open-loop arrivals, latency timed from the _scheduled_ instant.** Closed-loop generators hide
-  **coordinated omission**: a slow target throttles the generator, so latency samples come
-  disproportionately from healthy moments and p99 flatters the system exactly when it shouldn't.
-  Timing from the scheduled instant puts generator backlog _into_ the number instead of hiding it.
+- **Open-loop arrivals, latency timed from the _scheduled_ instant** — see above.
 - **HDR-style bucketed histograms.** Merging across workers has to be lossless and
   order-independent — elementwise addition. t-digest merges are approximate _and_ order-dependent,
   so published numbers would depend on which worker finished first.
@@ -148,12 +495,6 @@ The four that shaped everything else — full rationale in [`docs/decisions.md`]
   and identical behaviour in the main thread and in workers — which the architecture depends on.
 - **Thresholds are named typed predicates**, not a string mini-language. The TS config is the DSL;
   the threshold's name is what the CI failure prints.
-
-Honesty is a design rule, not a feature: dropped requests, histogram overflow, and achieved-vs-
-requested rate are always reported. If the tool can't keep up, the report says so. Every rounding
-errs away from flattering the target — percentiles report the top of their bucket, a clamped value
-is a labelled lower bound rather than a bare number, and a scenario that recorded nothing **fails the
-run** instead of quietly passing its thresholds.
 
 ## Proving the numbers
 
