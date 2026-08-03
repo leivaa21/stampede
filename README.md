@@ -240,6 +240,9 @@ an invariant — it sends someone hunting a race condition that was never there.
 Checks must be **synchronous**. `async (res) => …` is rejected at startup: it returns a promise,
 which is truthy and never `false`, so every check would pass forever.
 
+A scenario may declare at most **64** checks — each one reserves a slot in the same metric budget
+your own counters draw on, so an unbounded number would starve them and then blame the counters.
+
 ## Counters and trends
 
 A check answers yes or no. `onResponse` is for everything else, and runs once per response:
