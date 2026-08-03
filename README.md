@@ -165,9 +165,15 @@ twice. So there is a second gate:
 pnpm gate:two
 ```
 
-It starts a reference server — fixed delay, bounded concurrency, queueing the rest, keeping its own
-count — and drives four runs against it through the real system clock and real HTTP, checking
-stampede's numbers against the server's. **Non-zero exit if any claim fails.** Real output:
+**A manual milestone gate, not a CI job** — it spawns servers and leans on real timing, which a
+shared runner would make flaky, and a flaky gate is one people learn to ignore. It is run before a
+milestone is called done, and the numbers below are from a 16-core dev box; a smaller machine will
+report different throughput and the same _relationships_, which are what the claims are about.
+
+It starts a reference server — fixed delay, bounded concurrency, queueing the rest, **selling seats
+at most once each** and keeping its own count of everything — then drives seven runs against it
+through the real system clock and real HTTP, checking stampede's numbers against the server's.
+**Non-zero exit if any claim fails.** Real output:
 
 **It can measure a stopwatch.** A 50ms target reads p50 52.4ms, and the server's own request count
 matches what stampede says it sent.
@@ -187,26 +193,85 @@ as though it were the user's experience.
 **The generator itself as the bottleneck** — asking 50,000rps from one thread:
 
 ```
-    achieved rate — stampede vs target        6181 rps vs 6271 rps
-    dispatched / dropped / errors             12698 / 87302 / 0
-    latency p50 / p99 (the target)            40.6ms / 162.9ms
-    scheduledLatency p50 / p99 (D1-01)        124.5ms / 241.3ms
-    schedule lag max (own backlog)            130.0ms
+    achieved rate — stampede vs target        1073 rps vs 1074 rps
+    dispatched / dropped / errors             2606 / 97394 / 0
+    latency p50 / p99 (the target)            203.1ms / 814.1ms
+    scheduledLatency p50 / p99 (D1-01)        559.6ms / 1031.7ms
+    schedule lag max (own backlog)            489.2ms
 ```
 
-It admits **6,181rps of the 50,000 requested**, counts **87,302 drops**, and puts its own 130ms
-backlog into `scheduledLatency` — 241ms against a raw 163ms. A tool that reported the 163ms would be
-describing a machine that was never under that load.
+It admits **about a thousand rps of the 50,000 requested**, counts **97,394 drops**, and puts its own
+489ms backlog into `scheduledLatency` — 1032ms against a raw 814ms. A tool that reported the 814ms
+would be describing a machine that was never under that load.
+
+The absolute throughput here is the least reproducible number in the gate — three consecutive runs
+on the same idle box gave 995, 1302 and 1073rps, because it is dominated by per-response work in the
+host process. Read the _relationships_, which is what the claims assert: achieved ≪ requested, every
+undispatched instant counted rather than absorbed, and the backlog landing in `scheduledLatency`
+rather than being hidden. (An earlier version of this page quoted 6,181rps from a run predating
+M2 — reading the response body for checks costs real time per response, and nobody re-measured. The
+gate now runs on every milestone for exactly that reason.)
 
 **The worker pool, cross-checked by the target itself**: 4 threads, 480 scheduled, 480 dispatched,
-**480 received by the server**, accounting balanced, zero out-of-order snapshots. A merge bug cannot
-fool an independent observer.
+**480 received by the server**, nothing dropped, accounting balanced, zero out-of-order snapshots.
+A merge bug cannot fool an independent observer.
+
+**The invariants, not just the percentiles.** The last two runs are
+[open-ticket](https://github.com/leivaa21/open-ticket)'s load contract, produced against a target
+that counts seats for itself:
+
+```
+RUN 6 — contract run 1: 200 buyers, one seat, exactly one wins
+    PASS  exactly one buyer won — 1 of 200
+    PASS  the target issued exactly one sale, and N−1 conflicts — 1 sold + 199 conflicts,
+          counted by the target itself
+
+RUN 7 — contract runs 2 & 4: 200 buyers, 200 distinct seats, 4 threads
+    lag samples merged / expected             200 / 200
+    projection lag — p50 / p99 / max          253.1ms / 454.1ms / 464.1ms
+    target's own max behind                   464ms
+
+    PASS  the target sold one seat per buyer, no collisions — 200 distinct seats sold
+    PASS  every recorded lag sample survived the merge across four threads — 200 of 200
+    PASS  the projection really did fall behind, so there was a lag to measure — 464ms
+          peak, against a 125ms floor
+    PASS  the recorded projection lag matches the target's own peak — 464.1ms recorded
+          vs 464ms the target measured itself
+    PASS  the schedule really was split evenly across four threads — 50/50/50/50 each
+```
+
+Run 7 is the one that cannot be faked. Four threads that restarted their numbering would send four
+buyers to the same seat, and the target would answer three of them `409` — so the seat count is a
+verdict on the ordinal mapping delivered by something that is not stampede. Break
+`shardIndex + ordinal * shardCount` and the gate says so:
+
+```
+    check created                             50 pass · 150 fail · 0 broken
+    FAIL  the target sold one seat per buyer, no collisions — 50 distinct seats sold
+```
+
+And the `behindMs` the config recorded through `onResponse` is cross-checked twice: **every one of
+the 200 samples survived the merge** across four worker threads, and the peak agrees with the one
+the target latched for itself to within the histogram's own rounding — under 0.1 % plus a
+millisecond, a rule rather than a constant, so it encodes no assumption about how large the peak
+gets.
+
+The sample count is the claim that matters. Shards interleave by stride, so every worker holds
+samples spread across the whole run — losing an entire worker's trend moves the peak by under a
+millisecond and would sail past a peak-only check. It does not sail past this one.
 
 ## Status
 
-**M1 is complete.** Mergeable metrics core · open-loop engine · worker pool · TS config loading ·
-real HTTP transport · `stampede run` with setup/teardown, thresholds and exit codes · markdown
-report · live dashboard. **504 tests**, zero known vulnerabilities, gate two green.
+**M1 and M2 are complete.** Mergeable metrics core · open-loop engine · worker pool · TS config
+loading · real HTTP transport · `stampede run` with setup/teardown, thresholds and exit codes ·
+markdown report · live dashboard — and, from M2, named per-response **checks** counted three ways,
+**custom counters and trends** merged across worker threads, and **per-request variation** keyed on
+the run's ordinal. **512 tests**, zero known vulnerabilities, gate two green across seven runs.
+
+**Next (M3): SSE / long-lived streaming requests** — open-ticket's contract run 5. Two debts M2
+surfaced are named rather than forgotten: there is no way to express a bounded-cardinality counter
+(ask for 600 names and the run fails telling you to use fewer), and `request()` is documented as
+pure but not enforced.
 
 **Not published to npm yet.** Install from source; `@leivaa21/stampede` is reserved.
 

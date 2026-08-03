@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MetricsRegistry } from "./registry.ts";
+import { expectSameHistogram } from "../test-support/histogram-diff.ts";
+import type { RegistrySnapshot } from "./snapshots.ts";
 import { ScenarioMetrics } from "./scenario-metrics.ts";
 import {
   MAX_DISTINCT_DISTRIBUTIONS,
@@ -20,6 +22,65 @@ const populate = (registry: MetricsRegistry, scenario: string, seed: number): Me
 
 const registryOf = (scenario: string, seed: number): MetricsRegistry =>
   populate(new MetricsRegistry(), scenario, seed);
+
+/**
+ * Exact snapshot equality without walking 17,408 buckets per histogram in JS.
+ *
+ * `toEqual` on a `RegistrySnapshot` compares every `Int32Array` element by element, and seven
+ * orderings of a registry holding several histograms is enough to push this file past vitest's 5s
+ * default on a loaded machine — which looks exactly like flakiness in a suite that is deterministic
+ * by construction. Canonicalising to a string keeps the comparison exact (nothing is hashed or
+ * sampled) and moves the byte-level work into `Buffer`.
+ */
+const canonical = (snapshot: RegistrySnapshot): string =>
+  JSON.stringify(snapshot, (_key: string, value: unknown) => {
+    if (value instanceof Int32Array) {
+      return Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("base64");
+    }
+    if (value instanceof Map) {
+      // Sorted, so two equal snapshots cannot differ by insertion order — which `toEqual` would
+      // have ignored and a naive stringify would not.
+      return Object.fromEntries(
+        [...(value as ReadonlyMap<string, unknown>)].sort(([a], [b]) =>
+          a < b ? -1 : a > b ? 1 : 0,
+        ),
+      );
+    }
+    return value;
+  });
+
+const expectSameSnapshot = (actual: RegistrySnapshot, expected: RegistrySnapshot): void => {
+  if (canonical(actual) === canonical(expected)) {
+    return;
+  }
+  // Narrowed before failing, down to the bucket. `toBe` on two 90KB base64 walls names neither the
+  // scenario nor the metric, which is a worse failure message than the slow comparison it replaced.
+  for (const [scenario, metrics] of actual.scenarios) {
+    const other = expected.scenarios.get(scenario);
+    for (const kind of ["histograms", "trends"] as const) {
+      for (const [metric, histogram] of metrics[kind]) {
+        // Narrowed rather than asserted: a metric present on one side only is its own failure,
+        // and it should name the metric rather than throw inside the diff.
+        const counterpart = other?.[kind].get(metric);
+        // `toEqual` throws when the metric is missing, which names it and ends the walk; the
+        // `else` is what tells the type-checker so, without a statement behind an assertion that
+        // always throws — the shape this file has already removed twice.
+        if (counterpart === undefined) {
+          expect({ scenario, metric, present: false }).toEqual({ scenario, metric, present: true });
+        } else {
+          expectSameHistogram(histogram, counterpart, { scenario, metric });
+        }
+      }
+    }
+    expect({ scenario, counters: metrics.counters, checks: metrics.checks }).toEqual({
+      scenario,
+      counters: other?.counters,
+      checks: other?.checks,
+    });
+  }
+  // Anything the walk above did not reach — a scenario only `expected` has, a different sequence.
+  expect(canonical(actual)).toBe(canonical(expected));
+};
 
 describe("MetricsRegistry", () => {
   it("keeps each scenario's metrics apart", () => {
@@ -267,10 +328,10 @@ describe("MetricsRegistry.merge", () => {
         new MetricsRegistry(),
       );
 
-      expect(merged.toSnapshot(1)).toEqual(expected);
+      expectSameSnapshot(merged.toSnapshot(1), expected);
     }
 
-    expect(a.merge(b.merge(c)).toSnapshot(1)).toEqual(expected);
+    expectSameSnapshot(a.merge(b.merge(c)).toSnapshot(1), expected);
   });
 
   it("equals recording every worker's samples into one registry", () => {

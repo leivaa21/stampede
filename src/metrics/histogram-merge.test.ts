@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Histogram } from "./histogram.ts";
+import { expectSameHistogram } from "../test-support/histogram-diff.ts";
 import { MAX_TRACKABLE_US } from "./histogram-layout.ts";
 
 /** xorshift32 — deterministic, so a failing merge property is reproducible from the seed alone. */
@@ -104,7 +105,7 @@ describe("Histogram.merge", () => {
 
     expect(orderings).toHaveLength(24);
     for (const ordering of orderings) {
-      expect(mergeAll(ordering).toSnapshot()).toEqual(expected);
+      expectSameHistogram(mergeAll(ordering).toSnapshot(), expected);
     }
   });
 });
@@ -122,7 +123,7 @@ describe("Histogram merge across workers", () => {
     const merged = mergeAll(perWorker);
     const single = histogramOf(samples);
 
-    expect(merged.toSnapshot()).toEqual(single.toSnapshot());
+    expectSameHistogram(merged.toSnapshot(), single.toSnapshot());
     expect(merged.count).toBe(single.count);
     expect(merged.min).toBe(single.min);
     expect(merged.max).toBe(single.max);
@@ -139,6 +140,6 @@ describe("Histogram merge across workers", () => {
     const merged = histogramOf(slow).merge(histogramOf(fast));
     const single = histogramOf([...slow, ...fast]);
 
-    expect(merged.toSnapshot()).toEqual(single.toSnapshot());
+    expectSameHistogram(merged.toSnapshot(), single.toSnapshot());
   });
 });
