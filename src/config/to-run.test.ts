@@ -155,7 +155,7 @@ describe("run settings", () => {
       ).toThrow(/^Cannot read properties of undefined/);
     });
 
-    it("translates a frozen-state violation into the contract it broke", () => {
+    it("translates a guard violation into the contract it broke", () => {
       expect(() =>
         scenariosFrom(
           {
@@ -168,7 +168,7 @@ describe("run settings", () => {
               },
             },
           } as never,
-          // Frozen by the caller, exactly as `worker-entry.ts` does — `scenariosFrom` converts, it
+          // Guarded by the caller, exactly as `worker-entry.ts` does — `scenariosFrom` converts, it
           // does not seal its caller's argument.
           guardState({ url: "http://localhost:1/", seats: ["a"] }),
         ),

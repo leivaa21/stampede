@@ -74,7 +74,7 @@ const assertRequestShape = (built: unknown, name: string): HttpRequestSpec => {
 };
 
 /**
- * Turns the `TypeError` a frozen state throws into the contract it violates.
+ * Turns the guard's `StateMutationError` into the contract it violates.
  *
  * Without this the user sees "Cannot delete property '2' of [object Array]" from inside
  * `Array.prototype.pop`, which names neither the scenario, nor `request()`, nor the rule. The
@@ -90,6 +90,30 @@ const purityErrorFor = (error: StateMutationError, name: string): ImpureRequestE
       `instead of distinct ones. Derive from the ordinal instead: \`seats[ordinal % seats.length]\`.`,
   );
 
+/**
+ * A `structuredClone` that failed — almost always the state, and almost always a *pure* builder.
+ *
+ * Copy-then-edit is the idiomatic way to obey D25-02, and `structuredClone` cannot copy a proxy, so
+ * the guard breaks the very pattern it asks for. Untranslated this reaches the user as
+ * `worker-0: #<Object> could not be cloned.` — naming neither the scenario, nor `request()`, nor
+ * the guard, nor a way out.
+ *
+ * Counted as an ordinary build failure rather than an impure one: the builder did nothing wrong,
+ * and calling it impure would be the wrong accusation on the wrong exit code.
+ */
+const cloneErrorFor = (error: DOMException, name: string): Error =>
+  new Error(
+    `scenario "${name}": request() could not clone a value (${error.message}). If you were ` +
+      `copying the setup state, that is the guard: the state is behind a proxy so that mutating ` +
+      `it fails loudly (D25-02), and a proxy cannot be structured-cloned. Copy it with ` +
+      `\`JSON.parse(JSON.stringify(state.thing))\` instead — or \`{ ...state.thing }\` if a shallow ` +
+      `copy is enough, remembering its nested values are still guarded. (Functions and class ` +
+      `instances cannot be cloned either, if that is what this was.)`,
+  );
+
+const isDataCloneError = (error: unknown): error is DOMException =>
+  error instanceof DOMException && error.name === "DataCloneError";
+
 const eagerlyValidatedBuilder = (
   scenario: StampedeConfig<unknown>["scenarios"][string],
   setupState: unknown,
@@ -104,7 +128,13 @@ const eagerlyValidatedBuilder = (
       // reader to the wrong contract. Matched on the *type* the guard threw rather than on a
       // message, so a builder that throws its own `TypeError` about a read-only property is not
       // accused of something it did not do.
-      throw error instanceof StateMutationError ? purityErrorFor(error, name) : error;
+      if (error instanceof StateMutationError) {
+        throw purityErrorFor(error, name);
+      }
+      if (isDataCloneError(error)) {
+        throw cloneErrorFor(error, name);
+      }
+      throw error;
     }
   };
   build(0);

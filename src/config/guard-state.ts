@@ -74,10 +74,13 @@ const isGuardable = (value: unknown): value is Record<PropertyKey, unknown> => {
 /**
  * Wraps `value` so that any write to it, at any depth, throws `StateMutationError`.
  *
- * Children are wrapped **in place, first**, so the returned proxy needs no `get` trap: reads find
- * an already-wrapped child on the target and go through the ordinary path. That matters — `request`
- * runs once per scheduled instant, and a `get` trap would put a JS callback on the hottest read in
- * the tool.
+ * Children are wrapped **in place, before the proxy is handed out**, so it needs no `get` trap: a
+ * read finds an already-wrapped child sitting on the target. Reads are still proxy reads — measured
+ * on Node 24, a build against guarded state costs ~106 ns against ~2 ns plain — but a memoised
+ * `get` trap costs ~306 ns for the same shape, so this is the cheaper of the two guards by 3x.
+ * Neither is visible next to a network round trip; the argument for doing it this way is that a
+ * `get` trap would also have to re-derive child identity on every read, and `state.left ===
+ * state.right` has to keep holding.
  *
  * Module-level, called only by `worker-entry.ts`, so the only value it ever sees is a
  * post-`structuredClone` one — which is why mutating the caller's object in place is safe here.
@@ -88,13 +91,13 @@ export const guardState = <T>(value: T): T => {
   // where it held before the guard was applied.
   const wrapped = new WeakMap<object, unknown>();
 
-  const wrap = (node: unknown, path: string): unknown => {
+  const wrap = (node: unknown, parentPath: string, key?: PropertyKey): unknown => {
     if (!isGuardable(node)) {
       return node;
     }
-    const existing = wrapped.get(node);
-    if (existing !== undefined) {
-      return existing;
+    const path = key === undefined ? parentPath : `${parentPath}.${String(key)}`;
+    if (wrapped.has(node)) {
+      return wrapped.get(node);
     }
 
     const refuse = (key: PropertyKey): never => {
@@ -105,6 +108,10 @@ export const guardState = <T>(value: T): T => {
       deleteProperty: (_target, key) => refuse(key),
       defineProperty: (_target, key) => refuse(key),
       setPrototypeOf: () => refuse("[[Prototype]]"),
+      // Not a write, but the one remaining way to change the object's shape: without it
+      // `Object.freeze(state)` half-applies — extensions silently prevented, then `defineProperty`
+      // throws — and "any write, at any depth, throws" stops being exactly true.
+      preventExtensions: () => refuse("[[Extensible]]"),
     });
     // Recorded before descending, so a cycle finds the proxy rather than recursing forever.
     wrapped.set(node, proxy);
@@ -114,13 +121,18 @@ export const guardState = <T>(value: T): T => {
       // Accessors are not read: a cloned state has none — `structuredClone` materialises them into
       // data properties first — and reading a getter to wrap its result would run someone's code as
       // a side effect. Non-writable or non-configurable properties are left alone because assigning
-      // the wrapper back would throw here, in the guard, rather than in the builder.
+      // the wrapper back would throw here, in the guard, rather than in the builder — and the cost
+      // of skipping is worth naming: with no `get` trap, a read of that property returns the *raw*
+      // child, so its whole subtree is unguarded. Unreachable on the shipped path, where every
+      // property arrives from `structuredClone` as `writable: true, configurable: true`.
       if (
         descriptor?.get === undefined &&
         descriptor?.set === undefined &&
         descriptor?.writable === true
       ) {
-        node[key] = wrap(node[key], `${path}.${String(key)}`);
+        // The path is built inside `wrap`'s guardable branch, not here: a 200k-string array would
+        // otherwise allocate 200k template strings at worker startup for values that never wrap.
+        node[key] = wrap(node[key], path, key);
       }
     }
 

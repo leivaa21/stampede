@@ -113,7 +113,7 @@ export const findImpureRequests = (summary: RunSummary): string | undefined => {
     if (scenario.impureRequestCount > 0) {
       return (
         `scenario "${scenario.name}" could not build ${String(scenario.impureRequestCount)} requests ` +
-        `because \`request()\` mutated the setup state, which is frozen — it must be a pure ` +
+        `because \`request()\` mutated the setup state, which is guarded — it must be a pure ` +
         `function of (state, ordinal). Every worker holds its own clone, so consuming shared state ` +
         `hands each thread the same values instead of distinct ones. Derive from the ordinal ` +
         `instead: \`seats[ordinal % seats.length]\`.`

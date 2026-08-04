@@ -186,8 +186,11 @@ of distinct ones. Derive from the ordinal instead: `seats[ordinal % seats.length
 
 That is what the ordinal is for: variation is _derived_, not accumulated. Plain objects and arrays
 are guarded; a `Map`, `Set`, `Date` or `Buffer` in your state is left alone, so mutating one of
-those is not caught. The guard works whichever module system your config loads under — that is why
-it is a proxy and not `Object.freeze`, which fails silently in sloppy mode. Both failures are counted separately and printed on the shortfall line —
+those is not caught. **To build a payload from a template, copy it with
+`JSON.parse(JSON.stringify(state.template))`** — `structuredClone` cannot copy the guard, and a
+spread copies only the top level. The guard works whichever module system your config loads under — that is why
+it is a proxy and not `Object.freeze`, which fails silently in sloppy mode. Both failures are
+counted separately and printed on the shortfall line —
 `not built (request() threw)` and `not built (impure request())` — because the remedies have
 nothing in common. A throw leaves the run to continue and be judged on its thresholds; a mutation
 fails the run outright on exit `2`, since a request that was never built cannot be evidence.
@@ -686,7 +689,7 @@ the run's ordinal. **550+ tests**, zero known vulnerabilities, gate two green ac
 
 **Next (M3): SSE / long-lived streaming requests** — open-ticket's contract run 5. Both debts M2
 surfaced were paid in M2.5: bounded-cardinality counters (declare a key space, use
-`record.countKeyed`) and `request()` purity, now enforced by freezing the setup state.
+`record.countKeyed`) and `request()` purity, now enforced by guarding the setup state.
 
 **Not published to npm yet.** Install from source; `@leivaa21/stampede` is reserved.
 

@@ -50,7 +50,7 @@ describe("loadConfig", () => {
     const file = join(dir, "scenarios.cjs");
     writeFileSync(file, "module.exports = {};");
 
-    await expect(loadConfig(file)).rejects.toThrow(/is not a TypeScript module/);
+    await expect(loadConfig(file)).rejects.toThrow(/is not a config stampede loads/);
   });
 
   it("names the file when there is nothing to load", async () => {

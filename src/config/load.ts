@@ -41,7 +41,6 @@ const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".mts"]);
  * above it is an **error-message gate, not a security gate** — worth saying, so a later "this stat
  * is redundant, `import()` throws anyway" cleanup removes the check and not the guard.
  */
-
 export const configUrlFor = (configPath: string): URL => {
   const absolute = path.resolve(configPath);
   if (!existsSync(absolute)) {
@@ -51,9 +50,9 @@ export const configUrlFor = (configPath: string): URL => {
   // enforced rather than assumed.
   if (!TYPESCRIPT_EXTENSIONS.has(path.extname(absolute))) {
     throw new ConfigLoadError(
-      `${absolute} is not a TypeScript module — stampede loads \`.ts\` and \`.mts\` configs, whose ` +
-        `types Node strips itself. The typed config *is* the DSL (D1-04), so this is the one file ` +
-        `format the tool has an opinion about.`,
+      `${absolute} is not a config stampede loads — it takes \`.ts\` and \`.mts\`, whose types Node ` +
+        `strips itself (D1-04). The typed config *is* the DSL, which is the one packaging opinion ` +
+        `the tool holds. A \`.cts\` config is TypeScript too, but CommonJS: rename it \`.mts\`.`,
     );
   }
   return pathToFileURL(absolute);

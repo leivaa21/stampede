@@ -5,7 +5,7 @@ import type { ScheduledScenario } from "./schedule.ts";
 import { assertCount, assertDurationMs, assertPositiveCount } from "./validate.ts";
 
 /**
- * A `request()` that mutated the frozen setup state (D25-02), carried as a type rather than a
+ * A `request()` that mutated the guarded setup state (D25-02), carried as a type rather than a
  * message.
  *
  * Declared here, in `engine/`, because the dispatcher is what acts on it — counting an impure
@@ -14,13 +14,12 @@ import { assertCount, assertDurationMs, assertPositiveCount } from "./validate.t
  *
  * A type rather than a string match, because this repo has been bitten twice by re-deriving that
  * distinction from a message.
- */
-/**
- * Thrown where the freeze is, which is `worker-entry.ts` — so library users meet it through
- * `runFromConfig`, and the low-level `scenariosFrom` + `runDispatch` path deliberately does not
- * freeze and therefore never throws it. It is exported because the dispatcher *branches* on the
- * type to keep impure builds out of `requestErrors`, and a class that decides a published number
- * should be nameable by the code reading that number.
+ *
+ * Thrown where the guard is applied, which is `worker-entry.ts` — so library users meet it through
+ * `runFromConfig`, while the low-level `scenariosFrom` + `runDispatch` path deliberately does not
+ * guard and therefore never throws it. It is exported because the dispatcher *branches* on the type
+ * to keep impure builds out of `requestErrors`, and a class that decides a published number should
+ * be nameable by the code reading that number.
  */
 export class ImpureRequestError extends Error {}
 

@@ -285,6 +285,64 @@ export default defineConfig({
     expect(report.failures.join(" ")).toContain("mutated the setup state");
   }, 30_000);
 
+  it("explains the guard when a pure builder copies the state with structuredClone", async () => {
+    // Copy-then-edit is the idiomatic way to *obey* the purity contract, and `structuredClone`
+    // cannot copy a proxy — so the guard breaks the very pattern it asks for. This builder never
+    // touches the state. Untranslated it reached the user as `worker-0: #<Object> could not be
+    // cloned.`, naming neither the scenario, nor `request()`, nor the guard, nor a way out.
+    const configPath = writeConfig(`export default defineConfig({
+  setup: () => ({ url: ${JSON.stringify(target.url)}, template: { kind: "buy", seat: null } }),
+  scenarios: {
+    reads: {
+      profile: burst({ count: 2 }),
+      request: (s, ordinal) => {
+        const body = structuredClone(s.template);
+        body.seat = "seat-" + String(ordinal);
+        return { url: s.url, method: "POST", body: JSON.stringify(body) };
+      },
+    },
+  },
+  workers: 1,
+  maxInFlight: 8,
+  drainTimeoutMs: 3000,
+});`);
+
+    const report = await runFromConfig({ configPath });
+
+    const failure = report.failures.join(" ");
+    expect(failure).toContain('scenario "reads": request() could not clone a value');
+    expect(failure).toContain("a proxy cannot be structured-cloned");
+    expect(failure).toContain("JSON.parse(JSON.stringify(state.thing))");
+    // Not an impurity. The builder obeyed the contract, and counting it as one would accuse it of
+    // the opposite of what it did.
+    expect(report.summary?.scenarios[0]?.impureRequestCount ?? 0).toBe(0);
+  }, 30_000);
+
+  it("lets the documented copy-then-edit workaround through", async () => {
+    // The remedy the message prescribes has to actually work, or it is a worse failure than none.
+    const configPath = writeConfig(`export default defineConfig({
+  setup: () => ({ url: ${JSON.stringify(target.url)}, template: { kind: "buy", seat: null } }),
+  scenarios: {
+    reads: {
+      profile: burst({ count: 2 }),
+      request: (s, ordinal) => {
+        const body = JSON.parse(JSON.stringify(s.template));
+        body.seat = "seat-" + String(ordinal);
+        return { url: s.url, method: "POST", body: JSON.stringify(body) };
+      },
+    },
+  },
+  workers: 1,
+  maxInFlight: 8,
+  drainTimeoutMs: 3000,
+});`);
+
+    const report = await runFromConfig({ configPath });
+
+    expect(report.exitCode).toBe(ExitCode.Ok);
+    expect(report.summary?.scenarios[0]?.responseCount).toBe(2);
+  }, 30_000);
+
   it("runs teardown after the storm, not before it", async () => {
     // The ordering *is* the milestone's argument, so it is asserted from inside the config: teardown
     // asks the target how many requests it has seen, and throws if the storm has not happened yet.

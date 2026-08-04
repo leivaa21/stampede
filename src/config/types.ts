@@ -42,7 +42,10 @@ export interface ScenarioConfig<TSetup> {
    * incrementing nonce — hands four threads the same four values rather than sixteen distinct ones.
    * The ordinal exists precisely so variation can be derived rather than accumulated, and this is
    * **enforced**: the state is guarded in each worker, so mutating it throws and the run fails
-   * naming this contract. Plain objects and arrays are frozen; a `Map`, `Set`, `Date` or `Buffer`
+   * naming this contract. To copy something out of the state, use
+   * `JSON.parse(JSON.stringify(...))` — `structuredClone` cannot copy the guard.
+   *
+   * Plain objects and arrays are guarded; a `Map`, `Set`, `Date` or `Buffer`
    * is left as it arrived, so mutating one of those is not caught. stampede also calls this once
    * at ordinal 0 per worker before the run starts, to fail a malformed request at startup instead
    * of twenty minutes in.

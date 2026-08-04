@@ -564,6 +564,13 @@ stated:** a `Map`, `Set`, `Date` or typed array in the state can still be mutate
 catch it. Children are wrapped in place _before_ the parent proxy is built, so no `get` trap is
 needed and reads stay on the ordinary path — `request` runs once per scheduled instant.
 
+**Consequence, translated rather than left raw:** `structuredClone` cannot copy a proxy, so
+copy-then-edit — the idiomatic way to _obey_ this contract — breaks against the guard. Untranslated
+it reaches the user as `worker-0: #<Object> could not be cloned.`, naming nothing. `to-run.ts`
+catches `DataCloneError` out of a builder and answers it with the scenario, the cause and the
+remedy (`JSON.parse(JSON.stringify(...))`), and both the failure and the remedy are asserted end to
+end. This is the guard's one real cost over the freeze, which was cloneable.
+
 **A later-ordinal mutation gets its own count, not `requestErrors`.** Folded together it read as
 "9 not built" and the run exited 0 — stampede refusing 90 % of its own load and reporting success,
 which is worse than the impurity it was policing. `impureRequestCount` is a term of the dispatch
