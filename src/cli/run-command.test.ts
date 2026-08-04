@@ -195,6 +195,34 @@ export default defineConfig({
     expect(report.summary?.scenarios[0]?.refusedRecordings).toBeGreaterThan(0);
   }, 30_000);
 
+  it("names the purity contract when request() mutates the setup state", async () => {
+    // The whole point of the message: without it a user sees "Cannot delete property '1' of
+    // [object Array]" from inside `Array.prototype.pop`, naming neither the scenario, nor
+    // `request()`, nor the rule it broke.
+    const configPath = writeConfig(`export default defineConfig({
+  setup: () => ({ url: ${JSON.stringify(target.url)}, seats: ["a", "b", "c"] }),
+  scenarios: {
+    reads: {
+      profile: burst({ count: 3 }),
+      request: (s) => ({ url: s.url + "?seat=" + String(s.seats.pop()) }),
+    },
+  },
+  workers: 1,
+  maxInFlight: 16,
+  drainTimeoutMs: 3000,
+});`);
+
+    const report = await runFromConfig({ configPath });
+
+    expect(report.exitCode).toBe(ExitCode.RunFailed);
+    const failure = report.failures.join(" ");
+    expect(failure).toContain('scenario "reads": request() mutated the setup state');
+    expect(failure).toContain("pure function of (state, ordinal)");
+    // And it says what to do instead, because "your builder is impure" is a diagnosis without a
+    // remedy for someone who reached for `pop()` precisely to get a different seat each time.
+    expect(failure).toContain("seats[ordinal % seats.length]");
+  }, 30_000);
+
   it("runs teardown after the storm, not before it", async () => {
     // The ordering *is* the milestone's argument, so it is asserted from inside the config: teardown
     // asks the target how many requests it has seen, and throws if the storm has not happened yet.

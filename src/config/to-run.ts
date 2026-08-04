@@ -1,6 +1,8 @@
 import { availableParallelism } from "node:os";
 import type { HttpRequestSpec } from "../engine/http-transport.ts";
 import { DEFAULT_DRAIN_TIMEOUT_MS, type Scenario } from "../engine/run-spec.ts";
+import { ConfigLoadError } from "./errors.ts";
+import { deepFreeze, isFrozenStateViolation } from "./freeze-state.ts";
 import type { StampedeConfig } from "./types.ts";
 
 /**
@@ -72,26 +74,56 @@ const assertRequestShape = (built: unknown, name: string): HttpRequestSpec => {
   return built as HttpRequestSpec;
 };
 
+/**
+ * Turns the `TypeError` a frozen state throws into the contract it violates.
+ *
+ * Without this the user sees "Cannot delete property '2' of [object Array]" from inside
+ * `Array.prototype.pop`, which names neither the scenario, nor `request()`, nor the rule. The
+ * throw is the enforcement; this is the part that makes it a diagnosis.
+ */
+const purityErrorFor = (error: unknown, name: string): Error =>
+  new ConfigLoadError(
+    `scenario "${name}": request() mutated the setup state, so it is not a pure function of ` +
+      `(state, ordinal). Every worker gets its own structured clone, so a builder that consumes ` +
+      `shared state — \`state.seats.pop()\` — hands each thread the same values instead of ` +
+      `distinct ones. Derive from the ordinal instead: \`seats[ordinal % seats.length]\`. ` +
+      `(${error instanceof Error ? error.message : String(error)})`,
+  );
+
 const eagerlyValidatedBuilder = (
   scenario: StampedeConfig<unknown>["scenarios"][string],
   setupState: unknown,
   name: string,
 ): ((ordinal: number) => HttpRequestSpec) => {
-  assertRequestShape(scenario.request(setupState, 0), name);
-  return (ordinal) => assertRequestShape(scenario.request(setupState, ordinal), name);
+  const build = (ordinal: number): HttpRequestSpec => {
+    try {
+      return assertRequestShape(scenario.request(setupState, ordinal), name);
+    } catch (error: unknown) {
+      // Only a frozen-state violation is translated. Anything else the builder throws is the
+      // build failure the dispatcher already counts, and rewriting it as a purity error would
+      // send a reader to the wrong contract.
+      throw isFrozenStateViolation(error) ? purityErrorFor(error, name) : error;
+    }
+  };
+  build(0);
+  return build;
 };
 
 export const scenariosFrom = (
   config: StampedeConfig<unknown>,
   setupState: unknown,
-): readonly Scenario<HttpRequestSpec>[] =>
-  Object.entries(config.scenarios).map(([name, scenario]) => ({
+): readonly Scenario<HttpRequestSpec>[] => {
+  // Frozen here: this runs once per worker, on the copy a builder can actually reach. Freezing on
+  // the main thread would protect nothing, because `structuredClone` does not preserve frozenness.
+  const frozen = deepFreeze(setupState);
+
+  return Object.entries(config.scenarios).map(([name, scenario]) => ({
     name,
     profile: scenario.profile,
     // Built once per dispatch (D2-02's accepted cost), but validated **eagerly at ordinal 0** so
     // the common mistake — returning a string, or forgetting the url — fails at startup with the
     // scenario named, rather than as a wall of counted build errors twenty minutes in.
-    requestFor: eagerlyValidatedBuilder(scenario, setupState, name),
+    requestFor: eagerlyValidatedBuilder(scenario, frozen, name),
     checks: scenario.checks,
     // `{ keys: [...] }` unwrapped: the config's shape exists so the declaration has somewhere to
     // grow, and the engine has no use for the wrapper.
@@ -100,6 +132,7 @@ export const scenariosFrom = (
     ),
     onResponse: scenario.onResponse,
   }));
+};
 
 export const workerCountFor = (config: StampedeConfig<unknown>): number =>
   config.workers ?? defaultWorkerCount();
