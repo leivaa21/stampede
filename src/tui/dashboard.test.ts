@@ -82,7 +82,7 @@ describe("frameFor", () => {
       summaryOf(scenario({ scheduledCount: 10, dispatchedCount: 1, impureRequestCount: 9 })),
     ).join("\n");
 
-    expect(frame).toContain("9 impure request()");
+    expect(frame).toContain("9 not built (impure request())");
   });
 
   it("says nothing about shortfalls when there are none", () => {

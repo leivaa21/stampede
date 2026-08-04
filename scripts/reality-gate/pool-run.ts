@@ -67,7 +67,9 @@ export const workerPoolRun = async (): Promise<void> => {
     // two-term version would have failed loudly. An identity that survives anything proves nothing.
     claim(
       "nothing was dropped and every request was built",
-      summary.droppedCount === 0 && summary.requestErrorCount === 0,
+      summary.droppedCount === 0 &&
+        summary.requestErrorCount === 0 &&
+        summary.impureRequestCount === 0,
       `${String(summary.droppedCount)} dropped, ${String(summary.requestErrorCount)} not built + ${String(summary.impureRequestCount)} impure`,
     );
     claim(
@@ -79,7 +81,7 @@ export const workerPoolRun = async (): Promise<void> => {
           summary.impureRequestCount &&
         summary.responseCount + summary.errorCount + summary.abandonedCount ===
           summary.dispatchedCount,
-      `${String(summary.scheduledCount)} = ${String(summary.dispatchedCount)} sent + ${String(summary.droppedCount)} dropped + ${String(summary.requestErrorCount)} not built; ` +
+      `${String(summary.scheduledCount)} = ${String(summary.dispatchedCount)} sent + ${String(summary.droppedCount)} dropped + ${String(summary.requestErrorCount)} not built + ${String(summary.impureRequestCount)} impure; ` +
         `${String(summary.dispatchedCount)} = ${String(summary.responseCount)} answered + ${String(summary.errorCount)} failed + ${String(summary.abandonedCount)} abandoned`,
     );
     claim(

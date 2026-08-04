@@ -1,4 +1,5 @@
 import { duration, ms, plain, rate } from "../report/format.ts";
+import { shortfallParts } from "../report/shortfall.ts";
 import type { RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 
 /**
@@ -77,14 +78,7 @@ const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonl
 
   // Shown the instant it is non-zero. A dashboard that only reveals drops at the end lets someone
   // watch a run they think is healthy for twenty minutes.
-  const shortfalls = [
-    scenario.droppedCount > 0 ? `${String(scenario.droppedCount)} dropped` : undefined,
-    scenario.requestErrorCount > 0 ? `${String(scenario.requestErrorCount)} not built` : undefined,
-    scenario.impureRequestCount > 0
-      ? `${String(scenario.impureRequestCount)} impure request()`
-      : undefined,
-    scenario.errorCount > 0 ? `${String(scenario.errorCount)} failed` : undefined,
-  ].filter((part): part is string => part !== undefined);
+  const shortfalls = shortfallParts(scenario);
   if (shortfalls.length > 0) {
     lines.push(`    ⚠ ${shortfalls.join(" · ")}`);
   }

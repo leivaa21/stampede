@@ -215,7 +215,7 @@ export const timingRuns = async (): Promise<void> => {
       // promising otherwise would be contradicted by its own detail four words later.
       claim(
         "every request was built",
-        summary.requestErrorCount === 0,
+        summary.requestErrorCount === 0 && summary.impureRequestCount === 0,
         `${String(summary.requestErrorCount)} not built, ${String(summary.droppedCount)} dropped`,
       );
     },

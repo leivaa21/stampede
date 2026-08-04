@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { burst } from "../engine/arrival-profiles.ts";
+import { ImpureRequestError } from "../engine/run-spec.ts";
 import { deepFreeze } from "./freeze-state.ts";
 import type { StampedeConfig } from "./types.ts";
 import {
@@ -172,6 +173,28 @@ describe("run settings", () => {
           deepFreeze({ url: "http://localhost:1/", seats: ["a"] }),
         ),
       ).toThrow(/^scenario "reads": request\(\) mutated the setup state/);
+    });
+
+    it("throws the *type* the dispatcher branches on, not just the message", () => {
+      // `run-spec.ts` argues the class exists because this repo has been bitten twice by
+      // re-deriving that distinction from a string. Asserting only the message left the contract
+      // half-held: returning a plain `Error` with identical text passed the whole suite and folded
+      // every dispatch-time mutation back into `requestErrors` — "39 not built", exit 0.
+      expect(() =>
+        scenariosFrom(
+          {
+            scenarios: {
+              reads: {
+                profile: burst({ count: 1 }),
+                request: (state: { seats: string[]; url: string }) => ({
+                  url: `${state.url}?seat=${String(state.seats.pop())}`,
+                }),
+              },
+            },
+          } as never,
+          deepFreeze({ url: "http://localhost:1/", seats: ["a"] }),
+        ),
+      ).toThrow(ImpureRequestError);
     });
   });
 });

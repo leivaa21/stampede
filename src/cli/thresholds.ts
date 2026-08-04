@@ -33,11 +33,19 @@ const adviceFor = (scenario: RunSummary["scenarios"][number]): string => {
   // First, because it is the only one of these where the *config* is at fault: nothing was sent, so
   // no advice about the target or its cap can be right. "check the target is reachable" for a
   // `request()` that threw on every ordinal sends someone to inspect a server that was never asked.
-  if (scenario.impureRequestCount >= scenario.scheduledCount && scenario.impureRequestCount > 0) {
-    return "every request mutated the frozen setup state; make `request()` pure in (state, ordinal).";
-  }
-  if (scenario.requestErrorCount >= scenario.scheduledCount && scenario.requestErrorCount > 0) {
-    return "every request threw while being built; fix `request()` in the config.";
+  // The *family* first, not each cause against the whole schedule. Compared separately, a run
+  // with 5 impure and 5 thrown builds satisfied neither branch and fell through to "check the
+  // target is reachable" — pointing at a server that had been asked once out of eleven. The
+  // threshold matches the drops branch below: more unbuilt than dispatched means the builder is
+  // the story.
+  const unbuilt = scenario.impureRequestCount + scenario.requestErrorCount;
+  if (unbuilt > 0 && unbuilt >= scenario.dispatchedCount) {
+    // Impure takes the wording when it is present at all, because it is the one with a remedy the
+    // reader cannot guess — and it is lost otherwise: `findUnmeasuredScenario` returns before
+    // `findImpureRequests` runs, so this sentence is the only place it reaches that reader.
+    return scenario.impureRequestCount > 0
+      ? "`request()` mutated the frozen setup state — it must be a pure function of (state, ordinal). Derive from the ordinal instead: `seats[ordinal % seats.length]`."
+      : "the requests threw while being built; fix `request()` in the config.";
   }
   if (scenario.droppedCount >= scenario.dispatchedCount && scenario.droppedCount > 0) {
     return "almost everything was refused by the in-flight cap; raise `maxInFlight`.";

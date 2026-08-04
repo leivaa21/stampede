@@ -223,6 +223,39 @@ export default defineConfig({
     expect(failure).toContain("seats[ordinal % seats.length]");
   }, 30_000);
 
+  it("reports a builder that goes impure *after* ordinal 0, which startup cannot catch", async () => {
+    // The startup path and the dispatch path are two different guards, and only this shape reaches
+    // the second. The other purity test pops at every ordinal, so it fails the eager `build(0)`
+    // while the worker is still starting — leaving the whole dispatch-time half of the contract
+    // (its own counter, its own finder, its own exit code) asserted by nothing.
+    const configPath = writeConfig(`export default defineConfig({
+  setup: () => ({ url: ${JSON.stringify(target.url)}, seats: ["a", "b", "c", "d"] }),
+  scenarios: {
+    reads: {
+      profile: burst({ count: 4 }),
+      request: (s, ordinal) =>
+        ordinal === 0 ? { url: s.url } : { url: s.url + "?seat=" + String(s.seats.pop()) },
+    },
+  },
+  workers: 1,
+  maxInFlight: 16,
+  drainTimeoutMs: 3000,
+});`);
+
+    const report = await runFromConfig({ configPath });
+
+    // Exit 2, not 1: three of the four requests were never made, so the numbers describe a run
+    // that did not happen rather than a target that misbehaved.
+    expect(report.exitCode).toBe(ExitCode.RunFailed);
+    expect(report.summary?.scenarios[0]?.impureRequestCount).toBe(3);
+    // Counted as its *own* term, not folded into build errors — the two have different remedies.
+    expect(report.summary?.scenarios[0]?.requestErrorCount).toBe(0);
+    expect(report.summary?.scenarios[0]?.responseCount).toBe(1);
+    const failure = report.failures.join(" ");
+    expect(failure).toContain("could not build 3 requests");
+    expect(failure).toContain("seats[ordinal % seats.length]");
+  }, 30_000);
+
   it("runs teardown after the storm, not before it", async () => {
     // The ordering *is* the milestone's argument, so it is asserted from inside the config: teardown
     // asks the target how many requests it has seen, and throws if the storm has not happened yet.

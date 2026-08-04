@@ -3,6 +3,7 @@ import type { RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 import {
   evaluateThresholds,
   findBrokenObservations,
+  findImpureRequests,
   findRefusedRecordings,
   findUnmeasuredScenario,
 } from "./thresholds.ts";
@@ -117,6 +118,60 @@ describe("findUnmeasuredScenario", () => {
   });
 });
 
+describe("adviceFor, through the message that carries it", () => {
+  it("blames the builder when most of the attempted instants never became a request", () => {
+    // Judged as a family. Compared separately against the schedule, 5 impure + 5 thrown + 1 sent
+    // satisfied neither cause and fell through to "check the target is reachable" — sending
+    // someone to inspect a server that had been asked once out of eleven.
+    const message = findUnmeasuredScenario(
+      summaryOf(
+        scenario({
+          scheduledCount: 11,
+          dispatchedCount: 1,
+          impureRequestCount: 5,
+          requestErrorCount: 5,
+          responseCount: 0,
+        }),
+      ),
+    );
+
+    expect(message).toContain("mutated the frozen setup state");
+    expect(message).not.toContain("check the target is reachable");
+  });
+
+  it("keeps the purity remedy reachable on the path that returns before the finder runs", () => {
+    // `findUnmeasuredScenario` returns first, so `findImpureRequests` never runs on a scenario
+    // that recorded nothing. This sentence is the only place the remedy reaches that reader.
+    const message = findUnmeasuredScenario(
+      summaryOf(
+        scenario({
+          scheduledCount: 4,
+          dispatchedCount: 0,
+          impureRequestCount: 4,
+          responseCount: 0,
+        }),
+      ),
+    );
+
+    expect(message).toContain("seats[ordinal % seats.length]");
+  });
+
+  it("still blames the cap when the drops, not the builder, are the story", () => {
+    const message = findUnmeasuredScenario(
+      summaryOf(
+        scenario({
+          scheduledCount: 10,
+          dispatchedCount: 0,
+          droppedCount: 10,
+          responseCount: 0,
+        }),
+      ),
+    );
+
+    expect(message).toContain("maxInFlight");
+  });
+});
+
 describe("findRefusedRecordings", () => {
   it("says nothing when every recording was accepted", () => {
     expect(findRefusedRecordings(summaryOf(scenario()))).toBeUndefined();
@@ -131,6 +186,32 @@ describe("findRefusedRecordings", () => {
     expect(message).toContain('"reads"');
     expect(message).toContain("88 recordings");
     expect(message).toContain("cardinality bomb");
+  });
+});
+
+describe("findImpureRequests", () => {
+  it("says nothing about a run whose builder behaved", () => {
+    expect(findImpureRequests(summaryOf(scenario()))).toBeUndefined();
+  });
+
+  it("names the contract, the count, and the remedy", () => {
+    const message = findImpureRequests(summaryOf(scenario({ impureRequestCount: 9 })));
+
+    expect(message).toContain("9 requests");
+    expect(message).toContain("pure function of (state, ordinal)");
+    // The remedy, not just the diagnosis: someone reached for `pop()` *because* they wanted a
+    // different seat per request, and "your builder is impure" does not tell them what to write.
+    expect(message).toContain("seats[ordinal % seats.length]");
+  });
+
+  it("is not the broken-observations message wearing a different hat", () => {
+    // Its own finder because routing it through `brokenObservations` told a config with neither a
+    // check nor an `onResponse` that "a check or onResponse threw" — D2-04's own failure mode, a
+    // report accusing the reader of something they did not do.
+    const summary = summaryOf(scenario({ impureRequestCount: 9 }));
+
+    expect(findBrokenObservations(summary)).toBeUndefined();
+    expect(findImpureRequests(summary)).toContain("request()");
   });
 });
 

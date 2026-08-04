@@ -240,7 +240,9 @@ describe("renderSummary", () => {
       summaryOf(scenario({ scheduledCount: 10, dispatchedCount: 1, impureRequestCount: 9 })),
     );
 
-    expect(text).toContain("9 not built (request() mutated the setup state)");
+    // One phrasing across all three surfaces (`report/shortfall.ts`). The tally says *which*
+    // cause; the run's failure message, printed below this on the same page, says what to do.
+    expect(text).toContain("9 not built (impure request())");
   });
 
   it("says when recordings were refused, because the missing ones read as zero", () => {

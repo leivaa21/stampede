@@ -160,8 +160,8 @@ const ENGINE_METRIC_KINDS: Readonly<Record<keyof typeof EngineMetric, "counter" 
  *
  * The counters that starve are exactly the ones that matter: `dropped` and `abandoned` are first
  * incremented when the target falls over, which is *after* a run's worth of user names exist. A
- * run that dropped 350 requests then reports zero drops, and `dispatched + dropped + notBuilt ===
- * scheduled` — the identity the README claims — stops holding with nothing on the page to say so.
+ * run that dropped 350 requests then reports zero drops, and `dispatched + dropped + notBuilt +
+ * impure === scheduled` — the identity the README claims — stops holding with nothing on the page to say so.
  *
  * Reserving a slot each makes `known.has(name)` permanently true, which is the only thing the
  * cardinality rule looks at. The count is deliberately not written here: hardcoding it made a test
