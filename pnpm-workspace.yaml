@@ -10,7 +10,15 @@ allowBuilds:
 #     pull 0.29/1.0 — the intent is "at least the patched version", not "any future major".
 #     Drop when tsup moves to ^0.28. (2026-07-30)
 #
-#   - brace-expansion: GHSA-mh99-v99m-4gvg dropped 2026-07-30 — every dependent in the tree now
-#     requests ^5.0.8 on its own, so the override could no longer change the resolution.
+#   - brace-expansion: GHSA-rgw5-rvv9-x895 (DoS via unbounded intermediate arrays, bypassing the
+#     CVE-2026-14257 mitigation), via eslint's minimatch — fixed in 5.0.9. Dev-only, and pinned
+#     anyway: the workspace policy is zero advisories including dev-only ones, because a public
+#     repo's security tab is part of the showcase. Upper-bounded like esbuild so a future
+#     `pnpm update` cannot silently pull a major. Drop when eslint's tree requests ^5.0.9 on its
+#     own. (2026-08-04)
+#
+#     An earlier override for GHSA-mh99-v99m-4gvg was dropped on 2026-07-30 once every dependent
+#     requested ^5.0.8 — this advisory covers 5.0.8 as well, so it is back rather than restored.
 overrides:
   esbuild: ">=0.28.1 <0.29.0"
+  brace-expansion: ">=5.0.9 <6.0.0"
