@@ -361,7 +361,7 @@ summary.elapsedMs
 summary.maxObservedInFlight
 summary.scenarios[i].{
   name,
-  scheduledCount, dispatchedCount, droppedCount, requestErrorCount,
+  scheduledCount, dispatchedCount, droppedCount, requestErrorCount, impureRequestCount,
   responseCount, errorCount, abandonedCount,
   requestedRatePerSecond, achievedRatePerSecond,
   latencyMs, scheduledLatencyMs, scheduleLagMs,

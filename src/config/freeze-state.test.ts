@@ -126,6 +126,22 @@ describe("isFrozenStateViolation", () => {
     expect(isFrozenStateViolation(thrown)).toBe(true);
   });
 
+  it("recognises `defineProperty` on frozen state, the one case with a different message", () => {
+    // Every other operation — assign, add, delete, pop, push, sort, length — produces the first
+    // alternative. This is the only way to reach the second, so without it that branch is an
+    // unexercised alternative in a matcher, which is how the next one becomes redundant unnoticed.
+    const state = deepFreeze<Record<string, unknown>>({});
+    let thrown: unknown;
+
+    try {
+      Object.defineProperty(state, "z", { value: 1 });
+    } catch (error: unknown) {
+      thrown = error;
+    }
+
+    expect(isFrozenStateViolation(thrown)).toBe(true);
+  });
+
   it("does not claim an unrelated error", () => {
     // A builder that throws for its own reasons is the build failure the dispatcher counts, and
     // rewriting it as a purity error would send a reader to the wrong contract.

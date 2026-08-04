@@ -34,7 +34,8 @@ export interface ScenarioConfig<TSetup> {
    *
    * Keep it cheap: it runs on the dispatch path, once per request, and time spent here is time the
    * generator is not dispatching. If it throws, that request is counted as a build failure and the
-   * run continues — reported as `not built`, never as the target refusing.
+   * run continues — reported as `not built`, never as the target refusing. The one exception is
+   * mutating the setup state, which fails the run; see below.
    *
    * **It must be a pure function of `(setupState, ordinal)`.** Every worker gets its own structured
    * clone of the setup state, so a builder that consumes shared state — `state.seats.pop()`, an

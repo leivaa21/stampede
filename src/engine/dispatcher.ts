@@ -1,4 +1,3 @@
-import { ImpureRequestError } from "../config/freeze-state.ts";
 import { MetricsRegistry, type ScenarioMetrics } from "../metrics/index.ts";
 import { InFlight } from "./in-flight.ts";
 import { recordLatencies } from "./latency.ts";
@@ -14,6 +13,7 @@ import type { Clock, Transport, TransportResponse } from "./ports.ts";
 import {
   assertRunSpec,
   DEFAULT_DRAIN_TIMEOUT_MS,
+  ImpureRequestError,
   type RunSpec,
   type Scenario,
 } from "./run-spec.ts";

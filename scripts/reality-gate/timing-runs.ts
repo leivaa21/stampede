@@ -118,8 +118,12 @@ const gateRun = async ({
     );
     claim(
       "the loop consumed the whole schedule, and every instant landed in exactly one bucket",
-      summary.dispatchedCount + summary.droppedCount + summary.requestErrorCount === expectedCount,
-      `${String(expectedCount)} = ${String(summary.dispatchedCount)} sent + ${String(summary.droppedCount)} dropped + ${String(summary.requestErrorCount)} not built`,
+      summary.dispatchedCount +
+        summary.droppedCount +
+        summary.requestErrorCount +
+        summary.impureRequestCount ===
+        expectedCount,
+      `${String(expectedCount)} = ${String(summary.dispatchedCount)} sent + ${String(summary.droppedCount)} dropped + ${String(summary.requestErrorCount)} not built + ${String(summary.impureRequestCount)} impure`,
     );
 
     check(summary, stats, expectedCount);

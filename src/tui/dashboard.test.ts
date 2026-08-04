@@ -74,6 +74,17 @@ describe("frameFor", () => {
     expect(frame).toContain("⚠ 5 dropped · 2 failed");
   });
 
+  it("shows an impure builder while the run is still going", () => {
+    // The bar counts them as dealt with from the start; without this the shortfall stayed silent,
+    // so it raced to 10/10 with one answered and no ⚠ explaining the nine — the twenty-minute
+    // silence this file refuses for drops.
+    const frame = frameFor(
+      summaryOf(scenario({ scheduledCount: 10, dispatchedCount: 1, impureRequestCount: 9 })),
+    ).join("\n");
+
+    expect(frame).toContain("9 impure request()");
+  });
+
   it("says nothing about shortfalls when there are none", () => {
     expect(frameFor(summaryOf(scenario())).join("\n")).not.toContain("⚠");
   });

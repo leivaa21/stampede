@@ -4,6 +4,19 @@ import { assertShard, type Shard } from "./schedule-split.ts";
 import type { ScheduledScenario } from "./schedule.ts";
 import { assertCount, assertDurationMs, assertPositiveCount } from "./validate.ts";
 
+/**
+ * A `request()` that mutated the frozen setup state (D25-02), carried as a type rather than a
+ * message.
+ *
+ * Declared here, in `engine/`, because the dispatcher is what acts on it — counting an impure
+ * builder apart from one that merely threw. `config/to-run.ts` constructs it and imports *up*; the
+ * reverse would put the config loader on the hot dispatch path a stranger traces.
+ *
+ * A type rather than a string match, because this repo has been bitten twice by re-deriving that
+ * distinction from a message.
+ */
+export class ImpureRequestError extends Error {}
+
 /** How long the run keeps waiting for responses after its last dispatch went out. */
 export const DEFAULT_DRAIN_TIMEOUT_MS = 30_000;
 

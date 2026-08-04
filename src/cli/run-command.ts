@@ -6,6 +6,7 @@ import { runPool } from "../engine/worker-pool.ts";
 import {
   evaluateThresholds,
   findBrokenObservations,
+  findImpureRequests,
   findRefusedRecordings,
   findUnmeasuredScenario,
   type Verdict,
@@ -133,9 +134,11 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
   // *measurements* are real and whose *claims* are not, so unlike an unmeasured scenario there is a
   // percentile table worth printing — and returning early would cost the reader the specific half
   // of the story, the same trade the teardown path below already refuses.
-  const runFailures = [findBrokenObservations(summary), findRefusedRecordings(summary)].filter(
-    (failure): failure is string => failure !== undefined,
-  );
+  const runFailures = [
+    findBrokenObservations(summary),
+    findRefusedRecordings(summary),
+    findImpureRequests(summary),
+  ].filter((failure): failure is string => failure !== undefined);
 
   // The invariant is proven *after* the storm — this is the line D1-06 exists for. A throw here is
   // a violated claim, not a crashed tool, so it lands on exit 1 with the rest of them.

@@ -68,12 +68,15 @@ export const workerPoolRun = async (): Promise<void> => {
     claim(
       "nothing was dropped and every request was built",
       summary.droppedCount === 0 && summary.requestErrorCount === 0,
-      `${String(summary.droppedCount)} dropped, ${String(summary.requestErrorCount)} not built`,
+      `${String(summary.droppedCount)} dropped, ${String(summary.requestErrorCount)} not built + ${String(summary.impureRequestCount)} impure`,
     );
     claim(
       "the merged accounting adds up",
       summary.scheduledCount ===
-        summary.dispatchedCount + summary.droppedCount + summary.requestErrorCount &&
+        summary.dispatchedCount +
+          summary.droppedCount +
+          summary.requestErrorCount +
+          summary.impureRequestCount &&
         summary.responseCount + summary.errorCount + summary.abandonedCount ===
           summary.dispatchedCount,
       `${String(summary.scheduledCount)} = ${String(summary.dispatchedCount)} sent + ${String(summary.droppedCount)} dropped + ${String(summary.requestErrorCount)} not built; ` +

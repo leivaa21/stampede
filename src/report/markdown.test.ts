@@ -302,6 +302,14 @@ describe("renderMarkdownReport", () => {
     expect(text).toContain("**88 recordings refused**");
   });
 
+  it("names an impure builder in the shortfall", () => {
+    const report = render(
+      summaryOf(scenario({ scheduledCount: 10, dispatchedCount: 1, impureRequestCount: 9 })),
+    );
+
+    expect(report).toContain("9 not built (impure request())");
+  });
+
   it("names requests the config could not build in the shortfall", () => {
     const text = render(
       summaryOf(scenario({ scheduledCount: 100, dispatchedCount: 90, requestErrorCount: 10 })),

@@ -80,6 +80,9 @@ const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonl
   const shortfalls = [
     scenario.droppedCount > 0 ? `${String(scenario.droppedCount)} dropped` : undefined,
     scenario.requestErrorCount > 0 ? `${String(scenario.requestErrorCount)} not built` : undefined,
+    scenario.impureRequestCount > 0
+      ? `${String(scenario.impureRequestCount)} impure request()`
+      : undefined,
     scenario.errorCount > 0 ? `${String(scenario.errorCount)} failed` : undefined,
   ].filter((part): part is string => part !== undefined);
   if (shortfalls.length > 0) {

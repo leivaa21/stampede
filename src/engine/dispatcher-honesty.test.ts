@@ -12,6 +12,7 @@ import {
   type FakeRequest,
 } from "../test-support/fake-transport.ts";
 import { burst, constantRate } from "./arrival-profiles.ts";
+import { ImpureRequestError } from "./run-spec.ts";
 import type { Transport, TransportResponse } from "./ports.ts";
 
 import { MAX_DISTINCT_TALLIES } from "../metrics/validate.ts";
@@ -285,6 +286,48 @@ describe("user code cannot starve the engine's own bookkeeping", () => {
     expect(reads.responseCount).toBe(700);
     // 100 of each of the four, and all four have to reach the verdict.
     expect(reads.brokenObservations).toBe(400);
+  });
+
+  it("counts a builder that mutates the state apart from one that merely throws", async () => {
+    // The dispatch path, which the startup test never reaches: a builder that is pure at ordinal 0
+    // survives the eager call and only mutates later. Folded into `requestErrors` this read as
+    // "9 not built" and the run exited 0 — the tool refusing 90% of its own load and reporting
+    // success, which is worse than the impurity it was policing.
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ clock });
+
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: burst({ count: 10 }),
+            requestFor: (ordinal) => {
+              if (ordinal > 0) {
+                throw new ImpureRequestError("request() mutated the setup state");
+              }
+              return { label: "reads" };
+            },
+          },
+        ],
+        maxInFlight: 50,
+        drainTimeoutMs: 1_000,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    expect(reads.impureRequestCount).toBe(9);
+    // Apart from, not folded into — the two have different causes and different remedies.
+    expect(reads.requestErrorCount).toBe(0);
+    // And the identity is four terms now, not three.
+    expect(
+      reads.dispatchedCount +
+        reads.droppedCount +
+        reads.requestErrorCount +
+        reads.impureRequestCount,
+    ).toBe(reads.scheduledCount);
   });
 
   it("keeps counting transport failures after the budget is full", async () => {

@@ -235,6 +235,14 @@ describe("renderSummary", () => {
     expect(text).toContain("10 not built (request() threw)");
   });
 
+  it("names an impure builder in the shortfall, apart from one that threw", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ scheduledCount: 10, dispatchedCount: 1, impureRequestCount: 9 })),
+    );
+
+    expect(text).toContain("9 not built (request() mutated the setup state)");
+  });
+
   it("says when recordings were refused, because the missing ones read as zero", () => {
     const text = renderSummary(summaryOf(scenario({ refusedRecordings: 88 })));
 

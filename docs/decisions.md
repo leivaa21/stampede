@@ -361,7 +361,8 @@ difference between a proven run and an unasserted one.
 ## 2026-08-02 — Requests that could not be built are their own count, in the accounting identity
 
 **Decision.** `request()` throwing is counted as `requestErrorCount`, a named field on the scenario
-summary, and the run's identity becomes `dispatched + dropped + requestErrors === scheduled`. It is
+summary, and the run's identity becomes `dispatched + dropped + requestErrors === scheduled`
+(D25-02 adds a fourth term, `impureRequests`, for the same reason). It is
 kept apart from `errorCount` (transport failures) and from `droppedCount` (the in-flight cap).
 
 **Why.** All three are "a scheduled request that produced no response", and collapsing them loses
@@ -516,21 +517,45 @@ bites — the exact failure this decision removes.
 would be the silent hole `metrics/validate.ts` refuses. Implicit means a config cannot forget it,
 and a non-zero `other` is itself the signal that the declared key space is wrong.
 
-## 2026-08-03 — [D25-02] The setup state is deep-frozen, in the worker
+## 2026-08-03 — [D25-02] The setup state is deep-frozen, at the worker's door
 
-**Decision.** `scenariosFrom` deep-freezes the setup state before building the request builder. A
-`request()` that mutates it throws, and the eager ordinal-0 call turns that into a
-`ConfigLoadError` naming the purity contract.
+**Decision.** `worker-entry.ts` deep-freezes the setup state before handing it to `scenariosFrom`.
+A `request()` that mutates it throws; the eager ordinal-0 call turns that into a message naming the
+purity contract, and a mutation on a later ordinal is counted as `impureRequestCount` and fails the
+run.
 
-**Why in the worker.** `structuredClone` does not preserve frozenness, so freezing on the main
-thread would protect nothing. The worker's copy is the one a builder can reach.
+**Why in the worker, and at that door.** `structuredClone` does not preserve frozenness, so freezing
+on the main thread would protect nothing — the worker's copy is the one a builder can reach. And at
+the _door_ rather than inside `scenariosFrom`, because that function is exported and a converter
+that seals its caller's argument in place is a side effect its name and signature do not disclose.
+Freezing where the clone arrives makes "frozen in the worker" true by construction.
 
 **Why freeze rather than compare two calls.** Calling `request(state, 0)` twice and comparing would
 also catch a nonce — but it false-positives on a builder that legitimately varies on something
 external, and it doubles a call the author was told runs once per dispatch. Freezing catches the
-violation that actually happens, `state.seats.pop()`, at the first dispatch and with a message. A
-config doing that was already broken across four threads, each holding its own clone; this makes it
-fail loudly rather than publish wrong numbers.
+violation that actually happens, `state.seats.pop()`, with a message. A config doing that was
+already broken across four threads, each holding its own clone; this makes it fail loudly rather
+than publish wrong numbers.
+
+**Only plain objects and arrays are frozen**, and that is a correctness constraint rather than a
+simplification. `Object.freeze` _throws_ on a non-empty typed array, so a `Buffer` in the setup
+state — the canonical shape for load-testing an authed API — killed every worker with a raw V8
+string. Freezing a `RegExp` is quieter and worse: `lastIndex` becomes non-writable, so a pure
+`re.test(...)` throws a message the matcher reads as a purity violation, accusing a user who
+mutated nothing. **Consequence, stated:** a `Map`, `Set`, `Date` or typed array in the state can
+still be mutated and this will not catch it. A guard that crashes on a `Buffer` to theoretically
+catch a mutated `Date` is the worse trade.
+
+**A later-ordinal mutation gets its own count, not `requestErrors`.** Folded together it read as
+"9 not built" and the run exited 0 — stampede refusing 90 % of its own load and reporting success,
+which is worse than the impurity it was policing. `impureRequestCount` is a term of the dispatch
+identity (`dispatched + dropped + requestErrors + impure === scheduled`) and has its own run-failure
+message, because "a check or onResponse threw" is the wrong sentence for a config with neither.
+
+**Rejected: relying on the freeze alone.** A `.cjs` config runs in sloppy mode, where a write to a
+frozen object fails _silently_ — the mutation is discarded and the builder starts sending the same
+value every time with nothing to say why. `configUrlFor` now refuses anything that is not `.ts` or
+`.mts`, which the README, `--help` and D1-04 already promised.
 
 ## 2026-08-03 — [D25-03] Gate two runs nightly, and cannot redden a pull request
 

@@ -379,10 +379,7 @@ const summariseScenario = (
       (recorded?.counters.get(EngineMetric.undeclaredCounters) ?? 0) +
       // A plain `count` that landed on a declared slot: refused, and the run has to say so or the
       // increments vanish silently — the same silent hole, one door over.
-      (recorded?.counters.get(EngineMetric.collidingCounters) ?? 0) +
-      // A builder that mutated the state is a broken *claim* about the run, not a broken target —
-      // and it has to fail the run, or the tool drops most of its own load and reports success.
-      (recorded?.counters.get(EngineMetric.impureRequests) ?? 0),
+      (recorded?.counters.get(EngineMetric.collidingCounters) ?? 0),
     latencyMs: toLatencySummary(recorded?.findHistogram(EngineMetric.latency)?.summary()),
     scheduledLatencyMs: toLatencySummary(
       recorded?.findHistogram(EngineMetric.scheduledLatency)?.summary(),

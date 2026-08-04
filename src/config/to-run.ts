@@ -1,7 +1,7 @@
 import { availableParallelism } from "node:os";
 import type { HttpRequestSpec } from "../engine/http-transport.ts";
-import { DEFAULT_DRAIN_TIMEOUT_MS, type Scenario } from "../engine/run-spec.ts";
-import { ImpureRequestError, isFrozenStateViolation } from "./freeze-state.ts";
+import { DEFAULT_DRAIN_TIMEOUT_MS, ImpureRequestError, type Scenario } from "../engine/run-spec.ts";
+import { isFrozenStateViolation } from "./freeze-state.ts";
 import type { StampedeConfig } from "./types.ts";
 
 /**

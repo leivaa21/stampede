@@ -26,11 +26,12 @@
  * `re.test(...)` inside `request()` throws — and throws a message this module's own matcher reads
  * as a purity violation, telling the user they mutated state when they mutated nothing.
  *
- * **What that leaves unguarded, stated rather than implied:** a `Map`, a `Set`, a `Date` and a
- * typed array in the setup state can still be mutated by a builder, and this will not catch it.
- * They are rare in structured-cloneable setup state, and the guard's job is the mistake people
- * actually make — consuming an array or reassigning a field. A guard that crashes on a `Buffer` to
- * theoretically catch a mutated `Date` is a worse trade than saying so here.
+ * **What that leaves unguarded, stated rather than implied:** a `Map`, `Set`, `Date`, `Error` or
+ * typed array in the setup state can still be mutated by a builder, and this will not catch it —
+ * `structuredClone` preserves all of their prototypes. Neither is an object from another realm,
+ * which cannot arrive through a clone anyway. They are rare in setup state, and the guard's job is
+ * the mistake people actually make: consuming an array or reassigning a field. A guard that
+ * crashes on a `Buffer` to theoretically catch a mutated `Date` is a worse trade than saying so.
  */
 const isFreezable = (value: unknown): value is Record<PropertyKey, unknown> => {
   if (typeof value !== "object" || value === null) {
@@ -45,6 +46,9 @@ const isFreezable = (value: unknown): value is Record<PropertyKey, unknown> => {
 
 /**
  * Recursively freezes the plain objects and arrays in `value`, in place, and returns it.
+ *
+ * Module-level, called only by `worker-entry.ts` — not part of the package's public API, so the
+ * only value it ever sees is a post-`structuredClone` one.
  *
  * Cycles are tracked because the setup state is structured-cloneable, and structured clone
  * preserves cycles — `state.self = state` survives the trip and would otherwise recurse forever.
@@ -73,15 +77,6 @@ export const deepFreeze = <T>(value: T): T => {
   walk(value);
   return value;
 };
-
-/**
- * A builder that mutated the frozen setup state, carried as a type rather than a message.
- *
- * The dispatch path has to tell this from an ordinary build failure, and this repo has been bitten
- * twice by re-deriving that from a string (`instanceof TypeError` could not tell a refused
- * connection from a schema error). One class, checked once.
- */
-export class ImpureRequestError extends Error {}
 
 /**
  * Whether a thrown error is what a frozen object throws when something tries to write to it.

@@ -38,6 +38,7 @@ const TYPE_STRIPPING_HELP = [
  * above it is an **error-message gate, not a security gate** — worth saying, so a later "this stat
  * is redundant, `import()` throws anyway" cleanup removes the check and not the guard.
  */
+
 /** What Node will strip types from and load as an ES module. */
 const TYPESCRIPT_MODULE = /\.m?ts$/;
 
@@ -55,8 +56,9 @@ export const configUrlFor = (configPath: string): URL => {
   if (!TYPESCRIPT_MODULE.test(absolute)) {
     throw new ConfigLoadError(
       `${absolute} is not a TypeScript module — stampede loads \`.ts\` and \`.mts\` configs, which ` +
-        `Node strips types from and runs as ES modules. A CommonJS config would run in sloppy ` +
-        `mode, where mutating the frozen setup state fails silently instead of failing loudly.`,
+        `Node strips types from and runs as ES modules. The typed config *is* the DSL, so this is ` +
+        `not a packaging detail: a \`.cjs\` config additionally runs in sloppy mode, where mutating ` +
+        `the frozen setup state fails silently instead of failing loudly.`,
     );
   }
   return pathToFileURL(absolute);

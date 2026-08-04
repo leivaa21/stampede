@@ -33,6 +33,9 @@ const adviceFor = (scenario: RunSummary["scenarios"][number]): string => {
   // First, because it is the only one of these where the *config* is at fault: nothing was sent, so
   // no advice about the target or its cap can be right. "check the target is reachable" for a
   // `request()` that threw on every ordinal sends someone to inspect a server that was never asked.
+  if (scenario.impureRequestCount >= scenario.scheduledCount && scenario.impureRequestCount > 0) {
+    return "every request mutated the frozen setup state; make `request()` pure in (state, ordinal).";
+  }
   if (scenario.requestErrorCount >= scenario.scheduledCount && scenario.requestErrorCount > 0) {
     return "every request threw while being built; fix `request()` in the config.";
   }
@@ -63,6 +66,31 @@ export const findRefusedRecordings = (summary: RunSummary): string | undefined =
         `The values that were recorded are real, but some are missing entirely, so a threshold ` +
         `reading one of them would read 0 rather than the truth. Use fewer distinct names — ` +
         `a counter or a trend per seat is a cardinality bomb; one per outcome is not.`
+      );
+    }
+  }
+  return undefined;
+};
+
+/**
+ * A scenario whose `request()` mutated the frozen setup state (D25-02).
+ *
+ * Its own finder rather than a term of `brokenObservations`, which documents itself as checks and
+ * `onResponse` — routing it there told a config with neither that "a check or onResponse threw",
+ * two lines under a shortfall correctly naming `request()`. That is D2-04's own failure mode (a
+ * report accusing the reader of something they did not do) one door over, and it also put one
+ * event in two accounting families: `impure` is a term of the dispatch identity *and* was a term
+ * of an observation count, for a request that was never made.
+ */
+export const findImpureRequests = (summary: RunSummary): string | undefined => {
+  for (const scenario of summary.scenarios) {
+    if (scenario.impureRequestCount > 0) {
+      return (
+        `scenario "${scenario.name}" could not build ${String(scenario.impureRequestCount)} requests ` +
+        `because \`request()\` mutated the setup state, which is frozen — it must be a pure ` +
+        `function of (state, ordinal). Every worker holds its own clone, so consuming shared state ` +
+        `hands each thread the same values instead of distinct ones. Derive from the ordinal ` +
+        `instead: \`seats[ordinal % seats.length]\`.`
       );
     }
   }
@@ -110,6 +138,7 @@ export const findUnmeasuredScenario = (summary: RunSummary): string | undefined 
         `scenario "${scenario.name}" recorded no responses at all ` +
         `(${String(scenario.dispatchedCount)} dispatched, ${String(scenario.errorCount)} failed, ` +
         `${String(scenario.droppedCount)} dropped, ${String(scenario.requestErrorCount)} not built, ` +
+        `${String(scenario.impureRequestCount)} impure, ` +
         `${String(scenario.abandonedCount)} abandoned). ` +
         `There is nothing to publish a percentile from — ${adviceFor(scenario)}`
       );
