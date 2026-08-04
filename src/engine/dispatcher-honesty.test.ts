@@ -245,6 +245,46 @@ describe("user code cannot starve the engine's own bookkeeping", () => {
     expect(reads.refusedRecordings).toBe(600 - (MAX_DISTINCT_TALLIES - reservedByTheEngine));
   });
 
+  it("keeps counting a declared key that first fires after the budget is full", async () => {
+    // The mechanism D25-01's whole argument rests on: every declared slot is reserved before the
+    // run, exactly like the engine's own counters. Without the reservation the declared slot is
+    // refused once user names fill the map, and `keyedCountersOf`'s `?? 0` then publishes a
+    // confident zero for a key that really was incremented — a number nobody would question.
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ clock });
+
+    let names = 0;
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: burst({ count: 700 }),
+            requestFor: () => ({ label: "reads" }),
+            keyedCounters: { byOutcome: ["late"] },
+            onResponse: (_response, record) => {
+              names += 1;
+              // 600 distinct names first — past the 512 cap — and only then the declared key.
+              if (names <= 600) {
+                record.count(`seat-${String(names)}`);
+                return;
+              }
+              record.countKeyed("byOutcome", "late");
+            },
+          },
+        ],
+        maxInFlight: 1_000,
+        drainTimeoutMs: 1_000,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    expect(reads.responseCount).toBe(700);
+    expect(reads.keyedCounters.byOutcome).toEqual({ late: 100, other: 0 });
+  });
+
   it("keeps attributing a check that only starts breaking once the budget is full", async () => {
     const clock = new FakeClock();
     let answered = 0;

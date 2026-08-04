@@ -64,6 +64,18 @@ export const MAX_CHECKS_PER_SCENARIO = 64;
  */
 export const MAX_KEYS_PER_COUNTER = 64;
 
+/**
+ * Slots a scenario's *declarations* may reserve, leaving the rest of the budget for its own
+ * plain counters.
+ *
+ * Checking only that the declarations fit `MAX_DISTINCT_TALLIES` leaves zero headroom: a config
+ * declaring exactly the whole budget starts, then has every `record.count(...)` refused, and gets
+ * "use fewer distinct names" at the end of the run — the diagnosis-without-a-remedy that declared
+ * key spaces exist to remove, and here it is backwards, because the user *did* bound their
+ * cardinality. Half the budget is a judgement call, stated rather than implied.
+ */
+export const MAX_DECLARED_SLOTS_PER_SCENARIO = MAX_DISTINCT_TALLIES / 2;
+
 export const assertMetricName = (name: string, kind: string): void => {
   if (name.length === 0) {
     throw new RangeError(`A ${kind} name must not be empty`);

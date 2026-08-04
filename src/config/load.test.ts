@@ -164,16 +164,43 @@ await loadConfig(${JSON.stringify(file)}).catch((error) => {
       );
     });
 
-    it("refuses a declared key space that would not fit the counter budget", async () => {
-      // At startup with the sum shown, rather than as "recordings refused" twenty minutes later —
-      // by which time the information stopped being actionable.
+    it("refuses declarations that would leave no room for plain counters", async () => {
+      // At startup with the sum shown, rather than as "recordings refused" twenty minutes later.
+      // Checked against *half* the budget, so a config that bounded its cardinality perfectly is
+      // not still told at the end of its run to use fewer names.
       const keys = Array.from({ length: 60 }, (_, i) => `"k${String(i)}"`).join(", ");
-      const many = Array.from({ length: 9 }, (_, i) => `c${String(i)}: { keys: [${keys}] }`).join(
+      const many = Array.from({ length: 5 }, (_, i) => `c${String(i)}: { keys: [${keys}] }`).join(
         ", ",
       );
+
       await expect(loadConfig(writeConfig(withScenario(`counters: { ${many} }`)))).rejects.toThrow(
-        /reserves \d+ counter slots .*and the per-scenario limit is 512/s,
+        /declares 305 counter slots .*the limit is 256 — half the per-scenario budget/s,
       );
+    });
+
+    it("names the biggest key space to shrink, rather than saying 'use fewer names'", async () => {
+      const big = Array.from({ length: 60 }, (_, i) => `"k${String(i)}"`).join(", ");
+      const rest = Array.from({ length: 4 }, (_, i) => `c${String(i)}: { keys: [${big}] }`).join(
+        ", ",
+      );
+
+      await expect(
+        loadConfig(
+          writeConfig(
+            withScenario(`counters: { small: { keys: ["a"] }, ${rest}, big: { keys: [${big}] } }`),
+          ),
+        ),
+      ).rejects.toThrow(/The largest is "c0" at 61; shrink that key space first/);
+    });
+
+    it("refuses two declarations that would store into one slot", async () => {
+      // `{ a: { keys: ["b.c"] } }` and `{ "a.b": { keys: ["c"] } }` both name `a.b.c`, so ten
+      // increments would be published as twenty across two counters in the same report.
+      await expect(
+        loadConfig(
+          writeConfig(withScenario(`counters: { a: { keys: ["b.c"] }, "a.b": { keys: ["c"] } }`)),
+        ),
+      ).rejects.toThrow(/both store into "a\.b\.c"/);
     });
 
     it("refuses a declared `other`, because it is implicit", async () => {

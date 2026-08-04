@@ -114,10 +114,14 @@ const reserveEngineNames = <TRequest>(
     scenarioMetrics.counters.reserve(brokenCheckCounter(checkName));
   }
   // Every declared key, plus the implicit `other`. Reserving them is what makes a keyed counter
-  // bounded *before* the run rather than capped during it — and it is why `other` can never be the
-  // slot that gets refused, which would drop the very keys it exists to catch.
+  // bounded *before* the run rather than capped during it.
+  //
+  // `other` is reserved **first** within each counter: if the budget ever ran out mid-loop it is
+  // the slot that must survive, because it is where every undeclared key lands and losing it drops
+  // the very increments the bucket exists to catch. The load-time budget check makes that
+  // unreachable through the CLI — but `runDispatch` is exported, so the loader is not the only door.
   for (const [name, keys] of Object.entries(scenario.keyedCounters ?? {})) {
-    for (const key of [...keys, OTHER_KEY]) {
+    for (const key of [OTHER_KEY, ...keys]) {
       scenarioMetrics.counters.reserve(keyedCounter(name, key));
     }
   }

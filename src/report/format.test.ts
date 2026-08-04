@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cell, plain } from "./format.ts";
+import { cell, orderedKeys, plain } from "./format.ts";
 
 /**
  * The two functions that stand between a target's bytes and a published document.
@@ -52,5 +52,22 @@ describe("cell", () => {
 
   it("strips control characters too, so a pasted report is not a second-class surface", () => {
     expect(cell(`${ESC}[31mred`)).toBe("[31mred");
+  });
+});
+
+describe("orderedKeys", () => {
+  it("puts `other` last however it was declared", () => {
+    expect(orderedKeys({ other: 1, zeta: 2, alpha: 3 })).toEqual(["alpha", "zeta", "other"]);
+  });
+
+  it("is stable for integer-like keys, which JavaScript would hoist", () => {
+    // `{ "500": 1, "200": 2 }` iterates as 200, 500 whatever the insertion order — a natural
+    // status-code key space would reorder itself, and a report has to reproduce byte-identically.
+    expect(orderedKeys({ "500": 1, "200": 2, other: 0 })).toEqual(["200", "500", "other"]);
+    expect(orderedKeys({ "200": 2, "500": 1, other: 0 })).toEqual(["200", "500", "other"]);
+  });
+
+  it("omits `other` when it is not there", () => {
+    expect(orderedKeys({ b: 1, a: 2 })).toEqual(["a", "b"]);
   });
 });

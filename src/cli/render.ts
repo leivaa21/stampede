@@ -1,4 +1,4 @@
-import { duration, ms, plain, rate } from "../report/format.ts";
+import { duration, ms, orderedKeys, plain, rate } from "../report/format.ts";
 import type { LatencySummary, RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 import type { Verdict } from "./thresholds.ts";
 
@@ -99,8 +99,9 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
   for (const [name, keys] of Object.entries(scenario.keyedCounters)) {
     // One line per counter, keys inline: a declared key space is a *dimension*, and splitting it
     // across N rows would bury the comparison between keys that is the only reason to declare it.
-    const parts = Object.entries(keys).map(([key, value]) => `${plain(key)} ${String(value)}`);
-    lines.push(`    counter     ${plain(name)}  ${parts.join(" · ")}`);
+    // `keyed` rather than `counter` so a reader can tell which map a number came from.
+    const parts = orderedKeys(keys).map((key) => `${plain(key)} ${String(keys[key] ?? 0)}`);
+    lines.push(`    keyed       ${plain(name)}  ${parts.join(" · ")}`);
   }
   for (const [name, trend] of Object.entries(scenario.trends)) {
     lines.push(

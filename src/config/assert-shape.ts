@@ -7,6 +7,7 @@ import {
 } from "../engine/metric-names.ts";
 import {
   MAX_CHECKS_PER_SCENARIO,
+  MAX_DECLARED_SLOTS_PER_SCENARIO,
   MAX_DISTINCT_SCENARIOS,
   MAX_DISTINCT_TALLIES,
   MAX_KEYS_PER_COUNTER,
@@ -111,14 +112,6 @@ const assertOptionalNumber = (
 };
 
 /**
- * The assertion surface a scenario declares: named checks, and the observer that feeds counters.
- *
- * Split out of `assertConfigShape` when it passed the workspace's ~200-line signal. Each of these
- * rejections exists because the mistake it catches type-checks perfectly and fails silently at
- * runtime — which is why they are startup errors and not something a reader has to notice in a
- * report twenty minutes later.
- */
-/**
  * Declared keyed counters: the names, the keys, and whether they all fit.
  *
  * The budget check is the point. Every declared key is a slot reserved before the run starts, and a
@@ -142,6 +135,11 @@ const assertKeyedCounters = (
   }
 
   let declaredSlots = 0;
+  let largest = { counter: "", slots: 0 };
+  // Every slot name any declaration owns, so two declarations cannot resolve to one storage slot:
+  // `{ a: { keys: ["b.c"] } }` and `{ "a.b": { keys: ["c"] } }` both name `a.b.c`, and ten
+  // increments would publish as twenty across two counters in the same report.
+  const slots = new Map<string, string>();
   for (const [counter, declaration] of Object.entries(counters)) {
     assertName(counter, "counter", configPath);
     if (!isRecord(declaration) || !Array.isArray(declaration.keys)) {
@@ -181,26 +179,64 @@ const assertKeyedCounters = (
       }
       seen.add(key);
       assertName(key, `key in counter "${counter}"`, configPath);
+      const slot = keyedCounter(counter, key);
+      const owner = slots.get(slot);
+      if (owner !== undefined) {
+        throw new ConfigLoadError(
+          `${configPath}: scenario "${name}" declares counters "${owner}" and "${counter}" that ` +
+            `both store into "${slot}" — one set of increments would be published under both`,
+        );
+      }
+      slots.set(slot, counter);
       if (keyedCounter(counter, key).length > MAX_METRIC_NAME_LENGTH) {
         throw new ConfigLoadError(
           `${configPath}: counter "${counter}" with key "${key}" exceeds the ${String(MAX_METRIC_NAME_LENGTH)}-character metric name limit`,
         );
       }
     }
-    declaredSlots += keys.length + 1; // + the implicit `other`
+    const otherSlot = keyedCounter(counter, OTHER_KEY);
+    const otherOwner = slots.get(otherSlot);
+    if (otherOwner !== undefined) {
+      throw new ConfigLoadError(
+        `${configPath}: scenario "${name}" declares counters "${otherOwner}" and "${counter}" that ` +
+          `both store into "${otherSlot}" — one set of increments would be published under both`,
+      );
+    }
+    slots.set(otherSlot, counter);
+
+    const slotsHere = keys.length + 1; // + the implicit `other`
+    declaredSlots += slotsHere;
+    if (slotsHere > largest.slots) {
+      largest = { counter, slots: slotsHere };
+    }
   }
 
-  const reserved = ENGINE_COUNTERS.length + checkCount + declaredSlots;
-  if (reserved > MAX_DISTINCT_TALLIES) {
+  // Against the declaration budget, not the whole map: the rest has to stay free for the
+  // scenario's own `record.count(...)`, or a config that bounded its cardinality perfectly would
+  // still end the run being told to use fewer names.
+  if (declaredSlots > MAX_DECLARED_SLOTS_PER_SCENARIO) {
+    // The whole picture in the message, not just the number that tripped: a reader needs to know
+    // what else is claiming slots before deciding which key space to shrink.
     throw new ConfigLoadError(
-      `${configPath}: scenario "${name}" reserves ${String(reserved)} counter slots ` +
-        `(${String(ENGINE_COUNTERS.length)} for stampede + ${String(checkCount)} for its checks + ` +
-        `${String(declaredSlots)} for its declared key spaces, including one \`${OTHER_KEY}\` each) ` +
-        `and the per-scenario limit is ${String(MAX_DISTINCT_TALLIES)}`,
+      `${configPath}: scenario "${name}" declares ${String(declaredSlots)} counter slots ` +
+        `(its key spaces plus one \`${OTHER_KEY}\` each) and the limit is ` +
+        `${String(MAX_DECLARED_SLOTS_PER_SCENARIO)} — half the per-scenario budget of ` +
+        `${String(MAX_DISTINCT_TALLIES)}, so the rest stays free for plain counters ` +
+        `(stampede reserves ${String(ENGINE_COUNTERS.length)} of its own, and this scenario's ` +
+        `checks reserve ${String(checkCount)}). ` +
+        `The largest is "${largest.counter}" at ${String(largest.slots)}; shrink that key space first.`,
     );
   }
 };
 
+/**
+ * The assertion surface a scenario declares: named checks, and the observer that feeds counters.
+ *
+ * Split out of `assertConfigShape` when it passed the workspace's ~200-line signal. Each of these
+ * rejections exists because the mistake it catches type-checks perfectly and fails silently at
+ * runtime — which is why they are startup errors and not something a reader has to notice in a
+ * report twenty minutes later.
+ */
 const assertObservers = (
   scenario: Record<string, unknown>,
   name: string,

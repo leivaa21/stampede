@@ -31,7 +31,7 @@ const observers = (
 ): ResponseObservers => ({
   checks: Object.entries(parts.checks ?? {}),
   onResponse: parts.onResponse,
-  recorder: recorderFor(metrics),
+  recorder: recorderFor(metrics, new Map()),
 });
 
 describe("checks", () => {
@@ -188,6 +188,33 @@ describe("async callbacks", () => {
     // is refused — and counted, because a refusal nobody counts is a silent hole.
     expect(metrics.counters.get("byRoute.other")).toBe(0);
     expect(metrics.counters.get(EngineMetric.undeclaredCounters)).toBe(1);
+  });
+
+  it("cannot forge an engine number through a keyed counter", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["stampede", new Set(["dropped"])]]));
+    metrics.counters.inc(EngineMetric.dropped, 350);
+
+    recorder.countKeyed("stampede", "dropped", 1000);
+
+    // `count` has refused the reserved prefix since M2; the joined name has to be checked too, or
+    // a run with 350 real drops publishes 1350. The config loader refuses a `stampede`-prefixed
+    // counter name, but `recorderFor` is exported — the loader is not the only door.
+    expect(metrics.counters.get(EngineMetric.dropped)).toBe(350);
+    expect(metrics.counters.get(EngineMetric.reservedNameRefusals)).toBe(1);
+  });
+
+  it("refuses a plain counter that would write into a declared slot", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["byStatus", new Set(["5xx"])]]));
+
+    recorder.countKeyed("byStatus", "5xx");
+    recorder.count("byStatus.5xx", 7);
+
+    // Accepting it published seventy 5xx responses the target never sent, under a key a threshold
+    // reads — the target blamed for a naming collision.
+    expect(metrics.counters.get("byStatus.5xx")).toBe(1);
+    expect(metrics.counters.get(EngineMetric.collidingCounters)).toBe(1);
   });
 
   it("leaves an ordinary return value alone", () => {

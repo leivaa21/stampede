@@ -1,3 +1,6 @@
+import { OTHER_KEY } from "../engine/metric-names.ts";
+import { compareNames } from "../metrics/by-name.ts";
+
 /**
  * Formatting shared by the terminal renderer and the markdown report.
  *
@@ -45,6 +48,24 @@ export const rate = (value: number | undefined, direction: "requested" | "achiev
  */
 // eslint-disable-next-line no-control-regex
 export const plain = (text: string): string => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+
+/**
+ * A declared key space's keys, in a deterministic order, with `other` last.
+ *
+ * Sorted by name rather than left in the object's own order for two reasons. A `Record`'s key order
+ * is insertion order *except* for integer-like keys, which JavaScript hoists and sorts numerically
+ * — so a natural key space like `["500", "200"]` would come back reordered, and a report has to
+ * reproduce byte-identically however it was produced (D1-02). And `other` is the bucket rather than
+ * one of the keys, so it belongs at the end whatever it sorts as.
+ *
+ * Shared by both renderers so the terminal and the report cannot disagree about an ordering.
+ */
+export const orderedKeys = (keys: Readonly<Record<string, number>>): readonly string[] => [
+  ...Object.keys(keys)
+    .filter((key) => key !== OTHER_KEY)
+    .sort(compareNames),
+  ...Object.keys(keys).filter((key) => key === OTHER_KEY),
+];
 
 /**
  * Makes a user-supplied string safe to put in a markdown table cell.

@@ -1,6 +1,6 @@
 import type { LatencySummary, RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 import type { Verdict } from "../cli/thresholds.ts";
-import { cell, codeSpan, duration, ms, rate } from "./format.ts";
+import { cell, codeSpan, duration, ms, orderedKeys, rate } from "./format.ts";
 
 /**
  * The markdown report — the "prove your numbers" half of the pitch.
@@ -134,14 +134,15 @@ const scenarioSection = (scenario: ScenarioRunSummary): string => {
     cell(name),
     String(value),
   ]);
-  // A row per counter, a column per key — the shape a declared key space is for. `other` is always
-  // last regardless of declaration order, because it is the bucket rather than one of the keys.
-  const keyedRows = Object.entries(scenario.keyedCounters).map(([name, keys]) => [
-    cell(name),
-    ...Object.entries(keys)
-      .sort(([a], [b]) => (a === "other" ? 1 : b === "other" ? -1 : 0))
-      .map(([key, value]) => `${cell(key)} ${String(value)}`),
-  ]);
+  // One table per declared counter — its keys really are a dimension, and a shared table would
+  // need a column per key across counters that do not share one. `other` sorts last; see
+  // `orderedKeys`, which both renderers use so they cannot disagree about it.
+  const keyedTables = Object.entries(scenario.keyedCounters).map(([name, keys]) =>
+    table(
+      [cell(name), "count"],
+      orderedKeys(keys).map((key) => [cell(key), String(keys[key] ?? 0)]),
+    ),
+  );
   const trendRows = Object.entries(scenario.trends).map(([name, trend]) => [
     cell(name),
     ms(trend.p50Ms),
@@ -161,7 +162,7 @@ const scenarioSection = (scenario: ScenarioRunSummary): string => {
       ? ["", table(["", "check", "passed", "failed", "broken"], checkRows)]
       : []),
     ...(counterRows.length > 0 ? ["", table(["counter", "total"], counterRows)] : []),
-    ...keyedRows.map((row) => `\n**${row[0] ?? ""}** — ${row.slice(1).join(" · ")}`),
+    ...keyedTables.flatMap((rendered) => ["", rendered]),
     ...(trendRows.length > 0 ? ["", table(["recorded", "p50", "p99", "max"], trendRows)] : []),
     ...(scenario.brokenObservations > 0
       ? [

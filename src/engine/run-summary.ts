@@ -362,7 +362,10 @@ const summariseScenario = (
       // the refusal has to reach the verdict or it is the silent hole the counter's own docblock
       // says it exists to prevent. Found by running it: the run exited 0 having discarded every
       // increment for an undeclared counter.
-      (recorded?.counters.get(EngineMetric.undeclaredCounters) ?? 0),
+      (recorded?.counters.get(EngineMetric.undeclaredCounters) ?? 0) +
+      // A plain `count` that landed on a declared slot: refused, and the run has to say so or the
+      // increments vanish silently — the same silent hole, one door over.
+      (recorded?.counters.get(EngineMetric.collidingCounters) ?? 0),
     latencyMs: toLatencySummary(recorded?.findHistogram(EngineMetric.latency)?.summary()),
     scheduledLatencyMs: toLatencySummary(
       recorded?.findHistogram(EngineMetric.scheduledLatency)?.summary(),

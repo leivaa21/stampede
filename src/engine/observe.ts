@@ -70,35 +70,61 @@ const neutralise = (value: unknown): boolean => {
 export const recorderFor = (
   metrics: ScenarioMetrics,
   /** Declared key spaces, by counter name. Every key here already has a reserved slot. */
-  keyed: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
-): ResponseRecorder => ({
-  count: (name, by = 1) => {
-    if (name.startsWith(RESERVED_METRIC_PREFIX)) {
-      metrics.counters.inc(EngineMetric.reservedNameRefusals);
-      return;
-    }
-    metrics.counters.inc(name, by);
-  },
-  countKeyed: (name, key, by = 1) => {
-    const keys = keyed.get(name);
-    if (keys === undefined) {
-      // A counter the scenario never declared is a claim the config did not make, and there is no
-      // bounded slot to put it in — so it is refused and counted, not invented.
-      metrics.counters.inc(EngineMetric.undeclaredCounters);
-      return;
-    }
-    // An undeclared *key* is the ordinary case this feature exists for: the key came from a
-    // response, the config could not enumerate every value, and `other` is where it belongs.
-    metrics.counters.inc(keyedCounter(name, keys.has(key) ? key : OTHER_KEY), by);
-  },
-  recordMs: (name, valueMs) => {
-    if (name.startsWith(RESERVED_METRIC_PREFIX)) {
-      metrics.counters.inc(EngineMetric.reservedNameRefusals);
-      return;
-    }
-    metrics.trend(name).recordMs(valueMs);
-  },
-});
+  keyed: ReadonlyMap<string, ReadonlySet<string>>,
+): ResponseRecorder => {
+  // Every slot a declaration owns, flattened once per scenario. `count` checks membership so a
+  // plain counter cannot write into a keyed slot: `record.count("byStatus.5xx", 7)` in a scenario
+  // that declared `byStatus` published seventy 5xx responses the target never sent, and then
+  // failed a threshold reading that key — the target blamed for a naming collision (D2-04's
+  // wrongness, through a new door).
+  const declaredSlots = new Set(
+    [...keyed].flatMap(([name, keys]) =>
+      [...keys, OTHER_KEY].map((key) => keyedCounter(name, key)),
+    ),
+  );
+
+  return {
+    count: (name, by = 1) => {
+      if (name.startsWith(RESERVED_METRIC_PREFIX)) {
+        metrics.counters.inc(EngineMetric.reservedNameRefusals);
+        return;
+      }
+      if (declaredSlots.has(name)) {
+        metrics.counters.inc(EngineMetric.collidingCounters);
+        return;
+      }
+      metrics.counters.inc(name, by);
+    },
+    countKeyed: (name, key, by = 1) => {
+      const keys = keyed.get(name);
+      if (keys === undefined) {
+        // A counter the scenario never declared is a claim the config did not make, and there is
+        // no bounded slot to put it in — so it is refused and counted, not invented.
+        metrics.counters.inc(EngineMetric.undeclaredCounters);
+        return;
+      }
+      const slot = keyedCounter(name, keys.has(key) ? key : OTHER_KEY);
+      // The same guard `count` has, on the *joined* name — without it
+      // `countKeyed("stampede", "dropped", 1000)` lands in `stampede.dropped` and a run with 350
+      // real drops publishes 1350. The config loader refuses a `stampede`-prefixed counter name,
+      // but `recorderFor` is exported, so the loader is not the only door.
+      if (slot.startsWith(RESERVED_METRIC_PREFIX)) {
+        metrics.counters.inc(EngineMetric.reservedNameRefusals);
+        return;
+      }
+      // An undeclared *key* is the ordinary case this feature exists for: the key came from a
+      // response, the config could not enumerate every value, and `other` is where it belongs.
+      metrics.counters.inc(slot, by);
+    },
+    recordMs: (name, valueMs) => {
+      if (name.startsWith(RESERVED_METRIC_PREFIX)) {
+        metrics.counters.inc(EngineMetric.reservedNameRefusals);
+        return;
+      }
+      metrics.trend(name).recordMs(valueMs);
+    },
+  };
+};
 
 /** Records a check as broken: counted against its own name, and against the scenario's total. */
 const recordBroken = (metrics: ScenarioMetrics, name: string): void => {

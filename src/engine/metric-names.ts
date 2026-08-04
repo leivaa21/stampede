@@ -102,6 +102,14 @@ export const EngineMetric = {
    * refusal nobody counts is a silent hole.
    */
   undeclaredCounters: "stampede.undeclaredCounters",
+  /**
+   * `count` calls whose name lands on a slot a declared key space owns.
+   *
+   * Refused rather than accepted: writing into `byStatus.5xx` from a plain `count` publishes
+   * responses the target never sent, under a key a threshold reads — so the target gets blamed for
+   * a naming collision. Counted, because a refusal nobody counts is a silent hole.
+   */
+  collidingCounters: "stampede.collidingCounters",
 } as const;
 
 /**
@@ -127,6 +135,7 @@ const ENGINE_METRIC_KINDS: Readonly<Record<keyof typeof EngineMetric, "counter" 
     requestErrors: "counter",
     reservedNameRefusals: "counter",
     undeclaredCounters: "counter",
+    collidingCounters: "counter",
   };
 
 /**

@@ -152,12 +152,12 @@ describe("checks and counters across real threads", () => {
 
     const reads = outcome.summary.scenarios[0];
 
+    // Absolutes from the config, not `responseCount` — that is itself merged by the same
+    // `Counters.merge`, so a merge of `Math.max` would leave both sides agreeing at one shard's
+    // numbers and this claim green. 120 in a burst over 4 shards is 30 each, alternating from 1.
     // The undeclared key really lands in `other` rather than creating a name of its own, which is
     // the bound the whole feature exists to provide.
-    const byOutcome = reads?.keyedCounters.byOutcome;
-    expect((byOutcome?.declared ?? 0) + (byOutcome?.other ?? 0)).toBe(reads?.responseCount);
-    expect(byOutcome?.declared).toBeGreaterThan(0);
-    expect(byOutcome?.other).toBeGreaterThan(0);
+    expect(reads?.keyedCounters.byOutcome).toEqual({ declared: 60, other: 60 });
     // And it is reported *only* nested — a slot listed in both maps could be added into a total
     // twice by a reader who trusted either one.
     expect(reads?.counters).toEqual({});

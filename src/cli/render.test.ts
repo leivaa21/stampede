@@ -251,6 +251,25 @@ describe("renderSummary", () => {
     expect(text).not.toContain("\r");
   });
 
+  it("prints a declared key space on one line, keys inline", () => {
+    // A declared key space is a *dimension*, and the only reason to declare it is to compare its
+    // keys — splitting them across rows buries the comparison.
+    const text = renderSummary(
+      summaryOf(scenario({ keyedCounters: { byStatus: { "2xx": 40, "5xx": 2, other: 0 } } })),
+    );
+
+    expect(text).toContain("keyed       byStatus  2xx 40 · 5xx 2 · other 0");
+  });
+
+  it("cannot have a target-chosen key rewrite the terminal", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ keyedCounters: { "\u001b[2Kfake": { "a\rb": 1 } } })),
+    );
+
+    expect(text).not.toContain("\u001b");
+    expect(text).not.toContain("\r");
+  });
+
   it("warns when an assertion is broken rather than the target", () => {
     expect(renderSummary(summaryOf(scenario({ brokenObservations: 4 })))).toContain(
       "4 broken observations",
