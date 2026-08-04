@@ -4,6 +4,7 @@ import {
   evaluateThresholds,
   findBrokenObservations,
   findImpureRequests,
+  findLostSchedule,
   findRefusedRecordings,
   findUnmeasuredScenario,
 } from "./thresholds.ts";
@@ -284,6 +285,56 @@ describe("findImpureRequests", () => {
 
     expect(findBrokenObservations(summary)).toBeUndefined();
     expect(findImpureRequests(summary)).toContain("request()");
+  });
+});
+
+describe("findLostSchedule", () => {
+  it("says nothing when a builder failed a few times out of many", () => {
+    // Deliberate and documented: a `request()` that throws is counted and the run continues. That
+    // is right at three ordinals in ten thousand, and a finder that failed the run on any build
+    // error would be a different tool.
+    expect(
+      findLostSchedule(
+        summaryOf(
+          scenario({ scheduledCount: 10_000, dispatchedCount: 9997, requestErrorCount: 3 }),
+        ),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("fails the run when more requests were never built than were sent", () => {
+    // The p99 below it would be computed from one sample of ten and printed beside a green
+    // threshold — the tool congratulating a target it barely touched.
+    const message = findLostSchedule(
+      summaryOf(scenario({ scheduledCount: 10, dispatchedCount: 1, requestErrorCount: 9 })),
+    );
+
+    expect(message).toContain("never built 9 of its 10 requests");
+    expect(message).toContain("describe a minority of the run");
+  });
+
+  it("counts both kinds of unbuilt against the dispatches, not each alone", () => {
+    // Five and five each lose to four dispatches separately, and together they are the story.
+    expect(
+      findLostSchedule(
+        summaryOf(
+          scenario({
+            scheduledCount: 14,
+            dispatchedCount: 4,
+            requestErrorCount: 5,
+            impureRequestCount: 5,
+          }),
+        ),
+      ),
+    ).toContain("never built 10");
+  });
+
+  it("carries the advice, so the message names a knob and not just a number", () => {
+    expect(
+      findLostSchedule(
+        summaryOf(scenario({ scheduledCount: 10, dispatchedCount: 1, impureRequestCount: 9 })),
+      ),
+    ).toContain("seats[ordinal % seats.length]");
   });
 });
 

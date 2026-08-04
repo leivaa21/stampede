@@ -465,16 +465,17 @@ thresholds
 
 Lines you only see when they are non-zero, and what each one tells you:
 
-| Line                                         | Meaning                                                                    |
-| -------------------------------------------- | -------------------------------------------------------------------------- |
-| `shortfall … N dropped`                      | The in-flight cap refused them. Raise `maxInFlight`.                       |
-| `shortfall … N not built (request() threw)`  | Your `request()` threw. The target was never asked — fix the config.       |
-| `shortfall … N not built (impure request())` | Your `request()` mutated the setup state. Exit `2` — see **Purity** above. |
-| `shortfall … N failed`                       | Transport-level failures: refused, DNS, timeout. Counted, never timed.     |
-| `shortfall … N abandoned`                    | Still outstanding at the drain deadline. Left out of the percentiles.      |
-| `check BROKEN n <name>`                      | That predicate threw or returned a non-boolean. Exit `2`.                  |
-| `⚠ N recordings refused`                     | More distinct metric names than the caps allow. Some are missing entirely. |
-| `⚠ … percentiles are lower bounds`           | Samples exceeded the histogram ceiling (67s). The numbers understate.      |
+| Line                                         | Meaning                                                                      |
+| -------------------------------------------- | ---------------------------------------------------------------------------- |
+| `shortfall … N dropped`                      | The in-flight cap refused them. Raise `maxInFlight`.                         |
+| `shortfall … N not built (request() threw)`  | Your `request()` threw. The target was never asked — fix the config.         |
+| `shortfall … N not built (impure request())` | Your `request()` mutated the setup state. Exit `2` — see **Purity** above.   |
+| `shortfall … N failed`                       | Transport-level failures: refused, DNS, timeout. Counted, never timed.       |
+| `shortfall … N abandoned`                    | Still outstanding at the drain deadline. Left out of the percentiles.        |
+| `never built N of its M requests`            | More builds failed than requests went out. The run did not happen. Exit `2`. |
+| `check BROKEN n <name>`                      | That predicate threw or returned a non-boolean. Exit `2`.                    |
+| `⚠ N recordings refused`                     | More distinct metric names than the caps allow. Some are missing entirely.   |
+| `⚠ … percentiles are lower bounds`           | Samples exceeded the histogram ceiling (67s). The numbers understate.        |
 
 Every rounding errs **away** from flattering your target: percentiles report the top of their
 bucket, a clamped value is a labelled lower bound rather than a bare number, and a scenario that

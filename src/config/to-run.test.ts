@@ -169,7 +169,7 @@ describe("run settings", () => {
             },
           } as never,
           // Guarded by the caller, exactly as `worker-entry.ts` does — `scenariosFrom` converts, it
-          // does not seal its caller's argument.
+          // does not guard its caller's argument.
           guardState({ url: "http://localhost:1/", seats: ["a"] }),
         ),
       ).toThrow(/^scenario "reads": request\(\) mutated the setup state/);

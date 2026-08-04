@@ -103,12 +103,17 @@ const purityErrorFor = (error: StateMutationError, name: string): ImpureRequestE
  */
 const cloneErrorFor = (error: DOMException, name: string): Error =>
   new Error(
-    `scenario "${name}": request() could not clone a value (${error.message}). If you were ` +
-      `copying the setup state, that is the guard: the state is behind a proxy so that mutating ` +
-      `it fails loudly (D25-02), and a proxy cannot be structured-cloned. Copy it with ` +
-      `\`JSON.parse(JSON.stringify(state.thing))\` instead — or \`{ ...state.thing }\` if a shallow ` +
-      `copy is enough, remembering its nested values are still guarded. (Functions and class ` +
-      `instances cannot be cloned either, if that is what this was.)`,
+    // The exception carries no reference to the offending value, so the guard is a hypothesis, not
+    // a diagnosis — it goes second. Leading with it told a builder cloning a function of its own
+    // two sentences about a guard it never touched.
+    `scenario "${name}": request() could not clone a value — ${error.message} Functions, class ` +
+      `instances and proxies cannot be structured-cloned. If it was the setup state, that is the ` +
+      `guard: it is behind a proxy so that mutating it fails loudly (D25-02). Copy it with ` +
+      `\`JSON.parse(JSON.stringify(state.thing))\` if it is JSON-shaped — that turns a Date into a ` +
+      `string and a Buffer into \`{type,data}\`, so for those use a shallow copy instead: ` +
+      `\`{ ...state.thing }\` for an object, \`[...state.list]\` for an array, remembering nested ` +
+      `values are still guarded. (Functions and class instances cannot be cloned either, if that ` +
+      `is what this was.)`,
   );
 
 const isDataCloneError = (error: unknown): error is DOMException =>

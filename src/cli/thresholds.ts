@@ -124,6 +124,36 @@ export const findImpureRequests = (summary: RunSummary): string | undefined => {
 };
 
 /**
+ * A scenario that lost most of its schedule to the builder, and would otherwise report PASS.
+ *
+ * A `request()` that throws is counted and the run continues — that is deliberate and documented,
+ * and right when it is three ordinals in ten thousand. It stops being right when the builds that
+ * failed outnumber the ones that went out: a p99 computed from one sample of ten, published beside
+ * a green threshold, is the tool congratulating a target it barely touched.
+ *
+ * The specific way this branch could produce it: `structuredClone` cannot copy the guarded state
+ * (D25-02), so a *pure* copy-then-edit builder throws on every ordinal after the first. Nine tenths
+ * of the load disappeared because of stampede's own guard, and the run exited 0 — which is the
+ * failure D25-02 itself calls disqualifying, one cause over.
+ *
+ * Exit 2, not 1: nothing here says the target broke an invariant. The run did not happen.
+ */
+export const findLostSchedule = (summary: RunSummary): string | undefined => {
+  for (const scenario of summary.scenarios) {
+    const unbuilt = scenario.requestErrorCount + scenario.impureRequestCount;
+    if (unbuilt > scenario.dispatchedCount) {
+      return (
+        `scenario "${scenario.name}" never built ${String(unbuilt)} of its ${String(scenario.scheduledCount)} ` +
+        `requests — more than it managed to send (${String(scenario.dispatchedCount)}). The latencies ` +
+        `below are real but they describe a minority of the run, so a threshold reading one of them ` +
+        `would grade a target that was barely asked. ${adviceFor(scenario)}`
+      );
+    }
+  }
+  return undefined;
+};
+
+/**
  * A scenario whose *assertions* are broken, rather than whose target is.
  *
  * D2-04: a check that threw or returned a non-boolean is a bug in the claim, so the run fails —

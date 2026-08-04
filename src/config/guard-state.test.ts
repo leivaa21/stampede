@@ -48,6 +48,10 @@ describe("guardState", () => {
     }).toThrow(StateMutationError);
     expect(() => (state.seats as string[]).push("b")).toThrow(StateMutationError);
     expect(() => (state.seats as string[]).sort()).toThrow(StateMutationError);
+    // Not a write, but the remaining way to change the object's shape. Without the trap
+    // `Object.freeze(state)` half-applies: extensions silently prevented, then `defineProperty`
+    // throws — and "any write, at any depth, throws" stops being exactly true.
+    expect(() => Object.preventExtensions(state)).toThrow(StateMutationError);
   });
 
   it("guards nested objects, not just the top level", () => {

@@ -528,7 +528,7 @@ fails the run.
 **Why in the worker, and at that door.** `structuredClone` carries neither frozenness nor a proxy,
 so doing this on the main thread would protect nothing — the worker's copy is the one a builder can
 reach. And at the _door_ rather than inside `scenariosFrom`, because that function is exported and a
-converter that seals its caller's argument is a side effect its name and signature do not disclose.
+converter that guarded its caller's argument would be a side effect its name and signature do not disclose.
 
 **Why a proxy rather than `Object.freeze`.** This decision originally said deep-freeze, and it was
 wrong: a frozen object only _throws_ in strict mode. In sloppy mode the write is discarded in
@@ -561,8 +561,13 @@ slots the proxy does not have — so wrapping them would break working configs, 
 nothing anyway, since `map.set(k, v)` fires no `set` trap either way. A `Buffer` in the setup state
 is the canonical shape for load-testing an authed API and has to keep working. **Consequence,
 stated:** a `Map`, `Set`, `Date` or typed array in the state can still be mutated and this will not
-catch it. Children are wrapped in place _before_ the parent proxy is built, so no `get` trap is
-needed and reads stay on the ordinary path — `request` runs once per scheduled instant.
+catch it. Children are wrapped in place _before the proxy is handed out_, so no `get` trap is
+needed: a read finds an already-wrapped child sitting on the target. Reads are still proxy reads —
+measured on Node 24, a build against guarded state costs ~106 ns against ~2 ns plain — but a
+memoised `get` trap costs ~306 ns for the same shape, so this is the cheaper of the two guards by
+3x, and neither is visible next to a network round trip. The real argument for this shape is that a
+`get` trap would have to re-derive child identity on every read, and `state.left === state.right`
+has to keep holding.
 
 **Consequence, translated rather than left raw:** `structuredClone` cannot copy a proxy, so
 copy-then-edit — the idiomatic way to _obey_ this contract — breaks against the guard. Untranslated
@@ -570,6 +575,14 @@ it reaches the user as `worker-0: #<Object> could not be cloned.`, naming nothin
 catches `DataCloneError` out of a builder and answers it with the scenario, the cause and the
 remedy (`JSON.parse(JSON.stringify(...))`), and both the failure and the remedy are asserted end to
 end. This is the guard's one real cost over the freeze, which was cloneable.
+
+**A run that lost most of its schedule to the builder now fails, whatever the cause.** The clone
+failure above exposed a gap that predates it: a `request()` throwing on ordinals 1..9 of 10 printed
+`9 not built`, published a p99 from the single sample, and exited **0** with a green threshold. A
+build error is deliberately not fatal — that is right at three ordinals in ten thousand — but when
+the failed builds outnumber the dispatches, the percentiles describe a minority of the run, and
+grading a target on them is the "refused most of its own load and reported success" failure this
+same decision calls disqualifying. `findLostSchedule` fails those on exit 2.
 
 **A later-ordinal mutation gets its own count, not `requestErrors`.** Folded together it read as
 "9 not built" and the run exited 0 — stampede refusing 90 % of its own load and reporting success,

@@ -311,11 +311,58 @@ export default defineConfig({
 
     const failure = report.failures.join(" ");
     expect(failure).toContain('scenario "reads": request() could not clone a value');
-    expect(failure).toContain("a proxy cannot be structured-cloned");
+    expect(failure).toContain("proxies cannot be structured-cloned");
     expect(failure).toContain("JSON.parse(JSON.stringify(state.thing))");
-    // Not an impurity. The builder obeyed the contract, and counting it as one would accuse it of
-    // the opposite of what it did.
-    expect(report.summary?.scenarios[0]?.impureRequestCount ?? 0).toBe(0);
+    // The remedy is qualified rather than blanket: a JSON round-trip turns a Date into a string
+    // and a Buffer into `{type,data}`, and this repo names a Buffer in setup state as the
+    // canonical shape for an authed API. Prescribing it unconditionally would corrupt values on
+    // the wire, silently, on the tool's own advice.
+    expect(failure).toContain("if it is JSON-shaped");
+    expect(failure).toContain("[...state.list]");
+    // `build(0)` kills the worker before a summary exists, so there are no counts to assert here —
+    // `impureRequestCount ?? 0` would be `undefined ?? 0` and could never fail. The classification
+    // is asserted in the later-ordinal test above, which is the only path that can observe it.
+    expect(report.summary).toBeUndefined();
+    expect(report.exitCode).toBe(ExitCode.RunFailed);
+  }, 30_000);
+
+  it("fails a run whose builder lost most of the schedule after ordinal 0", async () => {
+    // The half `build(0)` cannot catch. The clone succeeds at ordinal 0 by luck of the config's
+    // shape, so the worker starts, and every later build throws — nine of ten requests gone
+    // because of stampede's own guard, against a builder that obeyed the contract.
+    //
+    // Before `findLostSchedule` this printed `shortfall 9 not built (request() threw)`, published a
+    // p99 from the single sample, and exited **0** with a green threshold. That is the failure
+    // D25-02's own record calls disqualifying — "refusing 90 % of its own load and reporting
+    // success" — reached by a different cause.
+    const configPath = writeConfig(`export default defineConfig({
+  setup: () => ({ url: ${JSON.stringify(target.url)}, template: { kind: "buy" } }),
+  scenarios: {
+    reads: {
+      profile: burst({ count: 10 }),
+      request: (s, ordinal) => {
+        if (ordinal === 0) return { url: s.url };
+        const body = structuredClone(s.template);
+        return { url: s.url, method: "POST", body: JSON.stringify(body) };
+      },
+    },
+  },
+  workers: 1,
+  maxInFlight: 16,
+  drainTimeoutMs: 3000,
+});`);
+
+    const report = await runFromConfig({ configPath });
+
+    expect(report.exitCode).toBe(ExitCode.RunFailed);
+    expect(report.failures.join(" ")).toContain("never built 9 of its 10 requests");
+    // The classification, asserted where it can actually be observed: at `build(0)` the run dies
+    // before a summary exists, so `impureRequestCount` there is `undefined` and any assertion on
+    // it passes for the wrong reason. Here the summary is real. A clone failure is an ordinary
+    // build failure — the builder did nothing wrong, and calling it impure accuses it of the
+    // opposite of what it did.
+    expect(report.summary?.scenarios[0]?.requestErrorCount).toBe(9);
+    expect(report.summary?.scenarios[0]?.impureRequestCount).toBe(0);
   }, 30_000);
 
   it("lets the documented copy-then-edit workaround through", async () => {

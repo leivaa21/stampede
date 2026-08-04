@@ -52,7 +52,8 @@ export const configUrlFor = (configPath: string): URL => {
     throw new ConfigLoadError(
       `${absolute} is not a config stampede loads — it takes \`.ts\` and \`.mts\`, whose types Node ` +
         `strips itself (D1-04). The typed config *is* the DSL, which is the one packaging opinion ` +
-        `the tool holds. A \`.cts\` config is TypeScript too, but CommonJS: rename it \`.mts\`.`,
+        `the tool holds. A \`.cts\` config is TypeScript too, but CommonJS — port it to ` +
+        `\`export default\` and rename it \`.mts\`. The check is case-sensitive, as Node's is.`,
     );
   }
   return pathToFileURL(absolute);

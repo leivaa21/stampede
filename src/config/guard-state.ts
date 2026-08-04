@@ -95,10 +95,14 @@ export const guardState = <T>(value: T): T => {
     if (!isGuardable(node)) {
       return node;
     }
-    const path = key === undefined ? parentPath : `${parentPath}.${String(key)}`;
+    // Before the path is built, so a memo hit does not allocate the string the lazy path exists to
+    // avoid. The cost of the memo, stated: a child reached twice reports the path of whichever
+    // branch was walked first, so `state.right.seats.push(…)` can say `state.left.seats.1`. That is
+    // the price of `state.left === state.right` continuing to hold, which is the larger promise.
     if (wrapped.has(node)) {
       return wrapped.get(node);
     }
+    const path = key === undefined ? parentPath : `${parentPath}.${String(key)}`;
 
     const refuse = (key: PropertyKey): never => {
       throw new StateMutationError(`${path}.${String(key)}`);

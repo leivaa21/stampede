@@ -7,6 +7,7 @@ import {
   evaluateThresholds,
   findBrokenObservations,
   findImpureRequests,
+  findLostSchedule,
   findRefusedRecordings,
   findUnmeasuredScenario,
   type Verdict,
@@ -138,6 +139,7 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
     findBrokenObservations(summary),
     findRefusedRecordings(summary),
     findImpureRequests(summary),
+    findLostSchedule(summary),
   ].filter((failure): failure is string => failure !== undefined);
 
   // The invariant is proven *after* the storm — this is the line D1-06 exists for. A throw here is

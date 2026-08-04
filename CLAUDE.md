@@ -8,7 +8,7 @@
 > security, docs, git) apply here in full; this file only adds what's specific to this project.
 > Read this file before every task and re-read the **Current state** line.
 
-> **Current state (2026-08-03):** **M2 is complete — stampede proves invariants, not just
+> **Current state (2026-08-05):** **M2 is complete — stampede proves invariants, not just
 > percentiles.** 550+ tests, audit clean, every slice through the implementer → reviewer loop.
 >
 > M1 built the instrument: HDR-style histograms whose merge is exact and order-independent, an
