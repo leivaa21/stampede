@@ -4,7 +4,7 @@ import {
   evaluateThresholds,
   findBrokenObservations,
   findImpureRequests,
-  findLostSchedule,
+  findUnbuiltMajority,
   findRefusedRecordings,
   findUnmeasuredScenario,
 } from "./thresholds.ts";
@@ -288,13 +288,13 @@ describe("findImpureRequests", () => {
   });
 });
 
-describe("findLostSchedule", () => {
+describe("findUnbuiltMajority", () => {
   it("says nothing when a builder failed a few times out of many", () => {
     // Deliberate and documented: a `request()` that throws is counted and the run continues. That
     // is right at three ordinals in ten thousand, and a finder that failed the run on any build
     // error would be a different tool.
     expect(
-      findLostSchedule(
+      findUnbuiltMajority(
         summaryOf(
           scenario({ scheduledCount: 10_000, dispatchedCount: 9997, requestErrorCount: 3 }),
         ),
@@ -305,7 +305,7 @@ describe("findLostSchedule", () => {
   it("fails the run when more requests were never built than were sent", () => {
     // The p99 below it would be computed from one sample of ten and printed beside a green
     // threshold — the tool congratulating a target it barely touched.
-    const message = findLostSchedule(
+    const message = findUnbuiltMajority(
       summaryOf(scenario({ scheduledCount: 10, dispatchedCount: 1, requestErrorCount: 9 })),
     );
 
@@ -316,7 +316,7 @@ describe("findLostSchedule", () => {
   it("counts both kinds of unbuilt against the dispatches, not each alone", () => {
     // Five and five each lose to four dispatches separately, and together they are the story.
     expect(
-      findLostSchedule(
+      findUnbuiltMajority(
         summaryOf(
           scenario({
             scheduledCount: 14,
@@ -329,12 +329,52 @@ describe("findLostSchedule", () => {
     ).toContain("never built 10");
   });
 
-  it("carries the advice, so the message names a knob and not just a number", () => {
+  it("leaves a purely impure scenario to the finder that already owns it", () => {
+    // `findImpureRequests` fails the same run on the same code with the same remedy. Both firing
+    // gave a reader two 350-character paragraphs about the same nine requests, closing on the same
+    // sentence — the duplication `report/shortfall.ts` exists to prevent, one surface over.
     expect(
-      findLostSchedule(
+      findUnbuiltMajority(
         summaryOf(scenario({ scheduledCount: 10, dispatchedCount: 1, impureRequestCount: 9 })),
       ),
-    ).toContain("seats[ordinal % seats.length]");
+    ).toBeUndefined();
+  });
+
+  it("stays quiet when the drops, not the builder, lost the schedule", () => {
+    // The cap is checked *before* the build, so a dropped instant never reaches the builder and
+    // `dispatchedCount` sits at `maxInFlight` by construction. Without the drops term, 17 build
+    // failures in 10,000 failed a run whose story was 9,967 drops — printing a headline blaming
+    // the builder directly above advice to raise `maxInFlight`.
+    expect(
+      findUnbuiltMajority(
+        summaryOf(
+          scenario({
+            scheduledCount: 10_000,
+            dispatchedCount: 16,
+            droppedCount: 9967,
+            requestErrorCount: 17,
+          }),
+        ),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("says nothing on a tie — they must outnumber the dispatches, not equal them", () => {
+    expect(
+      findUnbuiltMajority(
+        summaryOf(scenario({ scheduledCount: 10, dispatchedCount: 5, requestErrorCount: 5 })),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("says nothing about an empty scenario, where every count ties at zero", () => {
+    // `burst({ count: 0 })` is legal — `assertCount` permits zero — so `>=` here would fail a run
+    // with "never built 0 of its 0 requests".
+    expect(
+      findUnbuiltMajority(
+        summaryOf(scenario({ scheduledCount: 0, dispatchedCount: 0, responseCount: 0 })),
+      ),
+    ).toBeUndefined();
   });
 });
 

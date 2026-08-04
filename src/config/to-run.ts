@@ -112,8 +112,7 @@ const cloneErrorFor = (error: DOMException, name: string): Error =>
       `\`JSON.parse(JSON.stringify(state.thing))\` if it is JSON-shaped — that turns a Date into a ` +
       `string and a Buffer into \`{type,data}\`, so for those use a shallow copy instead: ` +
       `\`{ ...state.thing }\` for an object, \`[...state.list]\` for an array, remembering nested ` +
-      `values are still guarded. (Functions and class instances cannot be cloned either, if that ` +
-      `is what this was.)`,
+      `values are still guarded.`,
   );
 
 const isDataCloneError = (error: unknown): error is DOMException =>

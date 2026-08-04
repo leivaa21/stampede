@@ -331,7 +331,7 @@ export default defineConfig({
     // shape, so the worker starts, and every later build throws — nine of ten requests gone
     // because of stampede's own guard, against a builder that obeyed the contract.
     //
-    // Before `findLostSchedule` this printed `shortfall 9 not built (request() threw)`, published a
+    // Before `findUnbuiltMajority` this printed `shortfall 9 not built (request() threw)`, published a
     // p99 from the single sample, and exited **0** with a green threshold. That is the failure
     // D25-02's own record calls disqualifying — "refusing 90 % of its own load and reporting
     // success" — reached by a different cause.

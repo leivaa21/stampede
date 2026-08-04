@@ -99,6 +99,16 @@ describe("guardState", () => {
     expect(state.left).toBe(state.right);
   });
 
+  it("reports a shared child under the branch walked first — the memo's stated cost", () => {
+    // The price of the identity above: one proxy, so one path. Writing through `right` names
+    // `left`. Asserted rather than only commented, because a reader who hits this message needs to
+    // know the field named may be an alias and not the one their code says.
+    const shared = { seats: ["a"] };
+    const state = guardState({ left: shared, right: shared });
+
+    expect(() => state.right.seats.push("b")).toThrow(/state\.left\.seats\.1/);
+  });
+
   it("leaves primitives and null alone", () => {
     expect(guardState(null)).toBeNull();
     expect(guardState(42)).toBe(42);

@@ -576,13 +576,13 @@ catches `DataCloneError` out of a builder and answers it with the scenario, the 
 remedy (`JSON.parse(JSON.stringify(...))`), and both the failure and the remedy are asserted end to
 end. This is the guard's one real cost over the freeze, which was cloneable.
 
-**A run that lost most of its schedule to the builder now fails, whatever the cause.** The clone
+**Amended 2026-08-05 — a run that lost most of its schedule to the builder now fails.** The clone
 failure above exposed a gap that predates it: a `request()` throwing on ordinals 1..9 of 10 printed
 `9 not built`, published a p99 from the single sample, and exited **0** with a green threshold. A
 build error is deliberately not fatal — that is right at three ordinals in ten thousand — but when
 the failed builds outnumber the dispatches, the percentiles describe a minority of the run, and
 grading a target on them is the "refused most of its own load and reported success" failure this
-same decision calls disqualifying. `findLostSchedule` fails those on exit 2.
+same decision calls disqualifying. `findUnbuiltMajority` fails those on exit 2.
 
 **A later-ordinal mutation gets its own count, not `requestErrors`.** Folded together it read as
 "9 not built" and the run exited 0 — stampede refusing 90 % of its own load and reporting success,

@@ -124,29 +124,42 @@ export const findImpureRequests = (summary: RunSummary): string | undefined => {
 };
 
 /**
- * A scenario that lost most of its schedule to the builder, and would otherwise report PASS.
+ * A scenario where the **builder** lost most of the schedule, and which would otherwise report PASS.
  *
  * A `request()` that throws is counted and the run continues — that is deliberate and documented,
- * and right when it is three ordinals in ten thousand. It stops being right when the builds that
- * failed outnumber the ones that went out: a p99 computed from one sample of ten, published beside
- * a green threshold, is the tool congratulating a target it barely touched.
+ * and right when it is three ordinals in ten thousand. It stops being right when the failed builds
+ * outnumber the ones that went out: a p99 computed from one sample of ten, published beside a green
+ * threshold, is the tool congratulating a target it barely touched.
  *
  * The specific way this branch could produce it: `structuredClone` cannot copy the guarded state
- * (D25-02), so a *pure* copy-then-edit builder throws on every ordinal after the first. Nine tenths
- * of the load disappeared because of stampede's own guard, and the run exited 0 — which is the
- * failure D25-02 itself calls disqualifying, one cause over.
+ * (D25-02), so a *pure* copy-then-edit builder throws on every ordinal after the first.
+ *
+ * **The predicate is a build-attempt ratio, not a share of the schedule — do not "fix" it to
+ * `dispatched < scheduled / 2`.** `dispatch()` checks the in-flight cap *before* it builds, so a
+ * dropped instant never reaches the builder: under a binding cap `dispatchedCount` sits at
+ * `maxInFlight` by construction, and a share-of-schedule rule would redden every run with a tight
+ * cap and a slow target. That is also why `unbuilt >= droppedCount` is here — without it, 17 build
+ * failures in a schedule of 10,000 failed a run whose actual story was 9,967 drops, printing a
+ * headline blaming the builder above advice that said to raise `maxInFlight`.
  *
  * Exit 2, not 1: nothing here says the target broke an invariant. The run did not happen.
  */
-export const findLostSchedule = (summary: RunSummary): string | undefined => {
+export const findUnbuiltMajority = (summary: RunSummary): string | undefined => {
   for (const scenario of summary.scenarios) {
+    // A scenario whose losses are *only* impurity belongs to `findImpureRequests`, which already
+    // fails the run on the same code and carries the same remedy. Reporting both gave a reader two
+    // 350-character paragraphs about the same nine requests, closing on the same sentence — which
+    // is the duplication `report/shortfall.ts` exists to prevent, one surface over.
+    if (scenario.requestErrorCount === 0) {
+      continue;
+    }
     const unbuilt = scenario.requestErrorCount + scenario.impureRequestCount;
-    if (unbuilt > scenario.dispatchedCount) {
+    if (unbuilt > scenario.dispatchedCount && unbuilt >= scenario.droppedCount) {
       return (
         `scenario "${scenario.name}" never built ${String(unbuilt)} of its ${String(scenario.scheduledCount)} ` +
         `requests — more than it managed to send (${String(scenario.dispatchedCount)}). The latencies ` +
-        `below are real but they describe a minority of the run, so a threshold reading one of them ` +
-        `would grade a target that was barely asked. ${adviceFor(scenario)}`
+        `are real, but they describe a minority of the run, so a threshold reading one of them would ` +
+        `grade a target that was barely asked. ${REQUEST_THREW_REMEDY}`
       );
     }
   }
