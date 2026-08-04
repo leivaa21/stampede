@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { assertConfigShape } from "./assert-shape.ts";
 import { ConfigLoadError } from "./errors.ts";
+import { resolveModuleFormat } from "./module-format.ts";
 import type { StampedeConfig } from "./types.ts";
 
 /**
@@ -26,8 +27,11 @@ const TYPE_STRIPPING_HELP = [
   "  • `namespace Foo {}`       → a module, or a plain object",
 ].join("\n");
 
+/** The two extensions Node strips types from. Whether either *loads as ESM* is a separate question. */
+const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".mts"]);
+
 /**
- * Resolves a user-supplied path to a `file:` URL, and refuses anything that is not a path.
+ * Resolves a user-supplied path to a `file:` URL, and refuses anything stampede cannot honestly run.
  *
  * Handed straight to `import()`, a bare string would also accept `data:` URLs — which execute
  * inline — and bare specifiers, which resolve out of `node_modules`. Running the config *is*
@@ -37,10 +41,11 @@ const TYPE_STRIPPING_HELP = [
  * The guarantee comes entirely from `pathToFileURL`, which holds unconditionally. The `existsSync`
  * above it is an **error-message gate, not a security gate** — worth saying, so a later "this stat
  * is redundant, `import()` throws anyway" cleanup removes the check and not the guard.
+ *
+ * Two refusals follow it, and the second is the consequential one: a config Node would load as
+ * **CommonJS** runs in sloppy mode, where D25-02's frozen setup state stops throwing and starts
+ * silently swallowing writes. See `module-format.ts` for why that is not an extension check.
  */
-
-/** What Node will strip types from and load as an ES module. */
-const TYPESCRIPT_MODULE = /\.m?ts$/;
 
 export const configUrlFor = (configPath: string): URL => {
   const absolute = path.resolve(configPath);
@@ -48,17 +53,33 @@ export const configUrlFor = (configPath: string): URL => {
     throw new ConfigLoadError(`No config file at ${absolute}`);
   }
   // TypeScript-only is already what the README, `--help` and D1-04 promise — this makes the promise
-  // enforced rather than assumed, and it is load-bearing rather than tidy: a `.cjs` config runs in
-  // **sloppy mode**, where a write to a frozen object fails *silently* instead of throwing. The
-  // whole purity guard (D25-02) becomes a no-op there, and worse than a no-op — the write is
-  // dropped, so a builder that incremented a counter starts sending the same value every time and
-  // nothing says why.
-  if (!TYPESCRIPT_MODULE.test(absolute)) {
+  // enforced rather than assumed.
+  if (!TYPESCRIPT_EXTENSIONS.has(path.extname(absolute))) {
     throw new ConfigLoadError(
-      `${absolute} is not a TypeScript module — stampede loads \`.ts\` and \`.mts\` configs, which ` +
-        `Node strips types from and runs as ES modules. The typed config *is* the DSL, so this is ` +
-        `not a packaging detail: a \`.cjs\` config additionally runs in sloppy mode, where mutating ` +
-        `the frozen setup state fails silently instead of failing loudly.`,
+      `${absolute} is not a TypeScript module — stampede loads \`.ts\` and \`.mts\` configs, whose ` +
+        `types Node strips itself. The typed config *is* the DSL (D1-04), so this is the one file ` +
+        `format the tool has an opinion about.`,
+    );
+  }
+  // Separately, and the load-bearing half: **CommonJS runs in sloppy mode**, where a write to a
+  // frozen object fails *silently* instead of throwing — so the whole purity guard (D25-02) becomes
+  // a no-op, and worse than a no-op, since the user's own mutation is dropped too. The first
+  // version of this gate tested the extension and missed exactly this, because a `.ts` file's
+  // format is decided by the nearest `package.json`, not by its name.
+  const resolved = resolveModuleFormat(absolute);
+  if (resolved.format !== "module") {
+    const remedies = [
+      resolved.decidedBy === undefined
+        ? `  • add \`"type": "module"\` to a package.json next to the config`
+        : `  • add \`"type": "module"\` to ${resolved.decidedBy}`,
+      `  • or rename it to \`${path.basename(absolute, ".ts")}.mts\`, which is an ES module either way`,
+    ].join("\n");
+    throw new ConfigLoadError(
+      `${absolute} would load as CommonJS, not as an ES module.\n\n` +
+        `Two things break there. \`export default defineConfig(…)\` — what the README tells you to ` +
+        `write — is a syntax error under CommonJS. And a CommonJS config runs in sloppy mode, where ` +
+        `mutating the frozen setup state fails *silently* instead of failing loudly, which turns the ` +
+        `\`request()\` purity guard off without saying so.\n\nFix either one:\n${remedies}`,
     );
   }
   return pathToFileURL(absolute);

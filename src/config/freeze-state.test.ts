@@ -149,6 +149,12 @@ describe("isFrozenStateViolation", () => {
       false,
     );
     expect(isFrozenStateViolation(new Error("no seat for that ordinal"))).toBe(false);
+    // The *type* as well as the text. Relaxed to `instanceof Error`, a builder throwing this on
+    // purpose would be rewritten into a purity diagnosis and fail the run at exit 2 — accusing a
+    // config of the one thing it did not do, which is the sibling case one type over.
+    expect(
+      isFrozenStateViolation(new Error("Cannot assign to read only property 'x' of object")),
+    ).toBe(false);
     expect(isFrozenStateViolation(undefined)).toBe(false);
   });
 });

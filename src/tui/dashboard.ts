@@ -42,7 +42,7 @@ const truncate = (line: string, width: number): string => {
   return [...printable].slice(0, Math.max(1, width)).join("");
 };
 
-/** A fixed-width bar over instants dealt with — dispatched plus dropped — against scheduled. */
+/** A fixed-width bar over instants dealt with — dispatched plus dropped plus the two kinds of unbuilt — against scheduled. */
 const bar = (fraction: number, width = 24): string => {
   const filled = Math.max(0, Math.min(width, Math.round(fraction * width)));
   return `${"█".repeat(filled)}${"░".repeat(width - filled)}`;
@@ -62,7 +62,8 @@ const achievedSoFar = (dispatched: number, elapsedMs: number): number | undefine
   elapsedMs <= 0 ? undefined : (dispatched * 1000) / elapsedMs;
 
 const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonly string[] => {
-  // `dropped` and `not built` count too: both are schedule instants that have been dealt with, and
+  // `dropped` and both kinds of `not built` count too: all are schedule instants that have been
+  // dealt with, and
   // a bar that ignored them would crawl while the run was in fact racing to its end.
   const done =
     scenario.dispatchedCount +

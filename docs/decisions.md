@@ -552,10 +552,18 @@ which is worse than the impurity it was policing. `impureRequestCount` is a term
 identity (`dispatched + dropped + requestErrors + impure === scheduled`) and has its own run-failure
 message, because "a check or onResponse threw" is the wrong sentence for a config with neither.
 
-**Rejected: relying on the freeze alone.** A `.cjs` config runs in sloppy mode, where a write to a
-frozen object fails _silently_ — the mutation is discarded and the builder starts sending the same
-value every time with nothing to say why. `configUrlFor` now refuses anything that is not `.ts` or
-`.mts`, which the README, `--help` and D1-04 already promised.
+**Rejected: relying on the freeze alone.** CommonJS runs in sloppy mode, where a write to a frozen
+object fails _silently_ — the mutation is discarded and the builder starts sending the same value
+every time with nothing to say why, which is D25-02 switched off.
+
+`configUrlFor` therefore refuses two things. First, anything that is not `.ts` or `.mts`, which the
+README, `--help` and D1-04 already promised. Second — and this is the one with teeth — anything Node
+would load as CommonJS, which is **not** a question about the extension. Measured on Node 24: a
+`.ts` file in a package with `"type": "commonjs"`, or with no `"type"` at all (the default for every
+project that has not opted in), loads as CommonJS, and syntax detection does not rescue `.ts` the
+way it rescues `.js`. An extension gate passed exactly that file — the shape a real user has —
+while the decision record claimed the hole was closed. `module-format.ts` resolves the format from
+the nearest `package.json` instead, and the error names that file and both remedies.
 
 ## 2026-08-03 — [D25-03] Gate two runs nightly, and cannot redden a pull request
 

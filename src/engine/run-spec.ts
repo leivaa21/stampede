@@ -15,6 +15,13 @@ import { assertCount, assertDurationMs, assertPositiveCount } from "./validate.t
  * A type rather than a string match, because this repo has been bitten twice by re-deriving that
  * distinction from a message.
  */
+/**
+ * Thrown where the freeze is, which is `worker-entry.ts` — so library users meet it through
+ * `runFromConfig`, and the low-level `scenariosFrom` + `runDispatch` path deliberately does not
+ * freeze and therefore never throws it. It is exported because the dispatcher *branches* on the
+ * type to keep impure builds out of `requestErrors`, and a class that decides a published number
+ * should be nameable by the code reading that number.
+ */
 export class ImpureRequestError extends Error {}
 
 /** How long the run keeps waiting for responses after its last dispatch went out. */

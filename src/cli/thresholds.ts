@@ -29,23 +29,26 @@ export interface Verdict {
  * "check the target is reachable" is one hypothesis, and printing it while the same sentence says
  * `10 dropped` sends the user to the wrong place — that is `maxInFlight`, not the network.
  */
+const IMPURE_REMEDY =
+  "`request()` mutated the frozen setup state — it must be a pure function of (state, ordinal). Derive from the ordinal instead: `seats[ordinal % seats.length]`.";
+
+const REQUEST_THREW_REMEDY = "the requests threw while being built; fix `request()` in the config.";
+
 const adviceFor = (scenario: RunSummary["scenarios"][number]): string => {
   // First, because it is the only one of these where the *config* is at fault: nothing was sent, so
   // no advice about the target or its cap can be right. "check the target is reachable" for a
   // `request()` that threw on every ordinal sends someone to inspect a server that was never asked.
-  // The *family* first, not each cause against the whole schedule. Compared separately, a run
-  // with 5 impure and 5 thrown builds satisfied neither branch and fell through to "check the
-  // target is reachable" — pointing at a server that had been asked once out of eleven. The
-  // threshold matches the drops branch below: more unbuilt than dispatched means the builder is
-  // the story.
+  // The two build failures are judged as a *family*: compared separately against the schedule, a
+  // run with 5 impure and 5 thrown satisfied neither and fell through to "check the target is
+  // reachable" — pointing at a server that had been asked once out of eleven.
+  //
+  // It has to out-weigh every branch it can steal from, not just the dispatches. Under a binding
+  // in-flight cap `dispatchedCount` sits at `maxInFlight` by construction, so `unbuilt >=
+  // dispatched` alone claimed the builder for a run of 1000 with 970 dropped and 20 thrown — a
+  // slow target with a tight cap, told to go fix `request()`.
   const unbuilt = scenario.impureRequestCount + scenario.requestErrorCount;
-  if (unbuilt > 0 && unbuilt >= scenario.dispatchedCount) {
-    // Impure takes the wording when it is present at all, because it is the one with a remedy the
-    // reader cannot guess — and it is lost otherwise: `findUnmeasuredScenario` returns before
-    // `findImpureRequests` runs, so this sentence is the only place it reaches that reader.
-    return scenario.impureRequestCount > 0
-      ? "`request()` mutated the frozen setup state — it must be a pure function of (state, ordinal). Derive from the ordinal instead: `seats[ordinal % seats.length]`."
-      : "the requests threw while being built; fix `request()` in the config.";
+  if (unbuilt > 0 && unbuilt >= scenario.dispatchedCount && unbuilt >= scenario.droppedCount) {
+    return scenario.impureRequestCount > 0 ? IMPURE_REMEDY : REQUEST_THREW_REMEDY;
   }
   if (scenario.droppedCount >= scenario.dispatchedCount && scenario.droppedCount > 0) {
     return "almost everything was refused by the in-flight cap; raise `maxInFlight`.";
@@ -54,6 +57,21 @@ const adviceFor = (scenario: RunSummary["scenarios"][number]): string => {
     return "the requests went out but nothing came back in time; raise `drainTimeoutMs`.";
   }
   return "check the target is reachable.";
+};
+
+/**
+ * The remedy, whichever cause won.
+ *
+ * `findUnmeasuredScenario` returns before `findImpureRequests` ever runs, so on that path this is
+ * the only route the purity contract has to the reader — and the shortfall line they are looking at
+ * says `1 not built (impure request())`, a phrase that does not define itself. So it is appended
+ * even when something else is the dominant cause, rather than being lost to a branch it did not win.
+ */
+const adviceWithPurity = (scenario: RunSummary["scenarios"][number]): string => {
+  const advice = adviceFor(scenario);
+  return scenario.impureRequestCount === 0 || advice === IMPURE_REMEDY
+    ? advice
+    : `${advice} Separately, ${scenario.impureRequestCount === 1 ? "1 request" : `${String(scenario.impureRequestCount)} requests`} could not be built at all: ${IMPURE_REMEDY}`;
 };
 
 /**
@@ -148,7 +166,7 @@ export const findUnmeasuredScenario = (summary: RunSummary): string | undefined 
         `${String(scenario.droppedCount)} dropped, ${String(scenario.requestErrorCount)} not built, ` +
         `${String(scenario.impureRequestCount)} impure, ` +
         `${String(scenario.abandonedCount)} abandoned). ` +
-        `There is nothing to publish a percentile from — ${adviceFor(scenario)}`
+        `There is nothing to publish a percentile from — ${adviceWithPurity(scenario)}`
       );
     }
   }

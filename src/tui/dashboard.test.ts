@@ -83,6 +83,9 @@ describe("frameFor", () => {
     ).join("\n");
 
     expect(frame).toContain("9 not built (impure request())");
+    // The bar's own term, which the comment above argues for and nothing asserted: without it a
+    // run that is in fact finished stalls at 1/10 on screen for as long as the user watches.
+    expect(frame).toContain("10/10");
   });
 
   it("says nothing about shortfalls when there are none", () => {

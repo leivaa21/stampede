@@ -154,21 +154,65 @@ describe("adviceFor, through the message that carries it", () => {
     );
 
     expect(message).toContain("seats[ordinal % seats.length]");
+    // The term itself, not only the remedy: this line is the one place a reader of an unmeasured
+    // scenario can see where the schedule went.
+    expect(message).toContain("4 impure");
   });
 
   it("still blames the cap when the drops, not the builder, are the story", () => {
+    // Set up as the title promises: drops dominate *and* the builder failed more often than
+    // anything was dispatched. Under a binding cap `dispatched` sits at `maxInFlight`, so a family
+    // threshold that only had to beat the dispatches claimed this run for `request()` — telling
+    // someone whose target is slow and whose cap is tight to go fix their config.
     const message = findUnmeasuredScenario(
       summaryOf(
         scenario({
-          scheduledCount: 10,
-          dispatchedCount: 0,
-          droppedCount: 10,
+          scheduledCount: 1000,
+          dispatchedCount: 10,
+          droppedCount: 970,
+          requestErrorCount: 20,
           responseCount: 0,
         }),
       ),
     );
 
     expect(message).toContain("maxInFlight");
+    expect(message).not.toContain("fix `request()` in the config");
+  });
+
+  it("says the purity contract even when the drops won the diagnosis", () => {
+    // The shortfall line the reader is looking at says `1 not built (impure request())`, and that
+    // phrase does not define itself. Losing it to a branch it did not win leaves the page naming a
+    // failure it never explains, with the advice pointing at the network.
+    const message = findUnmeasuredScenario(
+      summaryOf(
+        scenario({
+          scheduledCount: 1000,
+          dispatchedCount: 999,
+          errorCount: 999,
+          impureRequestCount: 1,
+          responseCount: 0,
+        }),
+      ),
+    );
+
+    expect(message).toContain("1 request could not be built");
+    expect(message).toContain("seats[ordinal % seats.length]");
+  });
+
+  it("does not say the purity contract twice when purity is the dominant cause", () => {
+    const message = findUnmeasuredScenario(
+      summaryOf(
+        scenario({
+          scheduledCount: 4,
+          dispatchedCount: 0,
+          impureRequestCount: 4,
+          responseCount: 0,
+        }),
+      ),
+    );
+
+    expect(message?.match(/mutated the frozen setup state/g)).toHaveLength(1);
   });
 });
 

@@ -53,6 +53,36 @@ describe("loadConfig", () => {
     await expect(loadConfig(file)).rejects.toThrow(/is not a TypeScript module/);
   });
 
+  it("refuses a .ts config that Node would load as CommonJS, which is the case that matters", async () => {
+    // The `.cjs` test above passes for the *extension*, and an extension gate is what the first
+    // version of this was — it missed the shape a real user actually has. A `.ts` file in a package
+    // with `"type": "commonjs"` (or with no `"type"`, the default) loads as CommonJS too, and there
+    // it runs sloppy: `state.nonce += 1` against the frozen setup state is silently dropped rather
+    // than throwing, so D25-02 enforces nothing. Measured on Node 24.
+    const dir = mkdtempSync(join(tmpdir(), "stampede-cjs-ts-"));
+    writeFileSync(join(dir, "package.json"), '{"type":"commonjs"}');
+    const file = join(dir, "scenarios.ts");
+    writeFileSync(file, "export default {};");
+
+    await expect(loadConfig(file)).rejects.toThrow(/would load as CommonJS/);
+    // And says what to change, naming the file that decided it — otherwise "would load as
+    // CommonJS" is a verdict on a decision the user cannot see they made.
+    await expect(loadConfig(file)).rejects.toThrow(/"type": "module"/);
+    await expect(loadConfig(file)).rejects.toThrow(new RegExp(join(dir, "package.json")));
+    await expect(loadConfig(file)).rejects.toThrow(/scenarios\.mts/);
+  });
+
+  it("accepts a .ts config in a package that opted into ES modules", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stampede-esm-ts-"));
+    writeFileSync(join(dir, "package.json"), '{"type":"module"}');
+    const file = join(dir, "scenarios.ts");
+    writeFileSync(file, "export default {};");
+
+    // Past the format gate — it fails on shape instead, which is the next door along.
+    await expect(loadConfig(file)).rejects.toThrow(/scenarios/);
+    await expect(loadConfig(file)).rejects.not.toThrow(/would load as CommonJS/);
+  });
+
   it("names the file when there is nothing to load", async () => {
     await expect(loadConfig("/nowhere/scenarios.ts")).rejects.toThrow(/No config file at/);
   });
