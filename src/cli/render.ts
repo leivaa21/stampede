@@ -96,6 +96,12 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
   for (const [name, value] of Object.entries(scenario.counters)) {
     lines.push(`    counter     ${plain(name)} = ${String(value)}`);
   }
+  for (const [name, keys] of Object.entries(scenario.keyedCounters)) {
+    // One line per counter, keys inline: a declared key space is a *dimension*, and splitting it
+    // across N rows would bury the comparison between keys that is the only reason to declare it.
+    const parts = Object.entries(keys).map(([key, value]) => `${plain(key)} ${String(value)}`);
+    lines.push(`    counter     ${plain(name)}  ${parts.join(" · ")}`);
+  }
   for (const [name, trend] of Object.entries(scenario.trends)) {
     lines.push(
       `    recorded    ${plain(name)}  p50 ${ms(trend.p50Ms)} · p99 ${ms(trend.p99Ms)} · max ${ms(trend.maxMs)}`,
@@ -103,7 +109,7 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
   }
   if (scenario.brokenObservations > 0) {
     lines.push(
-      `    ⚠ ${String(scenario.brokenObservations)} broken observations — a check or onResponse threw, returned a non-boolean, or asked for a reserved metric name`,
+      `    ⚠ ${String(scenario.brokenObservations)} broken observations — a check or onResponse threw, returned a non-boolean, or named a metric the scenario never declared`,
     );
   }
   if (scenario.refusedRecordings > 0) {

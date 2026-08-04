@@ -17,6 +17,13 @@ export interface Scenario<TRequest> extends ScheduledScenario {
   readonly requestFor: (ordinal: number) => TRequest;
   /** Named predicates over each response — see `config/types.ts` and D2-04. */
   readonly checks?: Readonly<Record<string, ResponseCheck>>;
+  /**
+   * Declared key spaces for keyed counters, by counter name (D25-01).
+   *
+   * Normalised to plain key lists here — the config's `{ keys: [...] }` wrapper exists so the
+   * declaration has somewhere to grow, and the engine does not need that shape.
+   */
+  readonly keyedCounters?: Readonly<Record<string, readonly string[]>>;
   /** Runs once per response, for counters and trends a check cannot express. */
   readonly onResponse?: (response: TransportResponse, record: ResponseRecorder) => void;
 }

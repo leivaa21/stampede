@@ -14,7 +14,8 @@ import {
 import { burst, constantRate } from "./arrival-profiles.ts";
 import type { Transport, TransportResponse } from "./ports.ts";
 
-import { EngineMetric } from "./metric-names.ts";
+import { MAX_DISTINCT_TALLIES } from "../metrics/validate.ts";
+import { EngineMetric, ENGINE_COUNTERS } from "./metric-names.ts";
 /** The reference target's answer, when it is answering. */
 const okResponse = (): TransportResponse => ({
   status: 200,
@@ -237,9 +238,11 @@ describe("user code cannot starve the engine's own bookkeeping", () => {
     expect(reads.responseCount + reads.errorCount + reads.abandonedCount).toBe(
       reads.dispatchedCount,
     );
-    // And the refusals themselves are published rather than absorbed: 600 names asked for, 512
-    // slots in the map, nine of them already claimed by the engine plus one for the check.
-    expect(reads.refusedRecordings).toBe(600 - (512 - 10));
+    // And the refusals themselves are published rather than absorbed. Derived from the constants
+    // rather than written out: hardcoding it made this test the thing that broke when a metric was
+    // added, which says nothing about the behaviour under test.
+    const reservedByTheEngine = ENGINE_COUNTERS.length + 1; // + the one declared check
+    expect(reads.refusedRecordings).toBe(600 - (MAX_DISTINCT_TALLIES - reservedByTheEngine));
   });
 
   it("keeps attributing a check that only starts breaking once the budget is full", async () => {

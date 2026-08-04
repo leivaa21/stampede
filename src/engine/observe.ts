@@ -1,5 +1,11 @@
 import type { ScenarioMetrics } from "../metrics/index.ts";
-import { brokenCheckCounter, EngineMetric, RESERVED_METRIC_PREFIX } from "./metric-names.ts";
+import {
+  brokenCheckCounter,
+  EngineMetric,
+  keyedCounter,
+  OTHER_KEY,
+  RESERVED_METRIC_PREFIX,
+} from "./metric-names.ts";
 import type { ResponseRecorder, TransportResponse } from "./ports.ts";
 
 /**
@@ -61,13 +67,29 @@ const neutralise = (value: unknown): boolean => {
  * requests that never happened — in a tool whose whole pitch is that its numbers are honest.
  * Data-derived, so it is refused and counted rather than thrown (`metrics/validate.ts`'s rule).
  */
-export const recorderFor = (metrics: ScenarioMetrics): ResponseRecorder => ({
+export const recorderFor = (
+  metrics: ScenarioMetrics,
+  /** Declared key spaces, by counter name. Every key here already has a reserved slot. */
+  keyed: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
+): ResponseRecorder => ({
   count: (name, by = 1) => {
     if (name.startsWith(RESERVED_METRIC_PREFIX)) {
       metrics.counters.inc(EngineMetric.reservedNameRefusals);
       return;
     }
     metrics.counters.inc(name, by);
+  },
+  countKeyed: (name, key, by = 1) => {
+    const keys = keyed.get(name);
+    if (keys === undefined) {
+      // A counter the scenario never declared is a claim the config did not make, and there is no
+      // bounded slot to put it in — so it is refused and counted, not invented.
+      metrics.counters.inc(EngineMetric.undeclaredCounters);
+      return;
+    }
+    // An undeclared *key* is the ordinary case this feature exists for: the key came from a
+    // response, the config could not enumerate every value, and `other` is where it belongs.
+    metrics.counters.inc(keyedCounter(name, keys.has(key) ? key : OTHER_KEY), by);
   },
   recordMs: (name, valueMs) => {
     if (name.startsWith(RESERVED_METRIC_PREFIX)) {

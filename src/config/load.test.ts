@@ -164,6 +164,50 @@ await loadConfig(${JSON.stringify(file)}).catch((error) => {
       );
     });
 
+    it("refuses a declared key space that would not fit the counter budget", async () => {
+      // At startup with the sum shown, rather than as "recordings refused" twenty minutes later —
+      // by which time the information stopped being actionable.
+      const keys = Array.from({ length: 60 }, (_, i) => `"k${String(i)}"`).join(", ");
+      const many = Array.from({ length: 9 }, (_, i) => `c${String(i)}: { keys: [${keys}] }`).join(
+        ", ",
+      );
+      await expect(loadConfig(writeConfig(withScenario(`counters: { ${many} }`)))).rejects.toThrow(
+        /reserves \d+ counter slots .*and the per-scenario limit is 512/s,
+      );
+    });
+
+    it("refuses a declared `other`, because it is implicit", async () => {
+      await expect(
+        loadConfig(writeConfig(withScenario(`counters: { byStatus: { keys: ["2xx", "other"] } }`))),
+      ).rejects.toThrow(/declares "other" — it is implicit/);
+    });
+
+    it("refuses a duplicate key rather than silently reserving one slot", async () => {
+      await expect(
+        loadConfig(writeConfig(withScenario(`counters: { byStatus: { keys: ["2xx", "2xx"] } }`))),
+      ).rejects.toThrow(/declares "2xx" twice/);
+    });
+
+    it("refuses an empty key space, and says what to use instead", async () => {
+      await expect(
+        loadConfig(writeConfig(withScenario(`counters: { byStatus: { keys: [] } }`))),
+      ).rejects.toThrow(/declares no keys — use `record.count`/);
+    });
+
+    it("refuses a counter declared as something other than { keys: [...] }", async () => {
+      await expect(
+        loadConfig(writeConfig(withScenario(`counters: { byStatus: ["2xx"] }`))),
+      ).rejects.toThrow(/must be declared as \{ keys: \[\.\.\.\] \}/);
+    });
+
+    it("accepts a declared key space", async () => {
+      const config = await loadConfig(
+        writeConfig(withScenario(`counters: { byStatus: { keys: ["2xx", "5xx"] } }`)),
+      );
+
+      expect(config.scenarios.reads?.counters?.byStatus?.keys).toEqual(["2xx", "5xx"]);
+    });
+
     it("accepts a plain synchronous check", async () => {
       const config = await loadConfig(
         writeConfig(withScenario(`checks: { created: (r) => r.status === 201 }`)),

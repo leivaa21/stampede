@@ -24,6 +24,24 @@ export const RESERVED_METRIC_PREFIX = "stampede.";
 export const brokenCheckCounter = (checkName: string): string =>
   `${RESERVED_METRIC_PREFIX}brokenCheck.${checkName}`;
 
+/**
+ * The bucket an undeclared key lands in. Implicit and always reserved.
+ *
+ * A key that was not declared has to go *somewhere* — dropping it would be the silent hole
+ * `metrics/validate.ts` refuses. Implicit means a config cannot forget it, and a non-zero `other`
+ * is itself the signal that the declared key space is wrong.
+ */
+export const OTHER_KEY = "other";
+
+/**
+ * Where a keyed counter's key is stored: `byStatus.5xx`, in the user's own namespace.
+ *
+ * Flat storage, nested projection. The counter map, its cap and its exact elementwise merge are
+ * unchanged — a keyed counter is a *reservation pattern*, not a new metric kind, which is what lets
+ * D1-02's order-independence hold for it without being re-argued.
+ */
+export const keyedCounter = (name: string, key: string): string => `${name}.${key}`;
+
 export const EngineMetric = {
   /** Histogram, µs: actual send → response. What the target took. */
   latency: "stampede.latency",
@@ -76,6 +94,14 @@ export const EngineMetric = {
    * engine number; counted rather than dropped, because a refusal nobody counts is a silent hole.
    */
   reservedNameRefusals: "stampede.reservedNameRefusals",
+  /**
+   * `countKeyed` calls naming a counter the scenario never declared.
+   *
+   * Refused rather than accepted, because there is no bounded slot to put it in and inventing one
+   * is the cardinality bomb declared keys exist to prevent; counted rather than dropped, because a
+   * refusal nobody counts is a silent hole.
+   */
+  undeclaredCounters: "stampede.undeclaredCounters",
 } as const;
 
 /**
@@ -100,6 +126,7 @@ const ENGINE_METRIC_KINDS: Readonly<Record<keyof typeof EngineMetric, "counter" 
     brokenObservers: "counter",
     requestErrors: "counter",
     reservedNameRefusals: "counter",
+    undeclaredCounters: "counter",
   };
 
 /**

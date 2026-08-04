@@ -55,6 +55,15 @@ export const MAX_DISTINCT_SCENARIOS = 64;
  */
 export const MAX_CHECKS_PER_SCENARIO = 64;
 
+/**
+ * Keys one declared counter may hold, before its implicit `other`.
+ *
+ * Each key is a reserved slot out of `MAX_DISTINCT_TALLIES`, so this is a per-counter guard on top
+ * of the whole-scenario budget `assert-shape.ts` computes. 64 is generous for a dimension anyone
+ * can read off a report — a key space bigger than that is a dimension nobody is going to skim.
+ */
+export const MAX_KEYS_PER_COUNTER = 64;
+
 export const assertMetricName = (name: string, kind: string): void => {
   if (name.length === 0) {
     throw new RangeError(`A ${kind} name must not be empty`);

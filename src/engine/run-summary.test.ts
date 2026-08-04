@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MetricsRegistry } from "../metrics/index.ts";
-import { brokenCheckCounter, EngineMetric } from "./metric-names.ts";
+import { brokenCheckCounter, EngineMetric, keyedCounter } from "./metric-names.ts";
 import { summariseRun, type RunProgress } from "./run-summary.ts";
 
 /**
@@ -21,6 +21,7 @@ const progressFor = (
   maxObservedInFlight: 4,
   scenarios: scenarios.map((s) => ({
     name: s.name,
+    keyedCounters: {},
     scheduledCount: s.scheduledCount,
     requestedDurationMs: s.durationMs,
     lastDispatchElapsedMs: s.durationMs,
@@ -91,6 +92,17 @@ describe("summariseRun separates the user's metrics from the engine's", () => {
     expect(Object.keys(summary?.checks ?? {})).toEqual(["alpha", "mid", "zeta"]);
   });
 
+  it("counts an undeclared keyed counter as a broken observation", () => {
+    const metrics = new MetricsRegistry();
+    metrics.scenario("reads").counters.inc(EngineMetric.undeclaredCounters, 3);
+
+    const [summary] = summariseRun(oneScenario, metrics).scenarios;
+
+    // Without this the run exits 0 having silently discarded every increment the config asked for
+    // — the exact silent hole the counter's own docblock says it exists to prevent.
+    expect(summary?.brokenObservations).toBe(3);
+  });
+
   it("counts a refused reserved name as a broken observation", () => {
     const metrics = new MetricsRegistry();
     metrics.scenario("reads").counters.inc(EngineMetric.reservedNameRefusals, 5);
@@ -101,6 +113,54 @@ describe("summariseRun separates the user's metrics from the engine's", () => {
     // the run would exit 0 having silently discarded five counts the config asked for.
     expect(summary?.brokenObservations).toBe(5);
     expect(summary?.counters).toEqual({});
+  });
+});
+
+describe("summariseRun projects declared key spaces back into their shape", () => {
+  const withKeys = (keys: readonly string[]): RunProgress => ({
+    ...oneScenario,
+    scenarios: oneScenario.scenarios.map((s) => ({ ...s, keyedCounters: { byStatus: keys } })),
+  });
+
+  it("publishes every declared key, including ones that never fired", () => {
+    const metrics = new MetricsRegistry();
+    metrics.scenario("reads").counters.inc(keyedCounter("byStatus", "2xx"), 7);
+
+    const [summary] = summariseRun(withKeys(["2xx", "4xx", "5xx"]), metrics).scenarios;
+
+    // Driven by the declaration, not by what was recorded: a threshold reading `["5xx"] === 0`
+    // should mean "none happened", not "the key is missing".
+    expect(summary?.keyedCounters.byStatus).toEqual({ "2xx": 7, "4xx": 0, "5xx": 0, other: 0 });
+  });
+
+  it("keeps `other` even when nothing landed there", () => {
+    const [summary] = summariseRun(withKeys(["2xx"]), new MetricsRegistry()).scenarios;
+
+    // Absent `other` would read as "no undeclared keys are possible", which is the opposite of
+    // what it means. It is the bucket that proves the key space is closed.
+    expect(summary?.keyedCounters.byStatus).toHaveProperty("other", 0);
+  });
+
+  it("does not repeat a keyed slot in the plain counter map", () => {
+    const metrics = new MetricsRegistry();
+    const reads = metrics.scenario("reads");
+    reads.counters.inc(keyedCounter("byStatus", "2xx"), 7);
+    reads.counters.inc("reserved201", 1);
+
+    const [summary] = summariseRun(withKeys(["2xx"]), metrics).scenarios;
+
+    // Listed in both places, a reader could add `byStatus.2xx` into a total twice.
+    expect(summary?.counters).toEqual({ reserved201: 1 });
+  });
+
+  it("leaves a plain counter whose name merely contains a dot alone", () => {
+    const metrics = new MetricsRegistry();
+    metrics.scenario("reads").counters.inc("api.v2.hits", 3);
+
+    const [summary] = summariseRun(withKeys(["2xx"]), metrics).scenarios;
+
+    // Excluded *by declaration*, not by looking for a dot — a plain counter may have one.
+    expect(summary?.counters).toEqual({ "api.v2.hits": 3 });
   });
 });
 
@@ -144,6 +204,7 @@ describe("summariseRun reports what a scenario did, not what it hoped", () => {
       scenarios: [
         {
           name: "reads",
+          keyedCounters: {},
           scheduledCount: 500,
           requestedDurationMs: 1_000,
           lastDispatchElapsedMs: 2_000,

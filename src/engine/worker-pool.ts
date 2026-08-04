@@ -87,6 +87,10 @@ export const mergeProgress = (parts: readonly RunProgress[]): RunProgress => {
           ? scenario
           : {
               name: scenario.name,
+              // Identical across shards — every worker imported the same config — so either side
+              // will do, and taking one rather than merging keeps this a fact about the config
+              // rather than something the merge could disagree about.
+              keyedCounters: scenario.keyedCounters,
               // The shards are disjoint by construction, so their counts add up to the run's.
               scheduledCount: seen.scheduledCount + scenario.scheduledCount,
               // Identical across shards — a shard covers the same window, not a shorter one.

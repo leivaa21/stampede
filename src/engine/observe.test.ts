@@ -164,6 +164,32 @@ describe("async callbacks", () => {
     expect(metrics.counters.get(brokenCheckCounter("asyncCheck"))).toBe(1);
   });
 
+  it("routes an undeclared key to `other` rather than creating a name", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["byStatus", new Set(["2xx"])]]));
+
+    recorder.countKeyed("byStatus", "2xx");
+    recorder.countKeyed("byStatus", "418");
+
+    expect(metrics.counters.get("byStatus.2xx")).toBe(1);
+    expect(metrics.counters.get("byStatus.other")).toBe(1);
+    // The undeclared key must not become a slot of its own — that is the cardinality bomb the
+    // whole declaration exists to defuse.
+    expect(metrics.counters.get("byStatus.418")).toBe(0);
+  });
+
+  it("refuses a counter the scenario never declared, and counts the refusal", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["byStatus", new Set(["2xx"])]]));
+
+    recorder.countKeyed("byRoute", "/health");
+
+    // There is no bounded slot to put it in, and inventing one is the thing being prevented. So it
+    // is refused — and counted, because a refusal nobody counts is a silent hole.
+    expect(metrics.counters.get("byRoute.other")).toBe(0);
+    expect(metrics.counters.get(EngineMetric.undeclaredCounters)).toBe(1);
+  });
+
   it("leaves an ordinary return value alone", () => {
     const metrics = scenario();
     // Only a *thenable* is a swallowed promise. An `onResponse` whose last expression happens to be

@@ -134,6 +134,14 @@ const scenarioSection = (scenario: ScenarioRunSummary): string => {
     cell(name),
     String(value),
   ]);
+  // A row per counter, a column per key — the shape a declared key space is for. `other` is always
+  // last regardless of declaration order, because it is the bucket rather than one of the keys.
+  const keyedRows = Object.entries(scenario.keyedCounters).map(([name, keys]) => [
+    cell(name),
+    ...Object.entries(keys)
+      .sort(([a], [b]) => (a === "other" ? 1 : b === "other" ? -1 : 0))
+      .map(([key, value]) => `${cell(key)} ${String(value)}`),
+  ]);
   const trendRows = Object.entries(scenario.trends).map(([name, trend]) => [
     cell(name),
     ms(trend.p50Ms),
@@ -153,11 +161,12 @@ const scenarioSection = (scenario: ScenarioRunSummary): string => {
       ? ["", table(["", "check", "passed", "failed", "broken"], checkRows)]
       : []),
     ...(counterRows.length > 0 ? ["", table(["counter", "total"], counterRows)] : []),
+    ...keyedRows.map((row) => `\n**${row[0] ?? ""}** — ${row.slice(1).join(" · ")}`),
     ...(trendRows.length > 0 ? ["", table(["recorded", "p50", "p99", "max"], trendRows)] : []),
     ...(scenario.brokenObservations > 0
       ? [
           "",
-          `> ⚠ **${String(scenario.brokenObservations)} broken observations** — a check or \`onResponse\` threw, returned a non-boolean, or asked for a reserved metric name. The measurements are real; at least one claim about them is not.`,
+          `> ⚠ **${String(scenario.brokenObservations)} broken observations** — a check or \`onResponse\` threw, returned a non-boolean, or named a metric the scenario never declared. The measurements are real; at least one claim about them is not.`,
         ]
       : []),
     ...(scenario.refusedRecordings > 0

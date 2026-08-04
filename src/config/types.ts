@@ -60,6 +60,26 @@ export interface ScenarioConfig<TSetup> {
    */
   readonly checks?: Readonly<Record<string, ResponseCheck>>;
   /**
+   * Counters whose key space is declared up front, for the dimensions a plain counter cannot hold.
+   *
+   * A counter per endpoint path or per status class is a reasonable thing to want, and doing it
+   * with `record.count(path)` is a cardinality bomb: the per-scenario cap is 512 names, and a run
+   * that exceeds it fails telling you to use fewer. Declaring the keys makes the space bounded
+   * before a single request goes out.
+   *
+   * ```ts
+   * counters: { byStatus: { keys: ["2xx", "4xx", "5xx"] } },
+   * onResponse: (res, record) => record.countKeyed("byStatus", bucketOf(res.status)),
+   * ```
+   *
+   * Every declared key gets a slot reserved before the run starts, plus an implicit `other` for
+   * keys that were not declared — so nothing is ever dropped, and a non-zero `other` tells you the
+   * key space is wrong. Declared rather than inferred (D25-01): a top-N sketch would need no
+   * advance knowledge and would merge approximately and order-dependently, which is the one
+   * property `metrics/` does not trade away.
+   */
+  readonly counters?: Readonly<Record<string, { readonly keys: readonly string[] }>>;
+  /**
    * Runs once per response, for counters and trends a check cannot express.
    *
    * A check answers yes or no. This is for everything else: counting how many buyers got a 201,

@@ -1,7 +1,15 @@
-import { brokenCheckCounter, RESERVED_METRIC_PREFIX } from "../engine/metric-names.ts";
+import {
+  brokenCheckCounter,
+  ENGINE_COUNTERS,
+  keyedCounter,
+  OTHER_KEY,
+  RESERVED_METRIC_PREFIX,
+} from "../engine/metric-names.ts";
 import {
   MAX_CHECKS_PER_SCENARIO,
   MAX_DISTINCT_SCENARIOS,
+  MAX_DISTINCT_TALLIES,
+  MAX_KEYS_PER_COUNTER,
   MAX_METRIC_NAME_LENGTH,
 } from "../metrics/validate.ts";
 import { ConfigLoadError } from "./errors.ts";
@@ -110,6 +118,89 @@ const assertOptionalNumber = (
  * runtime — which is why they are startup errors and not something a reader has to notice in a
  * report twenty minutes later.
  */
+/**
+ * Declared keyed counters: the names, the keys, and whether they all fit.
+ *
+ * The budget check is the point. Every declared key is a slot reserved before the run starts, and a
+ * config that declares more than the map can hold would otherwise get a run that starts, fills up,
+ * and fails at the end with "recordings refused" — a diagnosis arriving twenty minutes after the
+ * information was actionable. Here it is arithmetic, at startup, with the sum shown.
+ */
+const assertKeyedCounters = (
+  counters: unknown,
+  checkCount: number,
+  name: string,
+  configPath: string,
+): void => {
+  if (counters === undefined) {
+    return;
+  }
+  if (!isRecord(counters)) {
+    throw new ConfigLoadError(
+      `${configPath}: scenario "${name}" has \`counters\` that is not an object of declared key spaces`,
+    );
+  }
+
+  let declaredSlots = 0;
+  for (const [counter, declaration] of Object.entries(counters)) {
+    assertName(counter, "counter", configPath);
+    if (!isRecord(declaration) || !Array.isArray(declaration.keys)) {
+      throw new ConfigLoadError(
+        `${configPath}: counter "${counter}" in scenario "${name}" must be declared as { keys: [...] }`,
+      );
+    }
+    const { keys } = declaration;
+    if (keys.length === 0) {
+      throw new ConfigLoadError(
+        `${configPath}: counter "${counter}" in scenario "${name}" declares no keys — use \`record.count\` for a counter without a key space`,
+      );
+    }
+    if (keys.length > MAX_KEYS_PER_COUNTER) {
+      throw new ConfigLoadError(
+        `${configPath}: counter "${counter}" in scenario "${name}" declares ${String(keys.length)} keys; the limit is ${String(MAX_KEYS_PER_COUNTER)}`,
+      );
+    }
+    const seen = new Set<string>();
+    for (const key of keys) {
+      if (typeof key !== "string") {
+        throw new ConfigLoadError(
+          `${configPath}: counter "${counter}" in scenario "${name}" has a key that is not a string`,
+        );
+      }
+      // `other` is implicit and always reserved, so declaring it would either be a no-op the
+      // reader has to reason about or a duplicate slot. Saying so is kinder than accepting it.
+      if (key === OTHER_KEY) {
+        throw new ConfigLoadError(
+          `${configPath}: counter "${counter}" in scenario "${name}" declares "${OTHER_KEY}" — it is implicit, and every undeclared key already lands there`,
+        );
+      }
+      if (seen.has(key)) {
+        throw new ConfigLoadError(
+          `${configPath}: counter "${counter}" in scenario "${name}" declares "${key}" twice`,
+        );
+      }
+      seen.add(key);
+      assertName(key, `key in counter "${counter}"`, configPath);
+      if (keyedCounter(counter, key).length > MAX_METRIC_NAME_LENGTH) {
+        throw new ConfigLoadError(
+          `${configPath}: counter "${counter}" with key "${key}" exceeds the ${String(MAX_METRIC_NAME_LENGTH)}-character metric name limit`,
+        );
+      }
+    }
+    declaredSlots += keys.length + 1; // + the implicit `other`
+  }
+
+  const reserved = ENGINE_COUNTERS.length + checkCount + declaredSlots;
+  if (reserved > MAX_DISTINCT_TALLIES) {
+    throw new ConfigLoadError(
+      `${configPath}: scenario "${name}" reserves ${String(reserved)} counter slots ` +
+        `(${String(ENGINE_COUNTERS.length)} for stampede + ${String(checkCount)} for its checks + ` +
+        `${String(declaredSlots)} for its declared key spaces, including one \`${OTHER_KEY}\` each) ` +
+        `and the per-scenario limit is ${String(MAX_DISTINCT_TALLIES)}`,
+    );
+  }
+};
+
 const assertObservers = (
   scenario: Record<string, unknown>,
   name: string,
@@ -152,6 +243,12 @@ const assertObservers = (
       assertNotAsync(predicate, `check "${checkName}" in scenario "${name}"`, configPath);
     }
   }
+  assertKeyedCounters(
+    scenario.counters,
+    isRecord(checks) ? Object.keys(checks).length : 0,
+    name,
+    configPath,
+  );
   if (onResponse !== undefined) {
     if (typeof onResponse !== "function") {
       throw new ConfigLoadError(

@@ -204,6 +204,7 @@ describe("mergeProgress", () => {
         scenarios: [
           {
             name: "reads",
+            keyedCounters: {},
             scheduledCount: 5,
             requestedDurationMs: 1_000,
             lastDispatchElapsedMs: 800,
@@ -216,6 +217,7 @@ describe("mergeProgress", () => {
         scenarios: [
           {
             name: "reads",
+            keyedCounters: {},
             scheduledCount: 5,
             requestedDurationMs: 1_000,
             lastDispatchElapsedMs: 950,
@@ -245,12 +247,14 @@ describe("mergeProgress", () => {
         scenarios: [
           {
             name: "reads",
+            keyedCounters: {},
             scheduledCount: 5,
             requestedDurationMs: 1_000,
             lastDispatchElapsedMs: 800,
           },
           {
             name: "writes",
+            keyedCounters: {},
             scheduledCount: 2,
             requestedDurationMs: 1_000,
             lastDispatchElapsedMs: 10,
@@ -263,12 +267,14 @@ describe("mergeProgress", () => {
         scenarios: [
           {
             name: "reads",
+            keyedCounters: {},
             scheduledCount: 4,
             requestedDurationMs: 1_000,
             lastDispatchElapsedMs: 950,
           },
           {
             name: "writes",
+            keyedCounters: {},
             scheduledCount: 3,
             requestedDurationMs: 1_000,
             lastDispatchElapsedMs: 40,
@@ -281,12 +287,14 @@ describe("mergeProgress", () => {
         scenarios: [
           {
             name: "reads",
+            keyedCounters: {},
             scheduledCount: 6,
             requestedDurationMs: 1_000,
             lastDispatchElapsedMs: 20,
           },
           {
             name: "writes",
+            keyedCounters: {},
             scheduledCount: 1,
             requestedDurationMs: 1_000,
             lastDispatchElapsedMs: 5,
@@ -309,7 +317,13 @@ describe("mergeProgress", () => {
         elapsedMs: 10,
         maxObservedInFlight: 1,
         scenarios: [
-          { name: "reads", scheduledCount: 1, requestedDurationMs: 0, lastDispatchElapsedMs: 0 },
+          {
+            name: "reads",
+            keyedCounters: {},
+            scheduledCount: 1,
+            requestedDurationMs: 0,
+            lastDispatchElapsedMs: 0,
+          },
         ],
       },
       {
@@ -318,6 +332,7 @@ describe("mergeProgress", () => {
         scenarios: [
           {
             name: "reads",
+            keyedCounters: {},
             scheduledCount: 0,
             requestedDurationMs: 0,
             lastDispatchElapsedMs: undefined,
