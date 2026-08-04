@@ -490,3 +490,58 @@ picked — a quarter of the backlog's own drain time, 125 ms for the rates the g
 refuses to be non-positive, since a projection that keeps up would make the claim vacuous in exactly
 the configuration it exists to exclude. Contract run 4 measures a lag that is real, or it measures
 nothing.
+
+## 2026-08-03 — [D25-01] Bounded counters declare their key space; they do not approximate
+
+**Decision.** A scenario declares a keyed counter with a fixed key list; `record.countKeyed(name,
+key)` increments that key's slot, or an implicit `other` when the key was not declared. Every slot
+is reserved before the run starts, the same way the engine's own counters are.
+
+**Why.** A counter per endpoint path is a reasonable thing to want and currently fails the run with
+"use fewer names" — a diagnosis with no remedy, because there was no bounded way to say it.
+
+**Rejected: an approximate top-N sketch** (space-saving / Misra-Gries). It needs no advance
+knowledge, which is the whole appeal, and it merges **approximately and order-dependently**. D1-02
+exists because a published number must not depend on which worker finished first; a metric kind
+that quietly broke that would be the most expensive inconsistency in the codebase, and it would sit
+in `metrics/` — the module that is the most-tested in the repo precisely because every published
+number comes out of it. Declaring the keys costs advance knowledge and buys back an exact merge
+with no new algorithm and no second answer to "what does a counter mean".
+
+**Rejected: `record.count("byStatus." + key)` with a declared prefix.** Same storage, but a typo'd
+prefix would silently create an undeclared name that counts on its own until the cardinality cap
+bites — the exact failure this decision removes.
+
+**`other` is implicit and always present.** An undeclared key has to go somewhere, and dropping it
+would be the silent hole `metrics/validate.ts` refuses. Implicit means a config cannot forget it,
+and a non-zero `other` is itself the signal that the declared key space is wrong.
+
+## 2026-08-03 — [D25-02] The setup state is deep-frozen, in the worker
+
+**Decision.** `scenariosFrom` deep-freezes the setup state before building the request builder. A
+`request()` that mutates it throws, and the eager ordinal-0 call turns that into a
+`ConfigLoadError` naming the purity contract.
+
+**Why in the worker.** `structuredClone` does not preserve frozenness, so freezing on the main
+thread would protect nothing. The worker's copy is the one a builder can reach.
+
+**Why freeze rather than compare two calls.** Calling `request(state, 0)` twice and comparing would
+also catch a nonce — but it false-positives on a builder that legitimately varies on something
+external, and it doubles a call the author was told runs once per dispatch. Freezing catches the
+violation that actually happens, `state.seats.pop()`, at the first dispatch and with a message. A
+config doing that was already broken across four threads, each holding its own clone; this makes it
+fail loudly rather than publish wrong numbers.
+
+## 2026-08-03 — [D25-03] Gate two runs nightly, and cannot redden a pull request
+
+**Decision.** A scheduled workflow runs `pnpm gate:two` and opens an issue on failure, plus
+`workflow_dispatch`. It is not a required check on pull requests.
+
+**Why not blocking.** The gate's claims are timing bands — a p50 inside 48–65 ms, a rate within
+5 % — and a shared runner under load fails them for a _correct_ change. A gate that cries wolf is
+one people learn to ignore, and this one is the repo's evidence. The README calls it a manual
+milestone gate; making it blocking would make that sentence false.
+
+**Why not never.** M2's review found the README publishing an achieved rate from a build two
+milestones old: the response-body read M2 added cost real per-response time, and nothing
+re-measured it. Evidence that never re-runs rots silently.
