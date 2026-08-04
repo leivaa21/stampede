@@ -58,6 +58,9 @@ const shortfallOf = (scenario: ScenarioRunSummary): string => {
   const parts = [
     scenario.droppedCount > 0 ? `${String(scenario.droppedCount)} dropped` : undefined,
     scenario.requestErrorCount > 0 ? `${String(scenario.requestErrorCount)} not built` : undefined,
+    scenario.impureRequestCount > 0
+      ? `${String(scenario.impureRequestCount)} not built (impure request())`
+      : undefined,
     scenario.errorCount > 0 ? `${String(scenario.errorCount)} failed` : undefined,
     scenario.abandonedCount > 0 ? `${String(scenario.abandonedCount)} abandoned` : undefined,
   ].filter((part): part is string => part !== undefined);

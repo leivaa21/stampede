@@ -1,5 +1,6 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { loadConfig } from "../config/load.ts";
+import { deepFreeze } from "../config/freeze-state.ts";
 import { scenariosFrom } from "../config/to-run.ts";
 import { MetricsRegistry } from "../metrics/index.ts";
 import { LiveProgress, runDispatch } from "./dispatcher.ts";
@@ -36,7 +37,13 @@ const main = async (assignment: WorkerAssignment): Promise<void> => {
   // the main thread's work — it is the only option: `request` is a function, and a function cannot
   // be structured-cloned across a `postMessage` (D1-04). Only the setup **state** travels.
   const config = await loadConfig(assignment.modulePath);
-  const scenarios = scenariosFrom(config, assignment.setupState);
+  // Frozen **here**, at the door where the clone arrives, rather than inside `scenariosFrom`.
+  // `structuredClone` does not preserve frozenness, so this is the first moment the copy a builder
+  // can reach exists — and putting it here makes "frozen in the worker" true by construction
+  // instead of true because a converter happened to be called from a worker. `scenariosFrom` is
+  // exported, and a converter that seals its caller's argument in place is a side effect its name
+  // and signature do not disclose.
+  const scenarios = scenariosFrom(config, deepFreeze(assignment.setupState));
   const transport = httpTransport;
   const metrics = new MetricsRegistry();
   const shard = { index: assignment.shardIndex, count: assignment.shardCount };

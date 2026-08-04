@@ -38,10 +38,26 @@ const TYPE_STRIPPING_HELP = [
  * above it is an **error-message gate, not a security gate** — worth saying, so a later "this stat
  * is redundant, `import()` throws anyway" cleanup removes the check and not the guard.
  */
+/** What Node will strip types from and load as an ES module. */
+const TYPESCRIPT_MODULE = /\.m?ts$/;
+
 export const configUrlFor = (configPath: string): URL => {
   const absolute = path.resolve(configPath);
   if (!existsSync(absolute)) {
     throw new ConfigLoadError(`No config file at ${absolute}`);
+  }
+  // TypeScript-only is already what the README, `--help` and D1-04 promise — this makes the promise
+  // enforced rather than assumed, and it is load-bearing rather than tidy: a `.cjs` config runs in
+  // **sloppy mode**, where a write to a frozen object fails *silently* instead of throwing. The
+  // whole purity guard (D25-02) becomes a no-op there, and worse than a no-op — the write is
+  // dropped, so a builder that incremented a counter starts sending the same value every time and
+  // nothing says why.
+  if (!TYPESCRIPT_MODULE.test(absolute)) {
+    throw new ConfigLoadError(
+      `${absolute} is not a TypeScript module — stampede loads \`.ts\` and \`.mts\` configs, which ` +
+        `Node strips types from and runs as ES modules. A CommonJS config would run in sloppy ` +
+        `mode, where mutating the frozen setup state fails silently instead of failing loudly.`,
+    );
   }
   return pathToFileURL(absolute);
 };

@@ -1,3 +1,4 @@
+import { ImpureRequestError } from "../config/freeze-state.ts";
 import { MetricsRegistry, type ScenarioMetrics } from "../metrics/index.ts";
 import { InFlight } from "./in-flight.ts";
 import { recordLatencies } from "./latency.ts";
@@ -229,10 +230,18 @@ export const runDispatch = async <TRequest>(
     let request: TRequest;
     try {
       request = state.requestFor(shard.index + ordinal * shard.count);
-    } catch {
+    } catch (error: unknown) {
       // A request that could not be built was never sent, so it is not a transport failure and
       // must not be counted as one — the target is not the thing that went wrong.
-      state.metrics.counters.inc(EngineMetric.requestErrors);
+      //
+      // A builder that *mutated the setup state* is counted apart from one that merely threw. The
+      // difference matters: folded together, a config that mutated on a later ordinal read as
+      // "7 not built" and exited 0 — the tool refusing 70% of its own load and reporting success.
+      state.metrics.counters.inc(
+        error instanceof ImpureRequestError
+          ? EngineMetric.impureRequests
+          : EngineMetric.requestErrors,
+      );
       return;
     }
 

@@ -173,9 +173,21 @@ scenarios: {
   expressible: `seatIds: [seats[ordinal % seats.length]]`. Ignore it and every request is identical,
   which is the namesake run.
 
-It must be a **pure function of `(state, ordinal)`** — every worker gets its own structured clone of
-the state, so a builder that consumes shared state (`state.seats.pop()`) hands four threads the same
-four values. If it throws, that request is counted as `not built` and the run continues.
+It must be a **pure function of `(state, ordinal)`**, and stampede enforces it: the setup state is
+deep-frozen in each worker, so a builder that consumes shared state fails with the contract rather
+than with wrong numbers.
+
+```
+scenario "buyers": request() mutated the setup state, so it is not a pure function of
+(state, ordinal). Every worker gets its own structured clone, so a builder that consumes
+shared state — `state.seats.pop()` — hands each thread the same values instead of distinct
+ones. Derive from the ordinal instead: `seats[ordinal % seats.length]`.
+```
+
+That is what the ordinal is for: variation is _derived_, not accumulated. Plain objects and arrays
+are frozen; a `Map`, `Set`, `Date` or `Buffer` in your state is left alone, so mutating one of
+those is not caught. If `request` throws for any other reason, that request is counted as
+`not built` and the run continues.
 
 What it returns:
 
@@ -318,9 +330,9 @@ Thresholds read them nested, in the shape you declared:
 Every declared key is present even if it never fired, so `["5xx"] === 0` means _none happened_
 rather than _the key is missing_.
 
-**Limits.** 64 keys per counter. Across a scenario, declarations compete with stampede's own 11
+**Limits.** 64 keys per counter. Across a scenario, declarations compete with stampede's own 12
 counters and one per check for a 512-name budget, of which **128 stay free** for your plain
-`record.count` — so declarations get up to **373 slots, minus one per check**. Exceeding that is a
+`record.count` — so declarations get up to **372 slots, minus one per check**. Exceeding that is a
 **startup** error with the arithmetic shown and the largest declaration named, not a surprise at
 the end of the run.
 
@@ -668,9 +680,9 @@ markdown report · live dashboard — and, from M2, named per-response **checks*
 **custom counters and trends** merged across worker threads, and **per-request variation** keyed on
 the run's ordinal. **550+ tests**, zero known vulnerabilities, gate two green across seven runs.
 
-**Next (M3): SSE / long-lived streaming requests** — open-ticket's contract run 5. One debt M2
-surfaced is still open: `request()` is documented as pure but not enforced. Bounded-cardinality
-counters landed in M2.5 — declare a key space and use `record.countKeyed`.
+**Next (M3): SSE / long-lived streaming requests** — open-ticket's contract run 5. Both debts M2
+surfaced were paid in M2.5: bounded-cardinality counters (declare a key space, use
+`record.countKeyed`) and `request()` purity, now enforced by freezing the setup state.
 
 **Not published to npm yet.** Install from source; `@leivaa21/stampede` is reserved.
 

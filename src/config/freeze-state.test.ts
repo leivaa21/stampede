@@ -47,8 +47,9 @@ describe("deepFreeze", () => {
   });
 
   it("does not invoke a getter while freezing", () => {
-    // Reading one would run user code at startup, and its value is not a thing that can be frozen
-    // in place anyway.
+    // A cloned state has no accessors — `structuredClone` materialises them first — so this never
+    // fires in a run. It matters because `deepFreeze` is exported: reading a getter to freeze its
+    // result would run someone's code as a side effect of sealing an object.
     let reads = 0;
     const state = {
       get expensive() {
@@ -62,13 +63,23 @@ describe("deepFreeze", () => {
     expect(reads).toBe(0);
   });
 
-  it("cannot seal a Map's contents, and the docblock says so", () => {
-    // Stated rather than papered over: freezing stops replacement, not `map.set(...)`. The guard
-    // catches the realistic mistake; a `Map` in setup state is rare enough that claiming otherwise
-    // would be the bigger lie.
+  it("leaves built-ins alone, because freezing them is worse than not", () => {
+    // `Object.freeze` *throws* on a non-empty typed array, and a `Buffer` in setup state is the
+    // canonical shape for an authed API — blanket-freezing killed every worker with a raw V8
+    // string. Freezing a RegExp is quieter and worse: `lastIndex` becomes non-writable, so a pure
+    // `re.test(...)` throws a message this module's own matcher reads as a purity violation.
+    const state = deepFreeze({ key: new Uint8Array([1, 2, 3]), re: /x/g, when: new Date() });
+
+    expect(state.key).toHaveLength(3);
+    expect(state.re.test("x")).toBe(true);
+    expect(Object.isFrozen(state.key)).toBe(false);
+  });
+
+  it("does not catch a mutated Map, Set or Date — the limitation is stated, not implied", () => {
+    // The guard's job is the mistake people actually make. Crashing on a `Buffer` to theoretically
+    // catch a mutated `Date` is the worse trade, and pretending otherwise is the bigger lie.
     const state = deepFreeze({ byId: new Map([["a", 1]]) });
 
-    expect(Object.isFrozen(state.byId)).toBe(true);
     expect(() => state.byId.set("b", 2)).not.toThrow();
   });
 });

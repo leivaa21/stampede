@@ -1,8 +1,7 @@
 import { availableParallelism } from "node:os";
 import type { HttpRequestSpec } from "../engine/http-transport.ts";
 import { DEFAULT_DRAIN_TIMEOUT_MS, type Scenario } from "../engine/run-spec.ts";
-import { ConfigLoadError } from "./errors.ts";
-import { deepFreeze, isFrozenStateViolation } from "./freeze-state.ts";
+import { ImpureRequestError, isFrozenStateViolation } from "./freeze-state.ts";
 import type { StampedeConfig } from "./types.ts";
 
 /**
@@ -81,8 +80,8 @@ const assertRequestShape = (built: unknown, name: string): HttpRequestSpec => {
  * `Array.prototype.pop`, which names neither the scenario, nor `request()`, nor the rule. The
  * throw is the enforcement; this is the part that makes it a diagnosis.
  */
-const purityErrorFor = (error: unknown, name: string): Error =>
-  new ConfigLoadError(
+const purityErrorFor = (error: unknown, name: string): ImpureRequestError =>
+  new ImpureRequestError(
     `scenario "${name}": request() mutated the setup state, so it is not a pure function of ` +
       `(state, ordinal). Every worker gets its own structured clone, so a builder that consumes ` +
       `shared state — \`state.seats.pop()\` — hands each thread the same values instead of ` +
@@ -112,18 +111,14 @@ const eagerlyValidatedBuilder = (
 export const scenariosFrom = (
   config: StampedeConfig<unknown>,
   setupState: unknown,
-): readonly Scenario<HttpRequestSpec>[] => {
-  // Frozen here: this runs once per worker, on the copy a builder can actually reach. Freezing on
-  // the main thread would protect nothing, because `structuredClone` does not preserve frozenness.
-  const frozen = deepFreeze(setupState);
-
-  return Object.entries(config.scenarios).map(([name, scenario]) => ({
+): readonly Scenario<HttpRequestSpec>[] =>
+  Object.entries(config.scenarios).map(([name, scenario]) => ({
     name,
     profile: scenario.profile,
     // Built once per dispatch (D2-02's accepted cost), but validated **eagerly at ordinal 0** so
     // the common mistake — returning a string, or forgetting the url — fails at startup with the
     // scenario named, rather than as a wall of counted build errors twenty minutes in.
-    requestFor: eagerlyValidatedBuilder(scenario, frozen, name),
+    requestFor: eagerlyValidatedBuilder(scenario, setupState, name),
     checks: scenario.checks,
     // `{ keys: [...] }` unwrapped: the config's shape exists so the declaration has somewhere to
     // grow, and the engine has no use for the wrapper.
@@ -132,7 +127,6 @@ export const scenariosFrom = (
     ),
     onResponse: scenario.onResponse,
   }));
-};
 
 export const workerCountFor = (config: StampedeConfig<unknown>): number =>
   config.workers ?? defaultWorkerCount();

@@ -63,7 +63,11 @@ const achievedSoFar = (dispatched: number, elapsedMs: number): number | undefine
 const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonly string[] => {
   // `dropped` and `not built` count too: both are schedule instants that have been dealt with, and
   // a bar that ignored them would crawl while the run was in fact racing to its end.
-  const done = scenario.dispatchedCount + scenario.droppedCount + scenario.requestErrorCount;
+  const done =
+    scenario.dispatchedCount +
+    scenario.droppedCount +
+    scenario.requestErrorCount +
+    scenario.impureRequestCount;
   const fraction = scenario.scheduledCount === 0 ? 0 : done / scenario.scheduledCount;
 
   const lines = [

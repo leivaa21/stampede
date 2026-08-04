@@ -110,6 +110,16 @@ export const EngineMetric = {
    * a naming collision. Counted, because a refusal nobody counts is a silent hole.
    */
   collidingCounters: "stampede.collidingCounters",
+  /**
+   * Requests whose builder mutated the frozen setup state (D25-02).
+   *
+   * Counted apart from `requestErrors` because the consequence is different and worse: a builder
+   * that throws for its own reasons produced no request, while one that mutates shared state is
+   * *silently wrong across threads* — each worker consuming its own clone. Folded into
+   * `requestErrors` it read as "7 not built" and the run exited 0, which is the tool dropping most
+   * of its own load and reporting success.
+   */
+  impureRequests: "stampede.impureRequests",
 } as const;
 
 /**
@@ -136,6 +146,7 @@ const ENGINE_METRIC_KINDS: Readonly<Record<keyof typeof EngineMetric, "counter" 
     reservedNameRefusals: "counter",
     undeclaredCounters: "counter",
     collidingCounters: "counter",
+    impureRequests: "counter",
   };
 
 /**

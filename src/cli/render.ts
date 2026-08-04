@@ -45,6 +45,9 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
     scenario.requestErrorCount > 0
       ? `${String(scenario.requestErrorCount)} not built (request() threw)`
       : undefined,
+    scenario.impureRequestCount > 0
+      ? `${String(scenario.impureRequestCount)} not built (request() mutated the setup state)`
+      : undefined,
     scenario.errorCount > 0 ? `${String(scenario.errorCount)} failed` : undefined,
     scenario.abandonedCount > 0 ? `${String(scenario.abandonedCount)} abandoned` : undefined,
   ].filter((part): part is string => part !== undefined);

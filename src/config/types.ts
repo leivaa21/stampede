@@ -39,9 +39,12 @@ export interface ScenarioConfig<TSetup> {
    * **It must be a pure function of `(setupState, ordinal)`.** Every worker gets its own structured
    * clone of the setup state, so a builder that consumes shared state — `state.seats.pop()`, an
    * incrementing nonce — hands four threads the same four values rather than sixteen distinct ones.
-   * The ordinal exists precisely so variation can be derived rather than accumulated. stampede also
-   * calls this once at ordinal 0 per worker before the run starts, to fail a malformed request at
-   * startup instead of twenty minutes in, which an impure builder would notice.
+   * The ordinal exists precisely so variation can be derived rather than accumulated, and this is
+   * **enforced**: the state is deep-frozen in each worker, so mutating it throws and the run fails
+   * naming this contract. Plain objects and arrays are frozen; a `Map`, `Set`, `Date` or `Buffer`
+   * is left as it arrived, so mutating one of those is not caught. stampede also calls this once
+   * at ordinal 0 per worker before the run starts, to fail a malformed request at startup instead
+   * of twenty minutes in.
    */
   readonly request: (setupState: TSetup, ordinal: number) => HttpRequestSpec;
   /**

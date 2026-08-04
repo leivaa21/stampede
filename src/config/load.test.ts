@@ -42,6 +42,17 @@ describe("loadConfig", () => {
     expect(Object.keys(config.scenarios)).toEqual(["reads"]);
   });
 
+  it("refuses a CommonJS config, where the purity guard would silently do nothing", async () => {
+    // Sloppy mode drops a write to a frozen object instead of throwing, so D25-02's enforcement
+    // becomes a no-op — and worse than one, since the mutation is discarded and the builder starts
+    // sending the same value every time with nothing to say why.
+    const dir = mkdtempSync(join(tmpdir(), "stampede-cjs-"));
+    const file = join(dir, "scenarios.cjs");
+    writeFileSync(file, "module.exports = {};");
+
+    await expect(loadConfig(file)).rejects.toThrow(/is not a TypeScript module/);
+  });
+
   it("names the file when there is nothing to load", async () => {
     await expect(loadConfig("/nowhere/scenarios.ts")).rejects.toThrow(/No config file at/);
   });

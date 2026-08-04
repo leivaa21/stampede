@@ -32,6 +32,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   dispatchedCount: 40,
   droppedCount: 0,
   requestErrorCount: 0,
+  impureRequestCount: 0,
   responseCount: 38,
   errorCount: 0,
   abandonedCount: 0,
