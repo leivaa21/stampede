@@ -205,6 +205,28 @@ await loadConfig(${JSON.stringify(file)}).catch((error) => {
       ).rejects.toThrow(/declares `counters` but has no `onResponse`/);
     });
 
+    it("refuses a counter name that would store into stampede's own namespace", async () => {
+      // `assertName` refuses `stampede.` with the dot; the bare name is a *prefix*, and its slots
+      // would be the engine's own counters.
+      await expect(
+        loadConfig(
+          writeConfig(
+            withScenario(
+              `counters: { stampede: { keys: ["dropped"] } }, onResponse: () => undefined`,
+            ),
+          ),
+        ),
+      ).rejects.toThrow(/would store into `stampede\.`, which is reserved/);
+    });
+
+    it("accepts an empty `counters` without an `onResponse`", async () => {
+      // Nothing is declared, so nothing would publish a confident zero — the no-writer refusal is
+      // about declared keys, and a message about keys that do not exist is a message about nothing.
+      const config = await loadConfig(writeConfig(withScenario(`counters: {}`)));
+
+      expect(config.scenarios.reads?.counters).toEqual({});
+    });
+
     it("refuses a counter name too long for its implicit `other` slot", async () => {
       // 116 + ".other" is 122, over the 120-character limit — so every key loads fine and the
       // bucket that proves the key space is closed gets silently refused at runtime.

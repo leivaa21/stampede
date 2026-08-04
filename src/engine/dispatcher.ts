@@ -8,7 +8,6 @@ import {
   ENGINE_COUNTERS,
   keyedCounter,
   OTHER_KEY,
-  RESERVED_METRIC_PREFIX,
 } from "./metric-names.ts";
 import type { Clock, Transport, TransportResponse } from "./ports.ts";
 import {
@@ -121,13 +120,9 @@ const reserveEngineNames = <TRequest>(
   // the slot that must survive, because it is where every undeclared key lands and losing it drops
   // the very increments the bucket exists to catch. The load-time budget check makes that
   // unreachable through the CLI — but `runDispatch` is exported, so the loader is not the only door.
+  // No reserved-namespace check here: `assertRunSpec` refuses the whole spec before this runs, so
+  // there is one place that says no rather than one per consumer.
   for (const [name, keys] of Object.entries(scenario.keyedCounters ?? {})) {
-    // The config loader refuses a declaration that would land in the reserved namespace, but
-    // `runDispatch` is exported — and reserving `stampede.dropped` on a caller's say-so would hand
-    // a keyed table the engine's own numbers.
-    if (keyedCounter(name, OTHER_KEY).startsWith(RESERVED_METRIC_PREFIX)) {
-      continue;
-    }
     for (const key of [OTHER_KEY, ...keys]) {
       scenarioMetrics.counters.reserve(keyedCounter(name, key));
     }

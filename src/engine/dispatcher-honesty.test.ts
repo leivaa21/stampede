@@ -283,10 +283,51 @@ describe("user code cannot starve the engine's own bookkeeping", () => {
     const reads = summaryOf(outcome, "reads");
 
     expect(reads.responseCount).toBe(700);
-    // 100 of each of the four, and all four have to reach the verdict. `errors` and
-    // `requestErrors` are the two engine counters still unpinned against starvation: both need a
-    // paced profile to fire after the map is full, since a burst dispatches everything first.
+    // 100 of each of the four, and all four have to reach the verdict.
     expect(reads.brokenObservations).toBe(400);
+  });
+
+  it("keeps counting transport failures after the budget is full", async () => {
+    // `errors` increments in the rejection handler — the same response path `onResponse` runs on —
+    // so a burst orders it fine. Unreserved, a run where 100 connections were refused reports zero
+    // transport failures and the `N failed` shortfall goes silent for a target that died.
+    //
+    // `requestErrors` is the one engine counter still unpinned against starvation, and only
+    // because it increments inside `dispatch`: a burst issues every request before any response
+    // lands, so no user name can exist yet. It needs a paced profile, not a different assertion.
+    const clock = new FakeClock();
+    let sent = 0;
+    const transport: Transport<FakeRequest> = {
+      send: () => {
+        sent += 1;
+        return sent <= 600 ? Promise.resolve(okResponse()) : Promise.reject(new Error("refused"));
+      },
+    };
+
+    let names = 0;
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: burst({ count: 700 }),
+            requestFor: () => ({ label: "reads" }),
+            onResponse: (_response, record) => {
+              names += 1;
+              record.count(`seat-${String(names)}`);
+            },
+          },
+        ],
+        maxInFlight: 1_000,
+        drainTimeoutMs: 1_000,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    expect(reads.responseCount).toBe(600);
+    expect(reads.errorCount).toBe(100);
   });
 
   it("keeps counting a declared key that first fires after the budget is full", async () => {

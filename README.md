@@ -296,7 +296,7 @@ scenarios: {
 ```
 
 ```
-counter     byStatus  2xx 4821 · 4xx 179 · 5xx 0 · other 0
+keyed       byStatus  2xx 4821 · 4xx 179 · 5xx 0 · other 0
 ```
 
 - A key you **did** declare goes to its own slot.
@@ -314,9 +314,11 @@ Thresholds read them nested, in the shape you declared:
 Every declared key is present even if it never fired, so `["5xx"] === 0` means _none happened_
 rather than _the key is missing_.
 
-**Limits.** 64 keys per counter, and the whole scenario's reservations — stampede's own counters,
-one per check, and every key plus its `other` — must fit the 512-name budget. Exceeding it is a
-**startup** error with the arithmetic shown, not a surprise at the end of the run.
+**Limits.** 64 keys per counter. Across a scenario, declarations compete with stampede's own 11
+counters and one per check for a 512-name budget, of which **128 stay free** for your plain
+`record.count` — so declarations get up to **373 slots, minus one per check**. Exceeding that is a
+**startup** error with the arithmetic shown and the largest declaration named, not a surprise at
+the end of the run.
 
 **Why you declare them.** The alternative is a top-N sketch that keeps the heaviest keys and folds
 the rest away, needing no advance knowledge. Those merge _approximately and order-dependently_ — two

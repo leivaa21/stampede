@@ -33,6 +33,24 @@ describe("runDispatch refuses a run it cannot report honestly", () => {
     ).rejects.toThrow(/count/);
   });
 
+  it("refuses a keyed counter that would store into stampede's own namespace", async () => {
+    // The declaration feeds three consumers — the reservation, the recorder and the summary's
+    // projection. Guarded one at a time, a counter named `stampede` was skipped by the reservation
+    // and still read back by the projection, publishing the engine's own dispatch and response
+    // counts as a user's keyed table, exit 0. One refusal, before any of them run.
+    await expect(
+      runDispatch(
+        {
+          scenarios: [
+            { ...scenario("reads", burst({ count: 4 })), keyedCounters: { stampede: ["dropped"] } },
+          ],
+          maxInFlight: 10,
+        },
+        { clock: new FakeClock(), transport: new FakeTransport({ clock: new FakeClock() }) },
+      ),
+    ).rejects.toThrow(/reserved for stampede's own metrics/);
+  });
+
   it("accepts the shard a single-threaded run is", async () => {
     const clock = new FakeClock();
     const outcome = await runToCompletion(

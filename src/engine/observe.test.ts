@@ -233,6 +233,19 @@ describe("async callbacks", () => {
     expect(metrics.counters.get(EngineMetric.collidingCounters)).toBe(2);
   });
 
+  it("refuses a plain counter named exactly as a declared one", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["byStatus", new Set(["2xx"])]]));
+
+    recorder.count("byStatus", 5);
+
+    // Admitted, it printed two rows both called `byStatus` — one a plain total, one the keyed
+    // table — with nothing saying they are different things, while `types.ts` promises the plain
+    // one is `undefined`.
+    expect(metrics.counters.get("byStatus")).toBe(0);
+    expect(metrics.counters.get(EngineMetric.collidingCounters)).toBe(1);
+  });
+
   it("leaves a counter that merely starts with a similar name alone", () => {
     const metrics = scenario();
     const recorder = recorderFor(metrics, new Map([["byStatus", new Set(["2xx"])]]));

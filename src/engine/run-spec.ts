@@ -1,3 +1,4 @@
+import { keyedCounter, OTHER_KEY, RESERVED_METRIC_PREFIX } from "./metric-names.ts";
 import type { ResponseCheck, ResponseRecorder, TransportResponse } from "./ports.ts";
 import { assertShard, type Shard } from "./schedule-split.ts";
 import type { ScheduledScenario } from "./schedule.ts";
@@ -88,6 +89,23 @@ export const assertRunSpec = <TRequest>(spec: RunSpec<TRequest>): void => {
   }
 
   const seen = new Set<string>();
+  for (const scenario of spec.scenarios) {
+    // Refused once, here, rather than in each consumer. Three separate readers act on a declared
+    // key space — the reservation, the recorder, and the summary's projection — and guarding them
+    // one at a time is how a keyed counter named `stampede` came to be skipped by the reservation
+    // and still read back by the projection, publishing the engine's own drop and response counts
+    // as a user's table. `shard` is refused here for the same reason: a public field on a public
+    // type needs one place that says no.
+    for (const counter of Object.keys(scenario.keyedCounters ?? {})) {
+      if (keyedCounter(counter, OTHER_KEY).startsWith(RESERVED_METRIC_PREFIX)) {
+        throw new RangeError(
+          `Scenario "${scenario.name}" declares a keyed counter "${counter}" that would store into ` +
+            `"${RESERVED_METRIC_PREFIX}", which is reserved for stampede's own metrics`,
+        );
+      }
+    }
+  }
+
   for (const { name, profile } of spec.scenarios) {
     if (seen.has(name)) {
       throw new RangeError(`Scenario names must be unique within a run; "${name}" is repeated`);
