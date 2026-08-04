@@ -88,14 +88,18 @@ export const assertRunSpec = <TRequest>(spec: RunSpec<TRequest>): void => {
     assertShard(spec.shard);
   }
 
-  const seen = new Set<string>();
   for (const scenario of spec.scenarios) {
     // Refused once, here, rather than in each consumer. Three separate readers act on a declared
     // key space — the reservation, the recorder, and the summary's projection — and guarding them
     // one at a time is how a keyed counter named `stampede` came to be skipped by the reservation
     // and still read back by the projection, publishing the engine's own drop and response counts
-    // as a user's table. `shard` is refused here for the same reason: a public field on a public
-    // type needs one place that says no.
+    // as a user's table.
+    //
+    // **This door refuses only what would let a caller read stampede's own numbers.** The rest of
+    // the declaration rules — slot collisions between two declarations, key-space budgets, name
+    // lengths — belong to `config/assert-shape.ts`, because they are about a config being sensible
+    // rather than about the engine being safe. A programmatic caller can still declare two
+    // counters that share a slot; it publishes its own increments twice and nothing else.
     for (const counter of Object.keys(scenario.keyedCounters ?? {})) {
       if (keyedCounter(counter, OTHER_KEY).startsWith(RESERVED_METRIC_PREFIX)) {
         throw new RangeError(
@@ -106,6 +110,7 @@ export const assertRunSpec = <TRequest>(spec: RunSpec<TRequest>): void => {
     }
   }
 
+  const seen = new Set<string>();
   for (const { name, profile } of spec.scenarios) {
     if (seen.has(name)) {
       throw new RangeError(`Scenario names must be unique within a run; "${name}" is repeated`);

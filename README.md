@@ -304,6 +304,10 @@ keyed       byStatus  2xx 4821 · 4xx 179 · 5xx 0 · other 0
   Nothing is ever dropped — and a non-zero `other` is the signal your key space is wrong.
 - Naming a counter you never declared is refused and **fails the run** (exit `2`). There is no
   bounded slot to put it in, and inventing one is the thing declaring exists to prevent.
+- Declaring a name **takes it away from `record.count`**. Once `byStatus` is declared, both
+  `count("byStatus")` and `count("byStatus.404")` are refused and fail the run — the namespace
+  belongs to the dimension, or the report would show two numbers under one name. If you were
+  already counting `byStatus` by hand, that call is what becomes `countKeyed`.
 
 Thresholds read them nested, in the shape you declared:
 
@@ -662,7 +666,7 @@ millisecond and would sail past a peak-only check. It does not sail past this on
 loading · real HTTP transport · `stampede run` with setup/teardown, thresholds and exit codes ·
 markdown report · live dashboard — and, from M2, named per-response **checks** counted three ways,
 **custom counters and trends** merged across worker threads, and **per-request variation** keyed on
-the run's ordinal. **546 tests**, zero known vulnerabilities, gate two green across seven runs.
+the run's ordinal. **550+ tests**, zero known vulnerabilities, gate two green across seven runs.
 
 **Next (M3): SSE / long-lived streaming requests** — open-ticket's contract run 5. One debt M2
 surfaced is still open: `request()` is documented as pure but not enforced. Bounded-cardinality

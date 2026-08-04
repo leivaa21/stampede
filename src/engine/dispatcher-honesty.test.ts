@@ -292,9 +292,9 @@ describe("user code cannot starve the engine's own bookkeeping", () => {
     // so a burst orders it fine. Unreserved, a run where 100 connections were refused reports zero
     // transport failures and the `N failed` shortfall goes silent for a target that died.
     //
-    // `requestErrors` is the one engine counter still unpinned against starvation, and only
-    // because it increments inside `dispatch`: a burst issues every request before any response
-    // lands, so no user name can exist yet. It needs a paced profile, not a different assertion.
+    // `requestErrors` needs a paced profile rather than a burst — it increments inside `dispatch`,
+    // and a burst issues every request before any response lands, so no user name exists yet. The
+    // test below does that; every counter on `ENGINE_COUNTERS` is pinned between the two.
     const clock = new FakeClock();
     let sent = 0;
     const transport: Transport<FakeRequest> = {
@@ -328,6 +328,47 @@ describe("user code cannot starve the engine's own bookkeeping", () => {
 
     expect(reads.responseCount).toBe(600);
     expect(reads.errorCount).toBe(100);
+  });
+
+  it("keeps counting requests that could not be built after the budget is full", async () => {
+    // The last engine counter without a starvation pin. It increments inside `dispatch`, so it
+    // needs dispatches interleaved with responses — a paced profile, where ordinal 900 goes out
+    // long after 600 responses have filled the name map. Unreserved, a config whose `request()`
+    // started throwing reports zero not-built and the accounting identity silently stops holding.
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ clock });
+
+    let names = 0;
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: constantRate({ ratePerSecond: 1_000, durationMs: 1_000 }),
+            requestFor: (ordinal) => {
+              if (ordinal >= 900) {
+                throw new Error("no seat for that ordinal");
+              }
+              return { label: "reads" };
+            },
+            onResponse: (_response, record) => {
+              names += 1;
+              record.count(`seat-${String(names)}`);
+            },
+          },
+        ],
+        maxInFlight: 1_000,
+        drainTimeoutMs: 1_000,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    expect(reads.requestErrorCount).toBe(100);
+    expect(reads.dispatchedCount + reads.droppedCount + reads.requestErrorCount).toBe(
+      reads.scheduledCount,
+    );
   });
 
   it("keeps counting a declared key that first fires after the budget is full", async () => {

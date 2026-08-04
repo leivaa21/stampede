@@ -156,10 +156,10 @@ const ENGINE_METRIC_KINDS: Readonly<Record<keyof typeof EngineMetric, "counter" 
  * cardinality rule looks at. The count is deliberately not written here: hardcoding it made a test
  * the thing that broke when a metric was added, and prose rots the same way.
  *
- * Every counter on this list is reserved, whether or not a test currently pins that particular
- * one: "which engine counters happen to fire first" changes the moment the dispatch loop is
- * reordered, so it is not a property worth encoding. No tally of which are pinned lives here —
- * that is what the tests are.
+ * Every counter on this list is reserved, and `dispatcher-honesty.test.ts` proves each one still
+ * counts after user names have filled the map — the condition under which an unreserved counter
+ * silently reads zero. Which of them fire first is not encoded anywhere on purpose: it changes the
+ * moment the dispatch loop is reordered.
  */
 export const ENGINE_COUNTERS: readonly string[] = Object.keys(ENGINE_METRIC_KINDS)
   .filter(
