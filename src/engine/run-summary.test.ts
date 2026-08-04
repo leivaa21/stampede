@@ -144,6 +144,20 @@ describe("summariseRun projects declared key spaces back into their shape", () =
     expect(summary?.keyedCounters.byStatus).toEqual({ "2xx": 7, "4xx": 0, "5xx": 0, other: 0 });
   });
 
+  it("orders declared counters by name, like every other map on the summary", () => {
+    const progress: RunProgress = {
+      ...oneScenario,
+      scenarios: oneScenario.scenarios.map((sc) => ({
+        ...sc,
+        keyedCounters: { zeta: ["a"], alpha: ["a"] },
+      })),
+    };
+
+    const [summary] = summariseRun(progress, new MetricsRegistry()).scenarios;
+
+    expect(Object.keys(summary?.keyedCounters ?? {})).toEqual(["alpha", "zeta"]);
+  });
+
   it("keeps `other` even when nothing landed there", () => {
     const [summary] = summariseRun(withKeys(["2xx"]), new MetricsRegistry()).scenarios;
 

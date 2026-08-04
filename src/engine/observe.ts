@@ -81,6 +81,11 @@ export const recorderFor = (
   // it fills the map one name per status, and the report prints `counter byStatus.404 = 1` above
   // `keyed byStatus  2xx 1 · other 0` — where a reader takes `byStatus.404` for a key of that
   // dimension, while `other` reads 0 and the declaration bought nothing.
+  // Both the name and its namespace: `record.count("byStatus")` in a scenario declaring
+  // `byStatus` printed two rows both called `byStatus` — one a plain total, one the keyed table —
+  // with nothing saying they are different things, and `types.ts` promising the plain one is
+  // `undefined`. The declared name is the most obviously owned thing in its own namespace.
+  const declaredNames = new Set(keyed.keys());
   const declaredPrefixes = [...keyed.keys()].map((name) => `${name}.`);
 
   return {
@@ -89,7 +94,7 @@ export const recorderFor = (
         metrics.counters.inc(EngineMetric.reservedNameRefusals);
         return;
       }
-      if (declaredPrefixes.some((prefix) => name.startsWith(prefix))) {
+      if (declaredNames.has(name) || declaredPrefixes.some((prefix) => name.startsWith(prefix))) {
         metrics.counters.inc(EngineMetric.collidingCounters);
         return;
       }

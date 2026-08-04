@@ -16,7 +16,8 @@ stampede run scenarios.ts --report out.md --ci
 
 **Contents** — [Install](#install) · [Quickstart](#quickstart) · [The CLI](#the-cli) ·
 [Writing scenarios](#writing-scenarios) · [Arrival profiles](#arrival-profiles) ·
-[Checks](#checks) · [Counters and trends](#counters-and-trends) · [Thresholds](#thresholds) ·
+[Checks](#checks) · [Counters and trends](#counters-and-trends) ·
+[Keyed counters](#counters-with-a-declared-key-space) · [Thresholds](#thresholds) ·
 [setup and teardown](#setup-and-teardown) · [Tuning a run](#tuning-a-run) ·
 [Reading the output](#reading-the-output) · [Gotchas](#gotchas) ·
 [Programmatic use](#programmatic-use) · [Why it exists](#why-it-exists) ·
@@ -269,6 +270,58 @@ would otherwise read a confident `0`.
 
 Like checks, `onResponse` must be synchronous, and a throw is counted rather than allowed to end the
 run.
+
+### Counters with a declared key space
+
+A plain counter per dimension value — one per endpoint path, one per status code — is a
+**cardinality bomb**: the per-scenario cap is 512 names, and a run that exceeds it fails rather
+than silently dropping recordings. Declare the key space instead, and the cardinality is bounded
+before a single request goes out:
+
+```ts
+scenarios: {
+  reads: {
+    profile: constantRate({ ratePerSecond: 200, durationMs: 10_000 }),
+    request: (state) => ({ url: state.url }),
+
+    counters: {
+      byStatus: { keys: ["2xx", "4xx", "5xx"] },
+    },
+
+    onResponse: (res, record) => {
+      record.countKeyed("byStatus", bucketOf(res.status));
+    },
+  },
+}
+```
+
+```
+counter     byStatus  2xx 4821 · 4xx 179 · 5xx 0 · other 0
+```
+
+- A key you **did** declare goes to its own slot.
+- A key you **did not** goes to `other`, which is implicit, always present, and always reserved.
+  Nothing is ever dropped — and a non-zero `other` is the signal your key space is wrong.
+- Naming a counter you never declared is refused and **fails the run** (exit `2`). There is no
+  bounded slot to put it in, and inventing one is the thing declaring exists to prevent.
+
+Thresholds read them nested, in the shape you declared:
+
+```ts
+{ name: "no 5xx", assert: (s) => s.scenarios[0]!.keyedCounters.byStatus!["5xx"] === 0 }
+```
+
+Every declared key is present even if it never fired, so `["5xx"] === 0` means _none happened_
+rather than _the key is missing_.
+
+**Limits.** 64 keys per counter, and the whole scenario's reservations — stampede's own counters,
+one per check, and every key plus its `other` — must fit the 512-name budget. Exceeding it is a
+**startup** error with the arithmetic shown, not a surprise at the end of the run.
+
+**Why you declare them.** The alternative is a top-N sketch that keeps the heaviest keys and folds
+the rest away, needing no advance knowledge. Those merge _approximately and order-dependently_ — two
+runs merging the same worker results in a different order could publish different numbers. That is
+the one property this tool does not trade away, so the key space is something you write down.
 
 ## Thresholds
 
@@ -607,7 +660,7 @@ millisecond and would sail past a peak-only check. It does not sail past this on
 loading · real HTTP transport · `stampede run` with setup/teardown, thresholds and exit codes ·
 markdown report · live dashboard — and, from M2, named per-response **checks** counted three ways,
 **custom counters and trends** merged across worker threads, and **per-request variation** keyed on
-the run's ordinal. **512 tests**, zero known vulnerabilities, gate two green across seven runs.
+the run's ordinal. **546 tests**, zero known vulnerabilities, gate two green across seven runs.
 
 **Next (M3): SSE / long-lived streaming requests** — open-ticket's contract run 5. One debt M2
 surfaced is still open: `request()` is documented as pure but not enforced. Bounded-cardinality

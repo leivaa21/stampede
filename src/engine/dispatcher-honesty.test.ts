@@ -245,6 +245,50 @@ describe("user code cannot starve the engine's own bookkeeping", () => {
     expect(reads.refusedRecordings).toBe(600 - (MAX_DISTINCT_TALLIES - reservedByTheEngine));
   });
 
+  it("keeps counting this slice's own refusals after the budget is full", async () => {
+    // `undeclaredCounters` and `collidingCounters` first fire when user code misbehaves — which is
+    // after a run's worth of user names exist. Starve either and the refusals stop reaching
+    // `brokenObservations`, and a run this slice makes fail goes green with the increments gone.
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ clock });
+
+    let names = 0;
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: burst({ count: 700 }),
+            requestFor: () => ({ label: "reads" }),
+            keyedCounters: { byOutcome: ["declared"] },
+            onResponse: (_response, record) => {
+              names += 1;
+              if (names <= 600) {
+                record.count(`seat-${String(names)}`);
+                return;
+              }
+              record.countKeyed("neverDeclared", "x"); // -> undeclaredCounters
+              record.count("byOutcome.sneaky"); // -> collidingCounters
+              record.count("stampede.dropped"); // -> reservedNameRefusals
+              throw new Error("and the observer itself"); // -> brokenObservers
+            },
+          },
+        ],
+        maxInFlight: 1_000,
+        drainTimeoutMs: 1_000,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    expect(reads.responseCount).toBe(700);
+    // 100 of each of the four, and all four have to reach the verdict. `errors` and
+    // `requestErrors` are the two engine counters still unpinned against starvation: both need a
+    // paced profile to fire after the map is full, since a burst dispatches everything first.
+    expect(reads.brokenObservations).toBe(400);
+  });
+
   it("keeps counting a declared key that first fires after the budget is full", async () => {
     // The mechanism D25-01's whole argument rests on: every declared slot is reserved before the
     // run, exactly like the engine's own counters. Without the reservation the declared slot is

@@ -156,11 +156,11 @@ const ENGINE_METRIC_KINDS: Readonly<Record<keyof typeof EngineMetric, "counter" 
  * cardinality rule looks at. The count is deliberately not written here: hardcoding it made a test
  * the thing that broke when a metric was added, and prose rots the same way.
  *
- * All but two are pinned by tests that fail when the name is dropped. `dispatched` and
- * `responses` are not, and cannot be: both are incremented before any user-chosen name can exist in
- * a scenario's map, so they are unstarvable by construction. They are reserved anyway rather than
- * carved out, because "which engine counters happen to fire first" is not a property worth encoding
- * — it would change the moment the dispatch loop is reordered.
+ * No count of which names are pinned by tests lives here. The last one was wrong in both
+ * directions — it named two as unpinnable that were pinned, and omitted the two most starvable of
+ * all — and a tally in prose is exactly what rots. What matters is the rule: every counter on this
+ * list is reserved, whether or not a test currently proves that particular one matters, because
+ * "which engine counters happen to fire first" changes the moment the dispatch loop is reordered.
  */
 export const ENGINE_COUNTERS: readonly string[] = Object.keys(ENGINE_METRIC_KINDS)
   .filter(

@@ -9,7 +9,7 @@
 > Read this file before every task and re-read the **Current state** line.
 
 > **Current state (2026-08-03):** **M2 is complete — stampede proves invariants, not just
-> percentiles.** 512 tests, audit clean, every slice through the implementer → reviewer loop.
+> percentiles.** 546 tests, audit clean, every slice through the implementer → reviewer loop.
 >
 > M1 built the instrument: HDR-style histograms whose merge is exact and order-independent, an
 > open-loop dispatcher behind clock and transport ports, a worker pool that splits the schedule by

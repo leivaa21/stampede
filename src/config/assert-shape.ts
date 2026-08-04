@@ -163,6 +163,16 @@ const assertKeyedCounters = (
         `${configPath}: counter "${counter}" in scenario "${name}" declares ${String(keys.length)} keys; the limit is ${String(MAX_KEYS_PER_COUNTER)}`,
       );
     }
+    // A keyed counter's name is a *prefix*, so it has to clear the reserved namespace as one.
+    // `assertName` refuses `stampede.`-prefixed names; the bare name `stampede` passes it, and
+    // then every slot the declaration owns *is* an engine counter — a run published a keyed table
+    // of stampede's own drop and abandonment counts under a user's counter name, exit 0.
+    if (keyedCounter(counter, OTHER_KEY).startsWith(RESERVED_METRIC_PREFIX)) {
+      throw new ConfigLoadError(
+        `${configPath}: counter "${counter}" in scenario "${name}" would store into ` +
+          `\`${RESERVED_METRIC_PREFIX}\`, which is reserved for stampede's own metrics — rename it`,
+      );
+    }
     if (counter.length + otherOverhead > MAX_METRIC_NAME_LENGTH) {
       throw new ConfigLoadError(
         `${configPath}: counter "${counter}" in scenario "${name}" is too long — a keyed counter's ` +
@@ -302,7 +312,11 @@ const assertObservers = (
   // and a threshold reading `["5xx"] === 0` passes green about a dimension nothing ever touched.
   // `userChecks` refuses exactly this shape for checks — it can only filter after the fact, while
   // here it is decidable at load.
-  if (scenario.counters !== undefined && onResponse === undefined) {
+  if (
+    isRecord(scenario.counters) &&
+    Object.keys(scenario.counters).length > 0 &&
+    onResponse === undefined
+  ) {
     throw new ConfigLoadError(
       `${configPath}: scenario "${name}" declares \`counters\` but has no \`onResponse\` — ` +
         `nothing can call \`record.countKeyed\`, so every key would publish a confident zero`,
