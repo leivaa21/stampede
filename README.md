@@ -174,19 +174,20 @@ scenarios: {
   which is the namesake run.
 
 It must be a **pure function of `(state, ordinal)`**, and stampede enforces it: the setup state is
-deep-frozen in each worker, so a builder that consumes shared state fails with the contract rather
+guarded in each worker, so a builder that consumes shared state fails with the contract rather
 than with wrong numbers.
 
 ```
-scenario "buyers": request() mutated the setup state, so it is not a pure function of
-(state, ordinal). Every worker gets its own structured clone, so a builder that consumes
-shared state — `state.seats.pop()` — hands each thread the same values instead of distinct
-ones. Derive from the ordinal instead: `seats[ordinal % seats.length]`.
+scenario "buyers": request() mutated the setup state at `state.seats.2`, so it is not a
+pure function of (state, ordinal). Every worker gets its own structured clone, so a builder
+that consumes shared state — `state.seats.pop()` — hands each thread the same values instead
+of distinct ones. Derive from the ordinal instead: `seats[ordinal % seats.length]`.
 ```
 
 That is what the ordinal is for: variation is _derived_, not accumulated. Plain objects and arrays
-are frozen; a `Map`, `Set`, `Date` or `Buffer` in your state is left alone, so mutating one of
-those is not caught. Both failures are counted separately and printed on the shortfall line —
+are guarded; a `Map`, `Set`, `Date` or `Buffer` in your state is left alone, so mutating one of
+those is not caught. The guard works whichever module system your config loads under — that is why
+it is a proxy and not `Object.freeze`, which fails silently in sloppy mode. Both failures are counted separately and printed on the shortfall line —
 `not built (request() threw)` and `not built (impure request())` — because the remedies have
 nothing in common. A throw leaves the run to continue and be judged on its thresholds; a mutation
 fails the run outright on exit `2`, since a request that was never built cannot be evidence.

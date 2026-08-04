@@ -111,7 +111,7 @@ export const EngineMetric = {
    */
   collidingCounters: "stampede.collidingCounters",
   /**
-   * Requests whose builder mutated the frozen setup state (D25-02).
+   * Requests whose builder mutated the guarded setup state (D25-02).
    *
    * Counted apart from `requestErrors` because the consequence is different and worse: a builder
    * that throws for its own reasons produced no request, while one that mutates shared state is

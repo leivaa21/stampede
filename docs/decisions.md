@@ -517,34 +517,52 @@ bites — the exact failure this decision removes.
 would be the silent hole `metrics/validate.ts` refuses. Implicit means a config cannot forget it,
 and a non-zero `other` is itself the signal that the declared key space is wrong.
 
-## 2026-08-03 — [D25-02] The setup state is deep-frozen, at the worker's door
+## 2026-08-03 — [D25-02] The setup state refuses mutation, at the worker's door
 
-**Decision.** `worker-entry.ts` deep-freezes the setup state before handing it to `scenariosFrom`.
-A `request()` that mutates it throws; the eager ordinal-0 call turns that into a message naming the
-purity contract, and a mutation on a later ordinal is counted as `impureRequestCount` and fails the
-run.
+**Decision.** `worker-entry.ts` wraps the setup state in a **proxy** whose write traps throw, before
+handing it to `scenariosFrom`. A `request()` that mutates it throws `StateMutationError` carrying
+the path that was written; the eager ordinal-0 call turns that into a message naming the purity
+contract and the field, and a mutation on a later ordinal is counted as `impureRequestCount` and
+fails the run.
 
-**Why in the worker, and at that door.** `structuredClone` does not preserve frozenness, so freezing
-on the main thread would protect nothing — the worker's copy is the one a builder can reach. And at
-the _door_ rather than inside `scenariosFrom`, because that function is exported and a converter
-that seals its caller's argument in place is a side effect its name and signature do not disclose.
-Freezing where the clone arrives makes "frozen in the worker" true by construction.
+**Why in the worker, and at that door.** `structuredClone` carries neither frozenness nor a proxy,
+so doing this on the main thread would protect nothing — the worker's copy is the one a builder can
+reach. And at the _door_ rather than inside `scenariosFrom`, because that function is exported and a
+converter that seals its caller's argument is a side effect its name and signature do not disclose.
 
-**Why freeze rather than compare two calls.** Calling `request(state, 0)` twice and comparing would
+**Why a proxy rather than `Object.freeze`.** This decision originally said deep-freeze, and it was
+wrong: a frozen object only _throws_ in strict mode. In sloppy mode the write is discarded in
+silence — measured on Node 24, `state.nonce += 1` against frozen state does nothing at all — which
+is this guard switched off, and worse than off, since the user's own mutation is dropped too.
+
+Whether a config is sloppy depends on the module system Node picks for it, and two attempts to
+settle that up front were both wrong. The first gated on the file extension, which misses that a
+`.ts` file's module system comes from the nearest `package.json`. The second read that
+`package.json` and treated a missing `"type"` as CommonJS — which would have refused the majority of
+Node projects, because Node's syntax detection reparses a typeless `.ts` as an ES module. Neither
+could have been exact anyway: the format is a function of the package _and_ the file's own syntax, so
+a `module.exports`-shaped config runs sloppy even with no `package.json` at all.
+
+A proxy trap has no such dependency. The throw comes from the trap rather than from assignment
+semantics, so it fires in sloppy mode too and the question stops needing an answer — `module-format.ts`
+and the CommonJS refusal in `configUrlFor` were both deleted. The trap also _knows what was written_,
+so the error carries `state.seats.0` instead of leaving the caller to recognise one of three V8
+message wordings by regex. The claim is asserted end to end in `run-command.test.ts`, against a
+config Node genuinely loads as CommonJS; swapping the proxy back for a freeze reddens it.
+
+**Why enforce rather than compare two calls.** Calling `request(state, 0)` twice and comparing would
 also catch a nonce — but it false-positives on a builder that legitimately varies on something
-external, and it doubles a call the author was told runs once per dispatch. Freezing catches the
-violation that actually happens, `state.seats.pop()`, with a message. A config doing that was
-already broken across four threads, each holding its own clone; this makes it fail loudly rather
-than publish wrong numbers.
+external, and it doubles a call the author was told runs once per dispatch. This catches the
+violation that actually happens, `state.seats.pop()`, with a message.
 
-**Only plain objects and arrays are frozen**, and that is a correctness constraint rather than a
-simplification. `Object.freeze` _throws_ on a non-empty typed array, so a `Buffer` in the setup
-state — the canonical shape for load-testing an authed API — killed every worker with a raw V8
-string. Freezing a `RegExp` is quieter and worse: `lastIndex` becomes non-writable, so a pure
-`re.test(...)` throws a message the matcher reads as a purity violation, accusing a user who
-mutated nothing. **Consequence, stated:** a `Map`, `Set`, `Date` or typed array in the state can
-still be mutated and this will not catch it. A guard that crashes on a `Buffer` to theoretically
-catch a mutated `Date` is the worse trade.
+**Only plain objects and arrays are wrapped**, and that is a correctness constraint rather than a
+simplification. A `Map` or `Set` behind a proxy _throws_ on its own methods — they reach for internal
+slots the proxy does not have — so wrapping them would break working configs, and it would catch
+nothing anyway, since `map.set(k, v)` fires no `set` trap either way. A `Buffer` in the setup state
+is the canonical shape for load-testing an authed API and has to keep working. **Consequence,
+stated:** a `Map`, `Set`, `Date` or typed array in the state can still be mutated and this will not
+catch it. Children are wrapped in place _before_ the parent proxy is built, so no `get` trap is
+needed and reads stay on the ordinary path — `request` runs once per scheduled instant.
 
 **A later-ordinal mutation gets its own count, not `requestErrors`.** Folded together it read as
 "9 not built" and the run exited 0 — stampede refusing 90 % of its own load and reporting success,
@@ -552,18 +570,9 @@ which is worse than the impurity it was policing. `impureRequestCount` is a term
 identity (`dispatched + dropped + requestErrors + impure === scheduled`) and has its own run-failure
 message, because "a check or onResponse threw" is the wrong sentence for a config with neither.
 
-**Rejected: relying on the freeze alone.** CommonJS runs in sloppy mode, where a write to a frozen
-object fails _silently_ — the mutation is discarded and the builder starts sending the same value
-every time with nothing to say why, which is D25-02 switched off.
-
-`configUrlFor` therefore refuses two things. First, anything that is not `.ts` or `.mts`, which the
-README, `--help` and D1-04 already promised. Second — and this is the one with teeth — anything Node
-would load as CommonJS, which is **not** a question about the extension. Measured on Node 24: a
-`.ts` file in a package with `"type": "commonjs"`, or with no `"type"` at all (the default for every
-project that has not opted in), loads as CommonJS, and syntax detection does not rescue `.ts` the
-way it rescues `.js`. An extension gate passed exactly that file — the shape a real user has —
-while the decision record claimed the hole was closed. `module-format.ts` resolves the format from
-the nearest `package.json` instead, and the error names that file and both remedies.
+**`configUrlFor` still refuses anything that is not `.ts` or `.mts`**, but on the D1-04 grounds the
+README and `--help` already promise — the typed config _is_ the DSL — and no longer as a purity
+argument, which it turned out not to be.
 
 ## 2026-08-03 — [D25-03] Gate two runs nightly, and cannot redden a pull request
 

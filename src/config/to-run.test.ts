@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { burst } from "../engine/arrival-profiles.ts";
 import { ImpureRequestError } from "../engine/run-spec.ts";
-import { deepFreeze } from "./freeze-state.ts";
+import { guardState } from "./guard-state.ts";
 import type { StampedeConfig } from "./types.ts";
 import {
   DEFAULT_MAX_IN_FLIGHT,
@@ -170,7 +170,7 @@ describe("run settings", () => {
           } as never,
           // Frozen by the caller, exactly as `worker-entry.ts` does — `scenariosFrom` converts, it
           // does not seal its caller's argument.
-          deepFreeze({ url: "http://localhost:1/", seats: ["a"] }),
+          guardState({ url: "http://localhost:1/", seats: ["a"] }),
         ),
       ).toThrow(/^scenario "reads": request\(\) mutated the setup state/);
     });
@@ -192,7 +192,7 @@ describe("run settings", () => {
               },
             },
           } as never,
-          deepFreeze({ url: "http://localhost:1/", seats: ["a"] }),
+          guardState({ url: "http://localhost:1/", seats: ["a"] }),
         ),
       ).toThrow(ImpureRequestError);
     });

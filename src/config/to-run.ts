@@ -1,7 +1,7 @@
 import { availableParallelism } from "node:os";
 import type { HttpRequestSpec } from "../engine/http-transport.ts";
 import { DEFAULT_DRAIN_TIMEOUT_MS, ImpureRequestError, type Scenario } from "../engine/run-spec.ts";
-import { isFrozenStateViolation } from "./freeze-state.ts";
+import { StateMutationError } from "./guard-state.ts";
 import type { StampedeConfig } from "./types.ts";
 
 /**
@@ -80,13 +80,14 @@ const assertRequestShape = (built: unknown, name: string): HttpRequestSpec => {
  * `Array.prototype.pop`, which names neither the scenario, nor `request()`, nor the rule. The
  * throw is the enforcement; this is the part that makes it a diagnosis.
  */
-const purityErrorFor = (error: unknown, name: string): ImpureRequestError =>
+const purityErrorFor = (error: StateMutationError, name: string): ImpureRequestError =>
   new ImpureRequestError(
-    `scenario "${name}": request() mutated the setup state, so it is not a pure function of ` +
-      `(state, ordinal). Every worker gets its own structured clone, so a builder that consumes ` +
-      `shared state — \`state.seats.pop()\` — hands each thread the same values instead of ` +
-      `distinct ones. Derive from the ordinal instead: \`seats[ordinal % seats.length]\`. ` +
-      `(${error instanceof Error ? error.message : String(error)})`,
+    // The path is the whole gain over matching V8's message: `state.seats.0` says which field the
+    // builder consumed, in a config that may read a dozen.
+    `scenario "${name}": request() mutated the setup state at \`${error.path}\`, so it is not a ` +
+      `pure function of (state, ordinal). Every worker gets its own structured clone, so a builder ` +
+      `that consumes shared state — \`state.seats.pop()\` — hands each thread the same values ` +
+      `instead of distinct ones. Derive from the ordinal instead: \`seats[ordinal % seats.length]\`.`,
   );
 
 const eagerlyValidatedBuilder = (
@@ -98,10 +99,12 @@ const eagerlyValidatedBuilder = (
     try {
       return assertRequestShape(scenario.request(setupState, ordinal), name);
     } catch (error: unknown) {
-      // Only a frozen-state violation is translated. Anything else the builder throws is the
-      // build failure the dispatcher already counts, and rewriting it as a purity error would
-      // send a reader to the wrong contract.
-      throw isFrozenStateViolation(error) ? purityErrorFor(error, name) : error;
+      // Only the guard's own error is translated. Anything else the builder throws is the build
+      // failure the dispatcher already counts, and rewriting it as a purity error would send a
+      // reader to the wrong contract. Matched on the *type* the guard threw rather than on a
+      // message, so a builder that throws its own `TypeError` about a read-only property is not
+      // accused of something it did not do.
+      throw error instanceof StateMutationError ? purityErrorFor(error, name) : error;
     }
   };
   build(0);

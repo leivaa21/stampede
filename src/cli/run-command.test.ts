@@ -256,6 +256,35 @@ export default defineConfig({
     expect(failure).toContain("seats[ordinal % seats.length]");
   }, 30_000);
 
+  it("catches an impure builder in a config Node loads as CommonJS, where freezing would not", async () => {
+    // The claim the whole guard design rests on. A `.ts` file in a package with
+    // `"type": "commonjs"`, written with `module.exports`, genuinely loads as CommonJS and runs in
+    // **sloppy mode** — where `Object.freeze` stops throwing and silently discards the write
+    // instead. The first version of this guard was a deep freeze, so in this exact file D25-02
+    // enforced nothing at all, and the user's own mutation was dropped too: a builder meant to
+    // vary its output sent the same value every time with nothing anywhere to say why.
+    //
+    // Written without `import`/`export`, because those are what make Node reparse it as ESM.
+    const dir = mkdtempSync(join(tmpdir(), "stampede-sloppy-"));
+    writeFileSync(join(dir, "package.json"), '{"type":"commonjs"}');
+    const file = join(dir, "scenarios.ts");
+    writeFileSync(
+      file,
+      `const { defineConfig, burst } = require("${REPO_ROOT}src/index.ts");\n` +
+        `module.exports = defineConfig({\n` +
+        `  setup: () => ({ url: ${JSON.stringify(target.url)}, seats: ["a", "b", "c", "d"] }),\n` +
+        `  scenarios: { reads: { profile: burst({ count: 4 }),\n` +
+        `    request: (s, ordinal) => ordinal === 0 ? { url: s.url } : { url: s.url + "?s=" + String(s.seats.pop()) } } },\n` +
+        `  workers: 1, maxInFlight: 16, drainTimeoutMs: 3000,\n});\n`,
+    );
+
+    const report = await runFromConfig({ configPath: file });
+
+    expect(report.exitCode).toBe(ExitCode.RunFailed);
+    expect(report.summary?.scenarios[0]?.impureRequestCount).toBe(3);
+    expect(report.failures.join(" ")).toContain("mutated the setup state");
+  }, 30_000);
+
   it("runs teardown after the storm, not before it", async () => {
     // The ordering *is* the milestone's argument, so it is asserted from inside the config: teardown
     // asks the target how many requests it has seen, and throws if the storm has not happened yet.

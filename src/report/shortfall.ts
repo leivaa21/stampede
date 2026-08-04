@@ -25,7 +25,7 @@ export const shortfallParts = (scenario: ScenarioRunSummary): readonly string[] 
   [
     scenario.droppedCount > 0 ? `${String(scenario.droppedCount)} dropped` : undefined,
     // Two causes, never merged into one "not built": one is a `request()` that threw and the other
-    // is a `request()` that mutated the frozen setup state (D25-02), and the remedies have nothing
+    // is a `request()` that mutated the guarded setup state (D25-02), and the remedies have nothing
     // in common. The parenthetical is the whole value of the term.
     scenario.requestErrorCount > 0
       ? `${String(scenario.requestErrorCount)} not built (request() threw)`

@@ -77,7 +77,7 @@ export interface ScenarioRunSummary {
   /** Requests refused by the in-flight cap: dropped, and counted here so a report can annotate it. */
   readonly droppedCount: number;
   /**
-   * Requests whose builder mutated the frozen setup state (D25-02).
+   * Requests whose builder mutated the guarded setup state (D25-02).
    *
    * Its own field rather than folded into `requestErrorCount`, because the consequence differs: a
    * builder that threw produced no request, while one that mutated shared state is silently wrong

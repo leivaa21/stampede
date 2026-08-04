@@ -135,7 +135,7 @@ describe("adviceFor, through the message that carries it", () => {
       ),
     );
 
-    expect(message).toContain("mutated the frozen setup state");
+    expect(message).toContain("mutated the setup state, which is guarded");
     expect(message).not.toContain("check the target is reachable");
   });
 
@@ -200,6 +200,34 @@ describe("adviceFor, through the message that carries it", () => {
     expect(message).toContain("seats[ordinal % seats.length]");
   });
 
+  it("says nothing about purity when there was none, however the run failed", () => {
+    // Without the zero guard this emits "Separately, 0 requests could not be built at all" on
+    // every dropped-out run in the tool.
+    const message = findUnmeasuredScenario(
+      summaryOf(
+        scenario({ scheduledCount: 10, dispatchedCount: 0, droppedCount: 10, responseCount: 0 }),
+      ),
+    );
+
+    expect(message).not.toContain("Separately");
+  });
+
+  it("counts in the plural when more than one request could not be built", () => {
+    const message = findUnmeasuredScenario(
+      summaryOf(
+        scenario({
+          scheduledCount: 1000,
+          dispatchedCount: 997,
+          errorCount: 997,
+          impureRequestCount: 3,
+          responseCount: 0,
+        }),
+      ),
+    );
+
+    expect(message).toContain("3 requests could not be built");
+  });
+
   it("does not say the purity contract twice when purity is the dominant cause", () => {
     const message = findUnmeasuredScenario(
       summaryOf(
@@ -212,7 +240,7 @@ describe("adviceFor, through the message that carries it", () => {
       ),
     );
 
-    expect(message?.match(/mutated the frozen setup state/g)).toHaveLength(1);
+    expect(message?.match(/mutated the setup state, which is guarded/g)).toHaveLength(1);
   });
 });
 

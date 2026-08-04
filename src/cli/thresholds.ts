@@ -30,7 +30,7 @@ export interface Verdict {
  * `10 dropped` sends the user to the wrong place — that is `maxInFlight`, not the network.
  */
 const IMPURE_REMEDY =
-  "`request()` mutated the frozen setup state — it must be a pure function of (state, ordinal). Derive from the ordinal instead: `seats[ordinal % seats.length]`.";
+  "`request()` mutated the setup state, which is guarded — it must be a pure function of (state, ordinal). Derive from the ordinal instead: `seats[ordinal % seats.length]`.";
 
 const REQUEST_THREW_REMEDY = "the requests threw while being built; fix `request()` in the config.";
 
@@ -99,7 +99,7 @@ export const findRefusedRecordings = (summary: RunSummary): string | undefined =
 };
 
 /**
- * A scenario whose `request()` mutated the frozen setup state (D25-02).
+ * A scenario whose `request()` mutated the guarded setup state (D25-02).
  *
  * Its own finder rather than a term of `brokenObservations`, which documents itself as checks and
  * `onResponse` — routing it there told a config with neither that "a check or onResponse threw",
