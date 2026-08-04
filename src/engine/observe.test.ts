@@ -217,6 +217,33 @@ describe("async callbacks", () => {
     expect(metrics.counters.get(EngineMetric.collidingCounters)).toBe(1);
   });
 
+  it("refuses any plain counter inside a declared namespace, not just its keys", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["byStatus", new Set(["2xx"])]]));
+
+    recorder.count("byStatus.404");
+    recorder.count("byStatus.500");
+
+    // `record.count(`byStatus.${res.status}`)` is the API D25-01 exists to reject: one name per
+    // status, filling the map, printed as `counter byStatus.404 = 1` above the keyed table where a
+    // reader takes it for a key of that dimension. Once `byStatus` is declared the whole namespace
+    // belongs to it — membership of the enumerated slots is not enough.
+    expect(metrics.counters.get("byStatus.404")).toBe(0);
+    expect(metrics.counters.get("byStatus.500")).toBe(0);
+    expect(metrics.counters.get(EngineMetric.collidingCounters)).toBe(2);
+  });
+
+  it("leaves a counter that merely starts with a similar name alone", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["byStatus", new Set(["2xx"])]]));
+
+    recorder.count("byStatusCode", 4);
+
+    // The prefix is `byStatus.`, not `byStatus` — a differently-named counter is not a collision.
+    expect(metrics.counters.get("byStatusCode")).toBe(4);
+    expect(metrics.counters.get(EngineMetric.collidingCounters)).toBe(0);
+  });
+
   it("leaves an ordinary return value alone", () => {
     const metrics = scenario();
     // Only a *thenable* is a swallowed promise. An `onResponse` whose last expression happens to be

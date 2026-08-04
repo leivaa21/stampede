@@ -103,6 +103,17 @@ describe("summariseRun separates the user's metrics from the engine's", () => {
     expect(summary?.brokenObservations).toBe(3);
   });
 
+  it("counts a counter that collided with a declared namespace as a broken observation", () => {
+    const metrics = new MetricsRegistry();
+    metrics.scenario("reads").counters.inc(EngineMetric.collidingCounters, 3);
+
+    const [summary] = summariseRun(oneScenario, metrics).scenarios;
+
+    // The refusal is tested at the recorder; without this the *wiring* is not, and a refactor that
+    // drops the term ships green while the increments become the silent hole it exists to prevent.
+    expect(summary?.brokenObservations).toBe(3);
+  });
+
   it("counts a refused reserved name as a broken observation", () => {
     const metrics = new MetricsRegistry();
     metrics.scenario("reads").counters.inc(EngineMetric.reservedNameRefusals, 5);

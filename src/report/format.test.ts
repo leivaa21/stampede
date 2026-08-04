@@ -60,11 +60,16 @@ describe("orderedKeys", () => {
     expect(orderedKeys({ other: 1, zeta: 2, alpha: 3 })).toEqual(["alpha", "zeta", "other"]);
   });
 
-  it("is stable for integer-like keys, which JavaScript would hoist", () => {
-    // `{ "500": 1, "200": 2 }` iterates as 200, 500 whatever the insertion order — a natural
-    // status-code key space would reorder itself, and a report has to reproduce byte-identically.
-    expect(orderedKeys({ "500": 1, "200": 2, other: 0 })).toEqual(["200", "500", "other"]);
-    expect(orderedKeys({ "200": 2, "500": 1, other: 0 })).toEqual(["200", "500", "other"]);
+  it("sorts by name, not by the order the object happens to iterate", () => {
+    // Integer-like keys iterate numerically whatever the insertion order, so a test using only
+    // those proves a property of JavaScript rather than of this function. Mixed keys are what
+    // distinguish sorting from passing `Object.keys` through.
+    expect(orderedKeys({ zeta: 1, "500": 2, alpha: 3, "200": 4 })).toEqual([
+      "200",
+      "500",
+      "alpha",
+      "zeta",
+    ]);
   });
 
   it("omits `other` when it is not there", () => {

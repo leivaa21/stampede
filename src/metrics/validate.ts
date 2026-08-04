@@ -65,16 +65,18 @@ export const MAX_CHECKS_PER_SCENARIO = 64;
 export const MAX_KEYS_PER_COUNTER = 64;
 
 /**
- * Slots a scenario's *declarations* may reserve, leaving the rest of the budget for its own
- * plain counters.
+ * Counter slots that must stay free for a scenario's own `record.count(...)`.
  *
- * Checking only that the declarations fit `MAX_DISTINCT_TALLIES` leaves zero headroom: a config
- * declaring exactly the whole budget starts, then has every `record.count(...)` refused, and gets
- * "use fewer distinct names" at the end of the run — the diagnosis-without-a-remedy that declared
- * key spaces exist to remove, and here it is backwards, because the user *did* bound their
- * cardinality. Half the budget is a judgement call, stated rather than implied.
+ * Expressed as a floor on what is left rather than a ceiling on declarations, because that is the
+ * property actually wanted — and because "declarations may use half" overstates what a reader gets:
+ * with 256 declared, 64 broken-check slots and the engine's own, only 181 remain, not 256. A rule
+ * whose message has to fudge its own arithmetic is a rule stated wrong.
+ *
+ * Without a floor, a config declaring exactly the budget starts, has every plain `count` refused,
+ * and is told at the end of the run to use fewer names — the diagnosis-without-a-remedy declared
+ * key spaces exist to remove, aimed at someone who bounded their cardinality perfectly.
  */
-export const MAX_DECLARED_SLOTS_PER_SCENARIO = MAX_DISTINCT_TALLIES / 2;
+export const MIN_FREE_TALLIES_PER_SCENARIO = 128;
 
 export const assertMetricName = (name: string, kind: string): void => {
   if (name.length === 0) {

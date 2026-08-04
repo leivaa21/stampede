@@ -167,7 +167,7 @@ const scenarioSection = (scenario: ScenarioRunSummary): string => {
     ...(scenario.brokenObservations > 0
       ? [
           "",
-          `> ⚠ **${String(scenario.brokenObservations)} broken observations** — a check or \`onResponse\` threw, returned a non-boolean, or named a metric the scenario never declared. The measurements are real; at least one claim about them is not.`,
+          `> ⚠ **${String(scenario.brokenObservations)} broken observations** — a check or \`onResponse\` threw, returned a non-boolean, or named a metric the scenario cannot write. The measurements are real; at least one claim about them is not.`,
         ]
       : []),
     ...(scenario.refusedRecordings > 0

@@ -72,6 +72,10 @@ export interface ScenarioConfig<TSetup> {
    * onResponse: (res, record) => record.countKeyed("byStatus", bucketOf(res.status)),
    * ```
    *
+   * **Declared here, read back as `keyedCounters` on the summary** — `s.scenarios[0].counters` is
+   * the map of plain counters you never declared, and a threshold looking for `byStatus` there
+   * finds `undefined`.
+   *
    * Every declared key gets a slot reserved before the run starts, plus an implicit `other` for
    * keys that were not declared — so nothing is ever dropped, and a non-zero `other` tells you the
    * key space is wrong. Declared rather than inferred (D25-01): a top-N sketch would need no

@@ -152,10 +152,11 @@ const ENGINE_METRIC_KINDS: Readonly<Record<keyof typeof EngineMetric, "counter" 
  * run that dropped 350 requests then reports zero drops, and `dispatched + dropped + notBuilt ===
  * scheduled` — the identity the README claims — stops holding with nothing on the page to say so.
  *
- * Reserving a slot each costs nine names out of 512 and makes `known.has(name)` permanently true,
- * which is the only thing the cardinality rule looks at.
+ * Reserving a slot each makes `known.has(name)` permanently true, which is the only thing the
+ * cardinality rule looks at. The count is deliberately not written here: hardcoding it made a test
+ * the thing that broke when a metric was added, and prose rots the same way.
  *
- * Seven of the nine are pinned by tests that fail when the name is dropped. `dispatched` and
+ * All but two are pinned by tests that fail when the name is dropped. `dispatched` and
  * `responses` are not, and cannot be: both are incremented before any user-chosen name can exist in
  * a scenario's map, so they are unstarvable by construction. They are reserved anyway rather than
  * carved out, because "which engine counters happen to fire first" is not a property worth encoding

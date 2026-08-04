@@ -110,7 +110,7 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
   }
   if (scenario.brokenObservations > 0) {
     lines.push(
-      `    ⚠ ${String(scenario.brokenObservations)} broken observations — a check or onResponse threw, returned a non-boolean, or named a metric the scenario never declared`,
+      `    ⚠ ${String(scenario.brokenObservations)} broken observations — a check or onResponse threw, returned a non-boolean, or named a metric the scenario cannot write`,
     );
   }
   if (scenario.refusedRecordings > 0) {

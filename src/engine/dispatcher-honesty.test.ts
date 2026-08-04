@@ -285,6 +285,39 @@ describe("user code cannot starve the engine's own bookkeeping", () => {
     expect(reads.keyedCounters.byOutcome).toEqual({ late: 100, other: 0 });
   });
 
+  it("keeps `other` when a programmatic run declares more keys than the budget holds", async () => {
+    // The load-time budget check makes this unreachable through the CLI, but `runDispatch` is
+    // exported — and `other` is the slot that must survive, because every undeclared key lands
+    // there and losing it drops the increments the bucket exists to catch.
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ clock });
+    const tooManyKeys = Array.from({ length: 600 }, (_, i) => `k${String(i)}`);
+
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: burst({ count: 10 }),
+            requestFor: () => ({ label: "reads" }),
+            keyedCounters: { byThing: tooManyKeys },
+            onResponse: (_response, record) => {
+              record.countKeyed("byThing", "undeclared-so-lands-in-other");
+            },
+          },
+        ],
+        maxInFlight: 50,
+        drainTimeoutMs: 1_000,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    expect(reads.responseCount).toBe(10);
+    expect(reads.keyedCounters.byThing?.other).toBe(10);
+  });
+
   it("keeps attributing a check that only starts breaking once the budget is full", async () => {
     const clock = new FakeClock();
     let answered = 0;

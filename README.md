@@ -609,10 +609,9 @@ markdown report · live dashboard — and, from M2, named per-response **checks*
 **custom counters and trends** merged across worker threads, and **per-request variation** keyed on
 the run's ordinal. **512 tests**, zero known vulnerabilities, gate two green across seven runs.
 
-**Next (M3): SSE / long-lived streaming requests** — open-ticket's contract run 5. Two debts M2
-surfaced are named rather than forgotten: there is no way to express a bounded-cardinality counter
-(ask for 600 names and the run fails telling you to use fewer), and `request()` is documented as
-pure but not enforced.
+**Next (M3): SSE / long-lived streaming requests** — open-ticket's contract run 5. One debt M2
+surfaced is still open: `request()` is documented as pure but not enforced. Bounded-cardinality
+counters landed in M2.5 — declare a key space and use `record.countKeyed`.
 
 **Not published to npm yet.** Install from source; `@leivaa21/stampede` is reserved.
 

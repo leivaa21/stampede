@@ -52,11 +52,14 @@ export const plain = (text: string): string => text.replace(/[\u0000-\u001f\u007
 /**
  * A declared key space's keys, in a deterministic order, with `other` last.
  *
- * Sorted by name rather than left in the object's own order for two reasons. A `Record`'s key order
- * is insertion order *except* for integer-like keys, which JavaScript hoists and sorts numerically
- * — so a natural key space like `["500", "200"]` would come back reordered, and a report has to
- * reproduce byte-identically however it was produced (D1-02). And `other` is the bucket rather than
- * one of the keys, so it belongs at the end whatever it sorts as.
+ * Sorted by name, like every other name-keyed map this repo publishes — `counters`, `checks` and
+ * `trends` all arrive sorted from `run-summary.ts`, and a key space reading in a different order
+ * from the maps beside it is a difference with no meaning behind it.
+ *
+ * Not for byte-identity: a `Record` hoists integer-like keys and sorts them numerically, but it
+ * does so deterministically, so declaration order was already reproducible. What sorting buys is
+ * that `["500", "200"]` and `["200", "500"]` render the same, and that `other` — the bucket rather
+ * than one of the keys — is last whatever it would sort as.
  *
  * Shared by both renderers so the terminal and the report cannot disagree about an ordering.
  */

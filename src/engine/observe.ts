@@ -72,16 +72,16 @@ export const recorderFor = (
   /** Declared key spaces, by counter name. Every key here already has a reserved slot. */
   keyed: ReadonlyMap<string, ReadonlySet<string>>,
 ): ResponseRecorder => {
-  // Every slot a declaration owns, flattened once per scenario. `count` checks membership so a
-  // plain counter cannot write into a keyed slot: `record.count("byStatus.5xx", 7)` in a scenario
-  // that declared `byStatus` published seventy 5xx responses the target never sent, and then
-  // failed a threshold reading that key — the target blamed for a naming collision (D2-04's
-  // wrongness, through a new door).
-  const declaredSlots = new Set(
-    [...keyed].flatMap(([name, keys]) =>
-      [...keys, OTHER_KEY].map((key) => keyedCounter(name, key)),
-    ),
-  );
+  // Once a scenario declares `byStatus`, the whole `byStatus.` namespace belongs to that
+  // dimension — a *prefix*, not the enumerated slots.
+  //
+  // Membership alone caught `record.count("byStatus.5xx", 7)` writing into a declared key, which
+  // published seventy 5xx responses the target never sent. It did not catch
+  // `record.count(\`byStatus.${res.status}\`)`, which is the API D25-01 exists to reject: it counts,
+  // it fills the map one name per status, and the report prints `counter byStatus.404 = 1` above
+  // `keyed byStatus  2xx 1 · other 0` — where a reader takes `byStatus.404` for a key of that
+  // dimension, while `other` reads 0 and the declaration bought nothing.
+  const declaredPrefixes = [...keyed.keys()].map((name) => `${name}.`);
 
   return {
     count: (name, by = 1) => {
@@ -89,7 +89,7 @@ export const recorderFor = (
         metrics.counters.inc(EngineMetric.reservedNameRefusals);
         return;
       }
-      if (declaredSlots.has(name)) {
+      if (declaredPrefixes.some((prefix) => name.startsWith(prefix))) {
         metrics.counters.inc(EngineMetric.collidingCounters);
         return;
       }

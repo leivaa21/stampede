@@ -7,7 +7,7 @@ import {
 } from "../engine/metric-names.ts";
 import {
   MAX_CHECKS_PER_SCENARIO,
-  MAX_DECLARED_SLOTS_PER_SCENARIO,
+  MIN_FREE_TALLIES_PER_SCENARIO,
   MAX_DISTINCT_SCENARIOS,
   MAX_DISTINCT_TALLIES,
   MAX_KEYS_PER_COUNTER,
@@ -136,6 +136,11 @@ const assertKeyedCounters = (
 
   let declaredSlots = 0;
   let largest = { counter: "", slots: 0 };
+  // `other` is longer than most keys, so a counter name that fits every declared key can still
+  // produce an `other` slot the registry refuses — and then the bucket whose whole job is to prove
+  // the key space is closed publishes a confident zero while increments are dropped. Budgeted
+  // here, the same way a check name is budgeted against the counter derived from it.
+  const otherOverhead = keyedCounter("", OTHER_KEY).length;
   // Every slot name any declaration owns, so two declarations cannot resolve to one storage slot:
   // `{ a: { keys: ["b.c"] } }` and `{ "a.b": { keys: ["c"] } }` both name `a.b.c`, and ten
   // increments would publish as twenty across two counters in the same report.
@@ -158,6 +163,14 @@ const assertKeyedCounters = (
         `${configPath}: counter "${counter}" in scenario "${name}" declares ${String(keys.length)} keys; the limit is ${String(MAX_KEYS_PER_COUNTER)}`,
       );
     }
+    if (counter.length + otherOverhead > MAX_METRIC_NAME_LENGTH) {
+      throw new ConfigLoadError(
+        `${configPath}: counter "${counter}" in scenario "${name}" is too long — a keyed counter's ` +
+          `name may be at most ${String(MAX_METRIC_NAME_LENGTH - otherOverhead)} characters, ` +
+          `because its implicit \`${OTHER_KEY}\` slot is stored as "${counter}.${OTHER_KEY}"`,
+      );
+    }
+
     const seen = new Set<string>();
     for (const key of keys) {
       if (typeof key !== "string") {
@@ -211,20 +224,20 @@ const assertKeyedCounters = (
     }
   }
 
-  // Against the declaration budget, not the whole map: the rest has to stay free for the
-  // scenario's own `record.count(...)`, or a config that bounded its cardinality perfectly would
-  // still end the run being told to use fewer names.
-  if (declaredSlots > MAX_DECLARED_SLOTS_PER_SCENARIO) {
-    // The whole picture in the message, not just the number that tripped: a reader needs to know
-    // what else is claiming slots before deciding which key space to shrink.
+  // A floor on what is left, not a ceiling on declarations — the reservations that compete for the
+  // budget are the engine's, the checks' and the declarations', and the number a config author
+  // needs is how much room their own `record.count(...)` still has.
+  const reserved = ENGINE_COUNTERS.length + checkCount + declaredSlots;
+  const free = MAX_DISTINCT_TALLIES - reserved;
+  if (free < MIN_FREE_TALLIES_PER_SCENARIO) {
     throw new ConfigLoadError(
-      `${configPath}: scenario "${name}" declares ${String(declaredSlots)} counter slots ` +
-        `(its key spaces plus one \`${OTHER_KEY}\` each) and the limit is ` +
-        `${String(MAX_DECLARED_SLOTS_PER_SCENARIO)} — half the per-scenario budget of ` +
-        `${String(MAX_DISTINCT_TALLIES)}, so the rest stays free for plain counters ` +
-        `(stampede reserves ${String(ENGINE_COUNTERS.length)} of its own, and this scenario's ` +
-        `checks reserve ${String(checkCount)}). ` +
-        `The largest is "${largest.counter}" at ${String(largest.slots)}; shrink that key space first.`,
+      `${configPath}: scenario "${name}" would leave ${String(free)} of ${String(MAX_DISTINCT_TALLIES)} ` +
+        `counter slots free for its own \`record.count\`, and at least ` +
+        `${String(MIN_FREE_TALLIES_PER_SCENARIO)} must stay free — ` +
+        `${String(declaredSlots)} are taken by its declared key spaces (each plus one ` +
+        `\`${OTHER_KEY}\`), ${String(checkCount)} by its checks, and ` +
+        `${String(ENGINE_COUNTERS.length)} by stampede itself. ` +
+        `The largest declaration is "${largest.counter}" at ${String(largest.slots)}; shrink that first.`,
     );
   }
 };
@@ -285,6 +298,16 @@ const assertObservers = (
     name,
     configPath,
   );
+  // Declared counters with nothing that could write to them publish `2xx 0 · 5xx 0 · other 0`,
+  // and a threshold reading `["5xx"] === 0` passes green about a dimension nothing ever touched.
+  // `userChecks` refuses exactly this shape for checks — it can only filter after the fact, while
+  // here it is decidable at load.
+  if (scenario.counters !== undefined && onResponse === undefined) {
+    throw new ConfigLoadError(
+      `${configPath}: scenario "${name}" declares \`counters\` but has no \`onResponse\` — ` +
+        `nothing can call \`record.countKeyed\`, so every key would publish a confident zero`,
+    );
+  }
   if (onResponse !== undefined) {
     if (typeof onResponse !== "function") {
       throw new ConfigLoadError(

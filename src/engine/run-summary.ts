@@ -249,17 +249,21 @@ const keyedCountersOf = (
 ): Readonly<Record<string, Readonly<Record<string, number>>>> =>
   Object.freeze(
     Object.fromEntries(
-      Object.entries(declared).map(([name, keys]) => [
-        name,
-        Object.freeze(
-          Object.fromEntries(
-            [...keys, OTHER_KEY].map((key) => [
-              key,
-              recorded?.counters.get(keyedCounter(name, key)) ?? 0,
-            ]),
+      // Sorted, like every other name-keyed map on this summary. Declaration order would also be
+      // deterministic, but it would read differently from the maps printed beside it.
+      Object.entries(declared)
+        .sort(([a], [b]) => compareNames(a, b))
+        .map(([name, keys]) => [
+          name,
+          Object.freeze(
+            Object.fromEntries(
+              [...keys, OTHER_KEY].map((key) => [
+                key,
+                recorded?.counters.get(keyedCounter(name, key)) ?? 0,
+              ]),
+            ),
           ),
-        ),
-      ]),
+        ]),
     ),
   );
 

@@ -81,9 +81,9 @@ export const findBrokenObservations = (summary: RunSummary): string | undefined 
     if (scenario.brokenObservations > 0) {
       return (
         `scenario "${scenario.name}" had ${String(scenario.brokenObservations)} broken observations — ` +
-        `a check or onResponse threw, returned something other than true/false, asked for a ` +
-        `metric name in stampede's own namespace, or used \`countKeyed\` on a counter the ` +
-        `scenario never declared. ` +
+        `a check or onResponse threw, returned something other than true/false, or named a ` +
+        `metric the scenario cannot write: stampede's own namespace, a \`countKeyed\` on a ` +
+        `counter that was never declared, or a \`count\` inside a declared counter's namespace. ` +
         `The run's numbers are real, but at least one of its claims is not.`
       );
     }

@@ -49,10 +49,10 @@
 >
 > **Not done:** not published to npm (`@leivaa21/stampede` is reserved, `publishConfig` is set) —
 > leivaa's call, not a task to pick up. **M3 is SSE / long-lived streaming**, open-ticket's contract
-> run 5, which it said in writing it is not waiting on. Two debts M2 surfaced are named rather than
-> forgotten: no way to express a bounded-cardinality counter (ask for 600 names and the run fails
-> telling you to use fewer), and `request()` documented as pure but not enforced. Keep this line
-> current after every merged slice.
+> run 5, which it said in writing it is not waiting on. Of the two debts M2 surfaced, one is paid:
+> M2.5 landed declared key spaces (D25-01), so a bounded-cardinality counter is now expressible.
+> `request()` is still documented as pure and not enforced — next slice. Keep this line current
+> after every merged slice.
 
 ## Identity
 
