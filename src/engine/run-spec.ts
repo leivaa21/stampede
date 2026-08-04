@@ -1,3 +1,4 @@
+import { keyedCounter, OTHER_KEY, RESERVED_METRIC_PREFIX } from "./metric-names.ts";
 import type { ResponseCheck, ResponseRecorder, TransportResponse } from "./ports.ts";
 import { assertShard, type Shard } from "./schedule-split.ts";
 import type { ScheduledScenario } from "./schedule.ts";
@@ -17,6 +18,13 @@ export interface Scenario<TRequest> extends ScheduledScenario {
   readonly requestFor: (ordinal: number) => TRequest;
   /** Named predicates over each response — see `config/types.ts` and D2-04. */
   readonly checks?: Readonly<Record<string, ResponseCheck>>;
+  /**
+   * Declared key spaces for keyed counters, by counter name (D25-01).
+   *
+   * Normalised to plain key lists here — the config's `{ keys: [...] }` wrapper exists so the
+   * declaration has somewhere to grow, and the engine does not need that shape.
+   */
+  readonly keyedCounters?: Readonly<Record<string, readonly string[]>>;
   /** Runs once per response, for counters and trends a check cannot express. */
   readonly onResponse?: (response: TransportResponse, record: ResponseRecorder) => void;
 }
@@ -78,6 +86,28 @@ export const assertRunSpec = <TRequest>(spec: RunSpec<TRequest>): void => {
     // buyer gets seat 0 silently for the whole run — the exact bug D2-02 exists to detect,
     // reintroduced through the door D2-02 opened.
     assertShard(spec.shard);
+  }
+
+  for (const scenario of spec.scenarios) {
+    // Refused once, here, rather than in each consumer. Three separate readers act on a declared
+    // key space — the reservation, the recorder, and the summary's projection — and guarding them
+    // one at a time is how a keyed counter named `stampede` came to be skipped by the reservation
+    // and still read back by the projection, publishing the engine's own drop and response counts
+    // as a user's table.
+    //
+    // **This door refuses only what would let a caller read stampede's own numbers.** The rest of
+    // the declaration rules — slot collisions between two declarations, key-space budgets, name
+    // lengths — belong to `config/assert-shape.ts`, because they are about a config being sensible
+    // rather than about the engine being safe. A programmatic caller can still declare two
+    // counters that share a slot; it publishes its own increments twice and nothing else.
+    for (const counter of Object.keys(scenario.keyedCounters ?? {})) {
+      if (keyedCounter(counter, OTHER_KEY).startsWith(RESERVED_METRIC_PREFIX)) {
+        throw new RangeError(
+          `Scenario "${scenario.name}" declares a keyed counter "${counter}" that would store into ` +
+            `"${RESERVED_METRIC_PREFIX}", which is reserved for stampede's own metrics`,
+        );
+      }
+    }
   }
 
   const seen = new Set<string>();

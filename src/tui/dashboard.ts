@@ -108,7 +108,7 @@ const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonl
       `    ⚠ broken: ${broken.map(([name, tally]) => `${name} ${String(tally.broken)}`).join(" · ")}`,
     );
   } else if (scenario.brokenObservations > 0) {
-    // onResponse threw, or a reserved name was refused — no check name to blame.
+    // `onResponse` threw, or a metric the scenario cannot write was named — no check to blame.
     lines.push(`    ⚠ ${String(scenario.brokenObservations)} broken observations`);
   }
   // Live, for the same reason drops are: this now *fails the run*, and finding out at the end that

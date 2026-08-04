@@ -1,4 +1,4 @@
-import { duration, ms, plain, rate } from "../report/format.ts";
+import { duration, ms, orderedKeys, plain, rate } from "../report/format.ts";
 import type { LatencySummary, RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 import type { Verdict } from "./thresholds.ts";
 
@@ -96,6 +96,13 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
   for (const [name, value] of Object.entries(scenario.counters)) {
     lines.push(`    counter     ${plain(name)} = ${String(value)}`);
   }
+  for (const [name, keys] of Object.entries(scenario.keyedCounters)) {
+    // One line per counter, keys inline: a declared key space is a *dimension*, and splitting it
+    // across N rows would bury the comparison between keys that is the only reason to declare it.
+    // `keyed` rather than `counter` so a reader can tell which map a number came from.
+    const parts = orderedKeys(keys).map((key) => `${plain(key)} ${String(keys[key] ?? 0)}`);
+    lines.push(`    keyed       ${plain(name)}  ${parts.join(" · ")}`);
+  }
   for (const [name, trend] of Object.entries(scenario.trends)) {
     lines.push(
       `    recorded    ${plain(name)}  p50 ${ms(trend.p50Ms)} · p99 ${ms(trend.p99Ms)} · max ${ms(trend.maxMs)}`,
@@ -103,7 +110,7 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
   }
   if (scenario.brokenObservations > 0) {
     lines.push(
-      `    ⚠ ${String(scenario.brokenObservations)} broken observations — a check or onResponse threw, returned a non-boolean, or asked for a reserved metric name`,
+      `    ⚠ ${String(scenario.brokenObservations)} broken observations — a check or onResponse threw, returned a non-boolean, or named a metric the scenario cannot write`,
     );
   }
   if (scenario.refusedRecordings > 0) {

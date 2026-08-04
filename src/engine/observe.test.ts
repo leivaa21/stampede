@@ -31,7 +31,7 @@ const observers = (
 ): ResponseObservers => ({
   checks: Object.entries(parts.checks ?? {}),
   onResponse: parts.onResponse,
-  recorder: recorderFor(metrics),
+  recorder: recorderFor(metrics, new Map()),
 });
 
 describe("checks", () => {
@@ -162,6 +162,99 @@ describe("async callbacks", () => {
     expect(unhandled).toEqual([]);
     // A promise is not a boolean, so it is a broken check like any other non-boolean.
     expect(metrics.counters.get(brokenCheckCounter("asyncCheck"))).toBe(1);
+  });
+
+  it("routes an undeclared key to `other` rather than creating a name", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["byStatus", new Set(["2xx"])]]));
+
+    recorder.countKeyed("byStatus", "2xx");
+    recorder.countKeyed("byStatus", "418");
+
+    expect(metrics.counters.get("byStatus.2xx")).toBe(1);
+    expect(metrics.counters.get("byStatus.other")).toBe(1);
+    // The undeclared key must not become a slot of its own — that is the cardinality bomb the
+    // whole declaration exists to defuse.
+    expect(metrics.counters.get("byStatus.418")).toBe(0);
+  });
+
+  it("refuses a counter the scenario never declared, and counts the refusal", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["byStatus", new Set(["2xx"])]]));
+
+    recorder.countKeyed("byRoute", "/health");
+
+    // There is no bounded slot to put it in, and inventing one is the thing being prevented. So it
+    // is refused — and counted, because a refusal nobody counts is a silent hole.
+    expect(metrics.counters.get("byRoute.other")).toBe(0);
+    expect(metrics.counters.get(EngineMetric.undeclaredCounters)).toBe(1);
+  });
+
+  it("cannot forge an engine number through a keyed counter", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["stampede", new Set(["dropped"])]]));
+    metrics.counters.inc(EngineMetric.dropped, 350);
+
+    recorder.countKeyed("stampede", "dropped", 1000);
+
+    // `count` has refused the reserved prefix since M2; the joined name has to be checked too, or
+    // a run with 350 real drops publishes 1350. The config loader refuses a `stampede`-prefixed
+    // counter name, but `recorderFor` is exported — the loader is not the only door.
+    expect(metrics.counters.get(EngineMetric.dropped)).toBe(350);
+    expect(metrics.counters.get(EngineMetric.reservedNameRefusals)).toBe(1);
+  });
+
+  it("refuses a plain counter that would write into a declared slot", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["byStatus", new Set(["5xx"])]]));
+
+    recorder.countKeyed("byStatus", "5xx");
+    recorder.count("byStatus.5xx", 7);
+
+    // Accepting it published seventy 5xx responses the target never sent, under a key a threshold
+    // reads — the target blamed for a naming collision.
+    expect(metrics.counters.get("byStatus.5xx")).toBe(1);
+    expect(metrics.counters.get(EngineMetric.collidingCounters)).toBe(1);
+  });
+
+  it("refuses any plain counter inside a declared namespace, not just its keys", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["byStatus", new Set(["2xx"])]]));
+
+    recorder.count("byStatus.404");
+    recorder.count("byStatus.500");
+
+    // `record.count(`byStatus.${res.status}`)` is the API D25-01 exists to reject: one name per
+    // status, filling the map, printed as `counter byStatus.404 = 1` above the keyed table where a
+    // reader takes it for a key of that dimension. Once `byStatus` is declared the whole namespace
+    // belongs to it — membership of the enumerated slots is not enough.
+    expect(metrics.counters.get("byStatus.404")).toBe(0);
+    expect(metrics.counters.get("byStatus.500")).toBe(0);
+    expect(metrics.counters.get(EngineMetric.collidingCounters)).toBe(2);
+  });
+
+  it("refuses a plain counter named exactly as a declared one", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["byStatus", new Set(["2xx"])]]));
+
+    recorder.count("byStatus", 5);
+
+    // Admitted, it printed two rows both called `byStatus` — one a plain total, one the keyed
+    // table — with nothing saying they are different things, while `types.ts` promises the plain
+    // one is `undefined`.
+    expect(metrics.counters.get("byStatus")).toBe(0);
+    expect(metrics.counters.get(EngineMetric.collidingCounters)).toBe(1);
+  });
+
+  it("leaves a counter that merely starts with a similar name alone", () => {
+    const metrics = scenario();
+    const recorder = recorderFor(metrics, new Map([["byStatus", new Set(["2xx"])]]));
+
+    recorder.count("byStatusCode", 4);
+
+    // The prefix is `byStatus.`, not `byStatus` — a differently-named counter is not a collision.
+    expect(metrics.counters.get("byStatusCode")).toBe(4);
+    expect(metrics.counters.get(EngineMetric.collidingCounters)).toBe(0);
   });
 
   it("leaves an ordinary return value alone", () => {

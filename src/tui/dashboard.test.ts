@@ -41,6 +41,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   scheduledLatencyMs: latency({ p99Ms: 64 }),
   scheduleLagMs: undefined,
   counters: {},
+  keyedCounters: {},
   checks: {},
   trends: {},
   brokenObservations: 0,

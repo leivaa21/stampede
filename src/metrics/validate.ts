@@ -55,6 +55,36 @@ export const MAX_DISTINCT_SCENARIOS = 64;
  */
 export const MAX_CHECKS_PER_SCENARIO = 64;
 
+/**
+ * Keys one declared counter may hold, before its implicit `other`.
+ *
+ * Each key is a reserved slot out of `MAX_DISTINCT_TALLIES`, so this is a per-counter guard on top
+ * of the whole-scenario budget `assert-shape.ts` computes. 64 is generous for a dimension anyone
+ * can read off a report — a key space bigger than that is a dimension nobody is going to skim.
+ */
+export const MAX_KEYS_PER_COUNTER = 64;
+
+/**
+ * Counter slots that must stay free for a scenario's own `record.count(...)`.
+ *
+ * Expressed as a floor on what is left rather than a ceiling on declarations, because that is the
+ * property actually wanted — and because "declarations may use half" overstates what a reader gets:
+ * with 256 declared, 64 broken-check slots and the engine's own, only 181 remain, not 256. A rule
+ * whose message has to fudge its own arithmetic is a rule stated wrong.
+ *
+ * Without a floor, a config declaring exactly the budget starts, has every plain `count` refused,
+ * and is told at the end of the run to use fewer names — the diagnosis-without-a-remedy declared
+ * key spaces exist to remove, aimed at someone who bounded their cardinality perfectly.
+ *
+ * **128 is a judgement call, stated rather than implied.** It is a quarter of the budget: enough
+ * plain counters that no realistic config notices the floor, while still leaving room to declare
+ * several wide key spaces. Its one sharp edge is a config that declares nearly everything and uses
+ * no plain counters at all — legal, refused anyway, and told to shrink its largest declaration
+ * when it did nothing wrong. Raising the floor makes that worse and the common case better; this
+ * is where the line sits until a real config argues otherwise.
+ */
+export const MIN_FREE_TALLIES_PER_SCENARIO = 128;
+
 export const assertMetricName = (name: string, kind: string): void => {
   if (name.length === 0) {
     throw new RangeError(`A ${kind} name must not be empty`);

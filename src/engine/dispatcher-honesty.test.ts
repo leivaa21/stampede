@@ -14,7 +14,8 @@ import {
 import { burst, constantRate } from "./arrival-profiles.ts";
 import type { Transport, TransportResponse } from "./ports.ts";
 
-import { EngineMetric } from "./metric-names.ts";
+import { MAX_DISTINCT_TALLIES } from "../metrics/validate.ts";
+import { EngineMetric, ENGINE_COUNTERS } from "./metric-names.ts";
 /** The reference target's answer, when it is answering. */
 const okResponse = (): TransportResponse => ({
   status: 200,
@@ -237,9 +238,210 @@ describe("user code cannot starve the engine's own bookkeeping", () => {
     expect(reads.responseCount + reads.errorCount + reads.abandonedCount).toBe(
       reads.dispatchedCount,
     );
-    // And the refusals themselves are published rather than absorbed: 600 names asked for, 512
-    // slots in the map, nine of them already claimed by the engine plus one for the check.
-    expect(reads.refusedRecordings).toBe(600 - (512 - 10));
+    // And the refusals themselves are published rather than absorbed. Derived from the constants
+    // rather than written out: hardcoding it made this test the thing that broke when a metric was
+    // added, which says nothing about the behaviour under test.
+    const reservedByTheEngine = ENGINE_COUNTERS.length + 1; // + the one declared check
+    expect(reads.refusedRecordings).toBe(600 - (MAX_DISTINCT_TALLIES - reservedByTheEngine));
+  });
+
+  it("keeps counting this slice's own refusals after the budget is full", async () => {
+    // `undeclaredCounters` and `collidingCounters` first fire when user code misbehaves — which is
+    // after a run's worth of user names exist. Starve either and the refusals stop reaching
+    // `brokenObservations`, and a run this slice makes fail goes green with the increments gone.
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ clock });
+
+    let names = 0;
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: burst({ count: 700 }),
+            requestFor: () => ({ label: "reads" }),
+            keyedCounters: { byOutcome: ["declared"] },
+            onResponse: (_response, record) => {
+              names += 1;
+              if (names <= 600) {
+                record.count(`seat-${String(names)}`);
+                return;
+              }
+              record.countKeyed("neverDeclared", "x"); // -> undeclaredCounters
+              record.count("byOutcome.sneaky"); // -> collidingCounters
+              record.count("stampede.dropped"); // -> reservedNameRefusals
+              throw new Error("and the observer itself"); // -> brokenObservers
+            },
+          },
+        ],
+        maxInFlight: 1_000,
+        drainTimeoutMs: 1_000,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    expect(reads.responseCount).toBe(700);
+    // 100 of each of the four, and all four have to reach the verdict.
+    expect(reads.brokenObservations).toBe(400);
+  });
+
+  it("keeps counting transport failures after the budget is full", async () => {
+    // `errors` increments in the rejection handler — the same response path `onResponse` runs on —
+    // so a burst orders it fine. Unreserved, a run where 100 connections were refused reports zero
+    // transport failures and the `N failed` shortfall goes silent for a target that died.
+    //
+    // `requestErrors` needs a paced profile rather than a burst — it increments inside `dispatch`,
+    // and a burst issues every request before any response lands, so no user name exists yet. The
+    // test below does that; every counter on `ENGINE_COUNTERS` is pinned between the two.
+    const clock = new FakeClock();
+    let sent = 0;
+    const transport: Transport<FakeRequest> = {
+      send: () => {
+        sent += 1;
+        return sent <= 600 ? Promise.resolve(okResponse()) : Promise.reject(new Error("refused"));
+      },
+    };
+
+    let names = 0;
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: burst({ count: 700 }),
+            requestFor: () => ({ label: "reads" }),
+            onResponse: (_response, record) => {
+              names += 1;
+              record.count(`seat-${String(names)}`);
+            },
+          },
+        ],
+        maxInFlight: 1_000,
+        drainTimeoutMs: 1_000,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    expect(reads.responseCount).toBe(600);
+    expect(reads.errorCount).toBe(100);
+  });
+
+  it("keeps counting requests that could not be built after the budget is full", async () => {
+    // The last engine counter without a starvation pin. It increments inside `dispatch`, so it
+    // needs dispatches interleaved with responses — a paced profile, where ordinal 900 goes out
+    // long after 600 responses have filled the name map. Unreserved, a config whose `request()`
+    // started throwing reports zero not-built and the accounting identity silently stops holding.
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ clock });
+
+    let names = 0;
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: constantRate({ ratePerSecond: 1_000, durationMs: 1_000 }),
+            requestFor: (ordinal) => {
+              if (ordinal >= 900) {
+                throw new Error("no seat for that ordinal");
+              }
+              return { label: "reads" };
+            },
+            onResponse: (_response, record) => {
+              names += 1;
+              record.count(`seat-${String(names)}`);
+            },
+          },
+        ],
+        maxInFlight: 1_000,
+        drainTimeoutMs: 1_000,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    expect(reads.requestErrorCount).toBe(100);
+    expect(reads.dispatchedCount + reads.droppedCount + reads.requestErrorCount).toBe(
+      reads.scheduledCount,
+    );
+  });
+
+  it("keeps counting a declared key that first fires after the budget is full", async () => {
+    // The mechanism D25-01's whole argument rests on: every declared slot is reserved before the
+    // run, exactly like the engine's own counters. Without the reservation the declared slot is
+    // refused once user names fill the map, and `keyedCountersOf`'s `?? 0` then publishes a
+    // confident zero for a key that really was incremented — a number nobody would question.
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ clock });
+
+    let names = 0;
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: burst({ count: 700 }),
+            requestFor: () => ({ label: "reads" }),
+            keyedCounters: { byOutcome: ["late"] },
+            onResponse: (_response, record) => {
+              names += 1;
+              // 600 distinct names first — past the 512 cap — and only then the declared key.
+              if (names <= 600) {
+                record.count(`seat-${String(names)}`);
+                return;
+              }
+              record.countKeyed("byOutcome", "late");
+            },
+          },
+        ],
+        maxInFlight: 1_000,
+        drainTimeoutMs: 1_000,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    expect(reads.responseCount).toBe(700);
+    expect(reads.keyedCounters.byOutcome).toEqual({ late: 100, other: 0 });
+  });
+
+  it("keeps `other` when a programmatic run declares more keys than the budget holds", async () => {
+    // The load-time budget check makes this unreachable through the CLI, but `runDispatch` is
+    // exported — and `other` is the slot that must survive, because every undeclared key lands
+    // there and losing it drops the increments the bucket exists to catch.
+    const clock = new FakeClock();
+    const transport = new FakeTransport({ clock });
+    const tooManyKeys = Array.from({ length: 600 }, (_, i) => `k${String(i)}`);
+
+    const outcome = await runToCompletion(
+      {
+        scenarios: [
+          {
+            name: "reads",
+            profile: burst({ count: 10 }),
+            requestFor: () => ({ label: "reads" }),
+            keyedCounters: { byThing: tooManyKeys },
+            onResponse: (_response, record) => {
+              record.countKeyed("byThing", "undeclared-so-lands-in-other");
+            },
+          },
+        ],
+        maxInFlight: 50,
+        drainTimeoutMs: 1_000,
+      },
+      clock,
+      transport,
+    );
+    const reads = summaryOf(outcome, "reads");
+
+    expect(reads.responseCount).toBe(10);
+    expect(reads.keyedCounters.byThing?.other).toBe(10);
   });
 
   it("keeps attributing a check that only starts breaking once the budget is full", async () => {

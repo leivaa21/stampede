@@ -41,6 +41,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   scheduledLatencyMs: latency(),
   scheduleLagMs: undefined,
   counters: {},
+  keyedCounters: {},
   checks: {},
   trends: {},
   brokenObservations: 0,
@@ -244,6 +245,25 @@ describe("renderSummary", () => {
     // writes to a CI log. `\r` alone overwrites the line above; an ANSI escape can print a verdict.
     const text = renderSummary(
       summaryOf(scenario({ counters: { "\u001b[2Kfake\rPASS everything": 1 } })),
+    );
+
+    expect(text).not.toContain("\u001b");
+    expect(text).not.toContain("\r");
+  });
+
+  it("prints a declared key space on one line, keys inline", () => {
+    // A declared key space is a *dimension*, and the only reason to declare it is to compare its
+    // keys — splitting them across rows buries the comparison.
+    const text = renderSummary(
+      summaryOf(scenario({ keyedCounters: { byStatus: { "2xx": 40, "5xx": 2, other: 0 } } })),
+    );
+
+    expect(text).toContain("keyed       byStatus  2xx 40 · 5xx 2 · other 0");
+  });
+
+  it("cannot have a target-chosen key rewrite the terminal", () => {
+    const text = renderSummary(
+      summaryOf(scenario({ keyedCounters: { "\u001b[2Kfake": { "a\rb": 1 } } })),
     );
 
     expect(text).not.toContain("\u001b");

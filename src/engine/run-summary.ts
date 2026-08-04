@@ -5,7 +5,13 @@ import type {
   TrendSummary,
 } from "../metrics/index.ts";
 import { compareNames } from "../metrics/by-name.ts";
-import { brokenCheckCounter, EngineMetric, RESERVED_METRIC_PREFIX } from "./metric-names.ts";
+import {
+  brokenCheckCounter,
+  EngineMetric,
+  keyedCounter,
+  OTHER_KEY,
+  RESERVED_METRIC_PREFIX,
+} from "./metric-names.ts";
 
 const BROKEN_CHECK_PREFIX = `${RESERVED_METRIC_PREFIX}brokenCheck.`;
 
@@ -124,6 +130,16 @@ export interface ScenarioRunSummary {
   readonly checks: Readonly<
     Record<string, { readonly passed: number; readonly failed: number; readonly broken: number }>
   >;
+  /**
+   * Counters whose key space the scenario declared, nested by counter name (D25-01).
+   *
+   * Stored flat (`byStatus.5xx`) so the merge stays the exact elementwise addition it always was,
+   * and projected back into the shape the config declared so a threshold reads
+   * `keyedCounters.byStatus["5xx"]` rather than a stringly-joined key. Every declared key is
+   * present — including `other` — because the slots were reserved before the run, so a key that
+   * never fired reads `0` rather than being absent.
+   */
+  readonly keyedCounters: Readonly<Record<string, Readonly<Record<string, number>>>>;
   /** Distributions `onResponse` recorded — contract run 4's `behindMs` lands here. */
   readonly trends: Readonly<Record<string, TrendSummary>>;
   /**
@@ -161,6 +177,14 @@ export interface RunSummary {
 /** Per-scenario facts only the dispatcher saw — everything else is read back out of the metrics. */
 export interface ScenarioProgress {
   readonly name: string;
+  /**
+   * The key spaces this scenario declared, so the summary can project flat storage back into them.
+   *
+   * Carried on progress rather than read from the config because `summariseRun` runs on the *main
+   * thread over merged inputs* and never sees the config — and plain arrays of strings cross the
+   * worker boundary by structured clone without any special handling.
+   */
+  readonly keyedCounters: Readonly<Record<string, readonly string[]>>;
   readonly scheduledCount: number;
   readonly requestedDurationMs: number;
   /** Elapsed ms at the last dispatch, or `undefined` if the scenario never dispatched anything. */
@@ -186,12 +210,60 @@ const ratePerSecond = (count: number, spanMs: number): number | undefined =>
  */
 const isUserMetric = (name: string): boolean => !name.startsWith(RESERVED_METRIC_PREFIX);
 
-const userCounters = (recorded: ScenarioMetrics | undefined): Readonly<Record<string, number>> =>
-  Object.freeze(
+/**
+ * The scenario's plain counters — everything the engine did not reserve, and nothing keyed.
+ *
+ * Keyed slots are excluded rather than left in as `byStatus.5xx`: they are reported nested by
+ * `keyedCountersOf` below, and listing them twice would let a reader add the same number into two
+ * totals. Excluded *by declaration*, not by looking for a dot — a plain counter is allowed to have
+ * one in its name.
+ */
+const userCounters = (
+  recorded: ScenarioMetrics | undefined,
+  declared: Readonly<Record<string, readonly string[]>>,
+): Readonly<Record<string, number>> => {
+  const keyed = new Set(
+    Object.entries(declared).flatMap(([name, keys]) =>
+      [...keys, OTHER_KEY].map((key) => keyedCounter(name, key)),
+    ),
+  );
+  return Object.freeze(
     Object.fromEntries(
       [...(recorded?.counters.names ?? [])]
-        .filter(isUserMetric)
+        .filter((name) => isUserMetric(name) && !keyed.has(name))
         .map((name) => [name, recorded?.counters.get(name) ?? 0]),
+    ),
+  );
+};
+
+/**
+ * Declared keyed counters, projected back into the shape the config wrote.
+ *
+ * Driven by the *declaration*, not by what was recorded, so every declared key is present at `0`
+ * rather than absent — the same reason `metrics/` publishes a reserved counter that never fired.
+ * A threshold reading `byStatus["5xx"] === 0` should mean "none happened", not "the key is missing".
+ */
+const keyedCountersOf = (
+  recorded: ScenarioMetrics | undefined,
+  declared: Readonly<Record<string, readonly string[]>>,
+): Readonly<Record<string, Readonly<Record<string, number>>>> =>
+  Object.freeze(
+    Object.fromEntries(
+      // Sorted, like every other name-keyed map on this summary. Declaration order would also be
+      // deterministic, but it would read differently from the maps printed beside it.
+      Object.entries(declared)
+        .sort(([a], [b]) => compareNames(a, b))
+        .map(([name, keys]) => [
+          name,
+          Object.freeze(
+            Object.fromEntries(
+              [...keys, OTHER_KEY].map((key) => [
+                key,
+                recorded?.counters.get(keyedCounter(name, key)) ?? 0,
+              ]),
+            ),
+          ),
+        ]),
     ),
   );
 
@@ -281,14 +353,23 @@ const summariseScenario = (
             dispatchedCount,
             Math.max(progress.requestedDurationMs, progress.lastDispatchElapsedMs ?? 0),
           ),
-    counters: userCounters(recorded),
+    counters: userCounters(recorded, progress.keyedCounters),
+    keyedCounters: keyedCountersOf(recorded, progress.keyedCounters),
     checks: userChecks(recorded),
     trends: userTrends(recorded),
     refusedRecordings: recorded?.refusedCount ?? 0,
     brokenObservations:
       (recorded?.counters.get(EngineMetric.brokenChecks) ?? 0) +
       (recorded?.counters.get(EngineMetric.brokenObservers) ?? 0) +
-      (recorded?.counters.get(EngineMetric.reservedNameRefusals) ?? 0),
+      (recorded?.counters.get(EngineMetric.reservedNameRefusals) ?? 0) +
+      // A `countKeyed` naming a counter the config never declared is a claim stampede refused, and
+      // the refusal has to reach the verdict or it is the silent hole the counter's own docblock
+      // says it exists to prevent. Found by running it: the run exited 0 having discarded every
+      // increment for an undeclared counter.
+      (recorded?.counters.get(EngineMetric.undeclaredCounters) ?? 0) +
+      // A plain `count` that landed on a declared slot: refused, and the run has to say so or the
+      // increments vanish silently — the same silent hole, one door over.
+      (recorded?.counters.get(EngineMetric.collidingCounters) ?? 0),
     latencyMs: toLatencySummary(recorded?.findHistogram(EngineMetric.latency)?.summary()),
     scheduledLatencyMs: toLatencySummary(
       recorded?.findHistogram(EngineMetric.scheduledLatency)?.summary(),

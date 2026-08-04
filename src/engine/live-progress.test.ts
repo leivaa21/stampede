@@ -137,6 +137,32 @@ describe("checks and counters across real threads", () => {
     expect(reads?.brokenObservations).toBe(80);
   }, 30_000);
 
+  it("merges a declared keyed counter across four threads, `other` included", async () => {
+    // D1-02's property, asserted for the new metric kind rather than assumed. A keyed counter is a
+    // reservation pattern over the same map, so if the merge were anything other than elementwise
+    // addition this is where four shards would disagree with one.
+    const outcome = await runPool({
+      modulePath: FIXTURE,
+      workerCount: 4,
+      maxInFlight: 300,
+      drainTimeoutMs: 2_000,
+      snapshotIntervalMs: 25,
+      setupState: { kind: "burst", count: 120, url: target.url, withKeyedCounter: true },
+    });
+
+    const reads = outcome.summary.scenarios[0];
+
+    // Absolutes from the config, not `responseCount` — that is itself merged by the same
+    // `Counters.merge`, so a merge of `Math.max` would leave both sides agreeing at one shard's
+    // numbers and this claim green. 120 in a burst over 4 shards is 30 each, alternating from 1.
+    // The undeclared key really lands in `other` rather than creating a name of its own, which is
+    // the bound the whole feature exists to provide.
+    expect(reads?.keyedCounters.byOutcome).toEqual({ declared: 60, other: 60 });
+    // And it is reported *only* nested — a slot listed in both maps could be added into a total
+    // twice by a reader who trusted either one.
+    expect(reads?.counters).toEqual({});
+  }, 30_000);
+
   it("merges a user counter to exactly the response count", async () => {
     const outcome = await runPool({
       modulePath: FIXTURE,

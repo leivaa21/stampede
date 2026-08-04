@@ -1,5 +1,11 @@
 import type { ScenarioMetrics } from "../metrics/index.ts";
-import { brokenCheckCounter, EngineMetric, RESERVED_METRIC_PREFIX } from "./metric-names.ts";
+import {
+  brokenCheckCounter,
+  EngineMetric,
+  keyedCounter,
+  OTHER_KEY,
+  RESERVED_METRIC_PREFIX,
+} from "./metric-names.ts";
 import type { ResponseRecorder, TransportResponse } from "./ports.ts";
 
 /**
@@ -61,22 +67,69 @@ const neutralise = (value: unknown): boolean => {
  * requests that never happened — in a tool whose whole pitch is that its numbers are honest.
  * Data-derived, so it is refused and counted rather than thrown (`metrics/validate.ts`'s rule).
  */
-export const recorderFor = (metrics: ScenarioMetrics): ResponseRecorder => ({
-  count: (name, by = 1) => {
-    if (name.startsWith(RESERVED_METRIC_PREFIX)) {
-      metrics.counters.inc(EngineMetric.reservedNameRefusals);
-      return;
-    }
-    metrics.counters.inc(name, by);
-  },
-  recordMs: (name, valueMs) => {
-    if (name.startsWith(RESERVED_METRIC_PREFIX)) {
-      metrics.counters.inc(EngineMetric.reservedNameRefusals);
-      return;
-    }
-    metrics.trend(name).recordMs(valueMs);
-  },
-});
+export const recorderFor = (
+  metrics: ScenarioMetrics,
+  /** Declared key spaces, by counter name. Every key here already has a reserved slot. */
+  keyed: ReadonlyMap<string, ReadonlySet<string>>,
+): ResponseRecorder => {
+  // Once a scenario declares `byStatus`, the whole `byStatus.` namespace belongs to that
+  // dimension — a *prefix*, not the enumerated slots.
+  //
+  // Membership alone caught `record.count("byStatus.5xx", 7)` writing into a declared key, which
+  // published seventy 5xx responses the target never sent. It did not catch
+  // `record.count(\`byStatus.${res.status}\`)`, which is the API D25-01 exists to reject: it counts,
+  // it fills the map one name per status, and the report prints `counter byStatus.404 = 1` above
+  // `keyed byStatus  2xx 1 · other 0` — where a reader takes `byStatus.404` for a key of that
+  // dimension, while `other` reads 0 and the declaration bought nothing.
+  // Both the name and its namespace: `record.count("byStatus")` in a scenario declaring
+  // `byStatus` printed two rows both called `byStatus` — one a plain total, one the keyed table —
+  // with nothing saying they are different things, and `types.ts` promising the plain one is
+  // `undefined`. The declared name is the most obviously owned thing in its own namespace.
+  const declaredNames = new Set(keyed.keys());
+  const declaredPrefixes = [...keyed.keys()].map((name) => `${name}.`);
+
+  return {
+    count: (name, by = 1) => {
+      if (name.startsWith(RESERVED_METRIC_PREFIX)) {
+        metrics.counters.inc(EngineMetric.reservedNameRefusals);
+        return;
+      }
+      if (declaredNames.has(name) || declaredPrefixes.some((prefix) => name.startsWith(prefix))) {
+        metrics.counters.inc(EngineMetric.collidingCounters);
+        return;
+      }
+      metrics.counters.inc(name, by);
+    },
+    countKeyed: (name, key, by = 1) => {
+      const keys = keyed.get(name);
+      if (keys === undefined) {
+        // A counter the scenario never declared is a claim the config did not make, and there is
+        // no bounded slot to put it in — so it is refused and counted, not invented.
+        metrics.counters.inc(EngineMetric.undeclaredCounters);
+        return;
+      }
+      const slot = keyedCounter(name, keys.has(key) ? key : OTHER_KEY);
+      // The same guard `count` has, on the *joined* name — without it
+      // `countKeyed("stampede", "dropped", 1000)` lands in `stampede.dropped` and a run with 350
+      // real drops publishes 1350. The config loader refuses a `stampede`-prefixed counter name,
+      // but `recorderFor` is exported, so the loader is not the only door.
+      if (slot.startsWith(RESERVED_METRIC_PREFIX)) {
+        metrics.counters.inc(EngineMetric.reservedNameRefusals);
+        return;
+      }
+      // An undeclared *key* is the ordinary case this feature exists for: the key came from a
+      // response, the config could not enumerate every value, and `other` is where it belongs.
+      metrics.counters.inc(slot, by);
+    },
+    recordMs: (name, valueMs) => {
+      if (name.startsWith(RESERVED_METRIC_PREFIX)) {
+        metrics.counters.inc(EngineMetric.reservedNameRefusals);
+        return;
+      }
+      metrics.trend(name).recordMs(valueMs);
+    },
+  };
+};
 
 /** Records a check as broken: counted against its own name, and against the scenario's total. */
 const recordBroken = (metrics: ScenarioMetrics, name: string): void => {

@@ -66,6 +66,17 @@ export interface ResponseRecorder {
   /** Adds to a named counter for this scenario. `by` defaults to 1. */
   readonly count: (name: string, by?: number) => void;
   /**
+   * Adds to one key of a counter whose key space the scenario declared.
+   *
+   * A key that was not declared lands in that counter's `other` bucket rather than being dropped
+   * or creating a name of its own — which is the whole point: the cardinality is bounded before
+   * the run starts, so a key built from response data cannot fill the map.
+   *
+   * Naming a counter the scenario never declared is refused and counted as a broken observation,
+   * for the same reason a reserved metric name is: it is a claim the config did not make.
+   */
+  readonly countKeyed: (name: string, key: string, by?: number) => void;
+  /**
    * Records a number into a named distribution — percentiles, not just a total.
    *
    * Milliseconds by name, because that is what every distribution in this tool is measured in and

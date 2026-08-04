@@ -31,6 +31,12 @@ export interface FixtureSetupState {
   readonly withChecks?: boolean;
   /** Count one `seen` per response, so the pool tests can prove counters merge across threads. */
   readonly withCounter?: boolean;
+  /**
+   * Declare a keyed counter and route every response through it, half to a declared key and half
+   * to one that is not — so the pool tests can prove the *keyed* slots merge, and that `other`
+   * collects what the declaration missed.
+   */
+  readonly withKeyedCounter?: boolean;
   /** Send each request to `/seat-<ordinal>`, so the target records which ordinals it really saw. */
   readonly varyByOrdinal?: boolean;
 }
@@ -50,6 +56,9 @@ if (state.failOnShard !== undefined && state.failOnShard === assignment?.shardIn
   throw new Error(`fixture refused to load on shard ${String(assignment.shardIndex)}`);
 }
 
+/** Per worker, which is all this needs: each shard alternates within its own responses. */
+let seenInThisWorker = 0;
+
 export default defineConfig<FixtureSetupState>({
   scenarios: {
     reads: {
@@ -68,6 +77,21 @@ export default defineConfig<FixtureSetupState>({
         ? {
             onResponse: (_response: unknown, record: { count: (name: string) => void }): void => {
               record.count("seen");
+            },
+          }
+        : {}),
+      ...(state.withKeyedCounter === true
+        ? {
+            counters: { byOutcome: { keys: ["declared"] } },
+            onResponse: (
+              _response: unknown,
+              record: { countKeyed: (name: string, key: string) => void },
+            ): void => {
+              // Alternating, not keyed off the status: the counting server answers 200 to
+              // everything, so branching on the response would send every increment to the
+              // declared slot and leave `other` unexercised while looking like it was covered.
+              seenInThisWorker += 1;
+              record.countKeyed("byOutcome", seenInThisWorker % 2 === 0 ? "declared" : "surprise");
             },
           }
         : {}),

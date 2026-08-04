@@ -1,3 +1,6 @@
+import { OTHER_KEY } from "../engine/metric-names.ts";
+import { compareNames } from "../metrics/by-name.ts";
+
 /**
  * Formatting shared by the terminal renderer and the markdown report.
  *
@@ -45,6 +48,27 @@ export const rate = (value: number | undefined, direction: "requested" | "achiev
  */
 // eslint-disable-next-line no-control-regex
 export const plain = (text: string): string => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+
+/**
+ * A declared key space's keys, in a deterministic order, with `other` last.
+ *
+ * Sorted by name, like every other name-keyed map this repo publishes — `counters`, `checks` and
+ * `trends` all arrive sorted from `run-summary.ts`, and a key space reading in a different order
+ * from the maps beside it is a difference with no meaning behind it.
+ *
+ * Not for byte-identity: a `Record` hoists integer-like keys and sorts them numerically, but it
+ * does so deterministically, so declaration order was already reproducible. What sorting buys is
+ * that `["500", "200"]` and `["200", "500"]` render the same, and that `other` — the bucket rather
+ * than one of the keys — is last whatever it would sort as.
+ *
+ * Shared by both renderers so the terminal and the report cannot disagree about an ordering.
+ */
+export const orderedKeys = (keys: Readonly<Record<string, number>>): readonly string[] => [
+  ...Object.keys(keys)
+    .filter((key) => key !== OTHER_KEY)
+    .sort(compareNames),
+  ...Object.keys(keys).filter((key) => key === OTHER_KEY),
+];
 
 /**
  * Makes a user-supplied string safe to put in a markdown table cell.

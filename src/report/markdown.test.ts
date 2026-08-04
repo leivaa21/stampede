@@ -49,6 +49,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   scheduledLatencyMs: latency(),
   scheduleLagMs: undefined,
   counters: {},
+  keyedCounters: {},
   checks: {},
   trends: {},
   brokenObservations: 0,
@@ -280,6 +281,18 @@ describe("renderMarkdownReport", () => {
     );
 
     expect(text).toContain("| **BROKEN** | parsesBody | 460 | 0 | 40 |\n");
+  });
+
+  it("publishes a declared key space, with `other` last", () => {
+    const text = render(
+      summaryOf(scenario({ keyedCounters: { byStatus: { other: 3, "5xx": 2, "2xx": 40 } } })),
+    );
+
+    // `other` is the bucket rather than one of the keys, so it sorts last however it was declared.
+    expect(text).toContain("| byStatus | count |");
+    expect(text).toContain("| 2xx | 40 |");
+    expect(text).toContain("| 5xx | 2 |");
+    expect(text.indexOf("| other | 3 |")).toBeGreaterThan(text.indexOf("| 5xx | 2 |"));
   });
 
   it("says when recordings were refused, so a missing counter is not read as a zero", () => {

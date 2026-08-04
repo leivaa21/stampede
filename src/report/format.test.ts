@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cell, plain } from "./format.ts";
+import { cell, orderedKeys, plain } from "./format.ts";
 
 /**
  * The two functions that stand between a target's bytes and a published document.
@@ -52,5 +52,27 @@ describe("cell", () => {
 
   it("strips control characters too, so a pasted report is not a second-class surface", () => {
     expect(cell(`${ESC}[31mred`)).toBe("[31mred");
+  });
+});
+
+describe("orderedKeys", () => {
+  it("puts `other` last however it was declared", () => {
+    expect(orderedKeys({ other: 1, zeta: 2, alpha: 3 })).toEqual(["alpha", "zeta", "other"]);
+  });
+
+  it("sorts by name, not by the order the object happens to iterate", () => {
+    // Integer-like keys iterate numerically whatever the insertion order, so a test using only
+    // those proves a property of JavaScript rather than of this function. Mixed keys are what
+    // distinguish sorting from passing `Object.keys` through.
+    expect(orderedKeys({ zeta: 1, "500": 2, alpha: 3, "200": 4 })).toEqual([
+      "200",
+      "500",
+      "alpha",
+      "zeta",
+    ]);
+  });
+
+  it("omits `other` when it is not there", () => {
+    expect(orderedKeys({ b: 1, a: 2 })).toEqual(["a", "b"]);
   });
 });

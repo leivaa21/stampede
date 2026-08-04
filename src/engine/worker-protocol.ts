@@ -66,16 +66,44 @@ const countAt = (value: unknown, at: string): number => {
   return value;
 };
 
+/**
+ * The declared key spaces, narrowed like everything else that crosses the boundary.
+ *
+ * Narrowed rather than cast because the summary *drives its projection from this* — a malformed
+ * shape here would not throw, it would silently publish a keyed counter with no keys, and the
+ * `0`s a threshold reads would look like "none happened" rather than "nothing was parsed".
+ */
+const parseKeyedCounters = (
+  value: unknown,
+  at: string,
+): Readonly<Record<string, readonly string[]>> => {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new TypeError(`${at} must be an object`);
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([name, keys]) => {
+      if (!Array.isArray(keys) || keys.some((key) => typeof key !== "string")) {
+        throw new TypeError(`${at}.${name} must be an array of strings`);
+      }
+      return [name, keys as readonly string[]];
+    }),
+  );
+};
+
 const parseScenarioProgress = (value: unknown, at: string): ScenarioProgress => {
   if (!isRecord(value)) {
     throw new TypeError(`${at} must be an object`);
   }
-  const { name, scheduledCount, requestedDurationMs, lastDispatchElapsedMs } = value;
+  const { name, keyedCounters, scheduledCount, requestedDurationMs, lastDispatchElapsedMs } = value;
   if (typeof name !== "string") {
     throw new TypeError(`${at}.name must be a string`);
   }
   return {
     name,
+    keyedCounters: parseKeyedCounters(keyedCounters, `${at}.keyedCounters`),
     scheduledCount: countAt(scheduledCount, `${at}.scheduledCount`),
     requestedDurationMs: finiteAt(requestedDurationMs, `${at}.requestedDurationMs`),
     lastDispatchElapsedMs:

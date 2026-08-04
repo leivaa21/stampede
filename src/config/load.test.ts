@@ -164,6 +164,162 @@ await loadConfig(${JSON.stringify(file)}).catch((error) => {
       );
     });
 
+    it("refuses declarations that would leave no room for plain counters", async () => {
+      // At startup with the arithmetic shown, rather than as "recordings refused" twenty minutes
+      // later. 7 × 61 slots = 427, plus the engine's own, leaves well under the floor.
+      const keys = Array.from({ length: 60 }, (_, i) => `"k${String(i)}"`).join(", ");
+      const many = Array.from({ length: 7 }, (_, i) => `c${String(i)}: { keys: [${keys}] }`).join(
+        ", ",
+      );
+
+      await expect(
+        loadConfig(writeConfig(withScenario(`counters: { ${many} }, onResponse: () => undefined`))),
+      ).rejects.toThrow(
+        /would leave -?\d+ of 512 counter slots free .*at least 128 must stay free/s,
+      );
+    });
+
+    it("names the biggest declaration to shrink, rather than saying 'use fewer names'", async () => {
+      const wide = Array.from({ length: 60 }, (_, i) => `"k${String(i)}"`).join(", ");
+      const rest = Array.from({ length: 6 }, (_, i) => `c${String(i)}: { keys: [${wide}] }`).join(
+        ", ",
+      );
+      const widest = Array.from({ length: 64 }, (_, i) => `"w${String(i)}"`).join(", ");
+
+      await expect(
+        loadConfig(
+          writeConfig(
+            withScenario(
+              `counters: { ${rest}, widest: { keys: [${widest}] } }, onResponse: () => undefined`,
+            ),
+          ),
+        ),
+      ).rejects.toThrow(/The largest declaration is "widest" at 65; shrink that first/);
+    });
+
+    it("refuses a declaration with no `onResponse` to write to it", async () => {
+      // Otherwise the run publishes `2xx 0 · 5xx 0 · other 0` and a threshold reading `["5xx"] ===
+      // 0` passes green about a dimension nothing could ever have touched.
+      await expect(
+        loadConfig(writeConfig(withScenario(`counters: { byStatus: { keys: ["2xx"] } }`))),
+      ).rejects.toThrow(/declares `counters` but has no `onResponse`/);
+    });
+
+    it("refuses a counter name that would store into stampede's own namespace", async () => {
+      // `assertName` refuses `stampede.` with the dot; the bare name is a *prefix*, and its slots
+      // would be the engine's own counters.
+      await expect(
+        loadConfig(
+          writeConfig(
+            withScenario(
+              `counters: { stampede: { keys: ["dropped"] } }, onResponse: () => undefined`,
+            ),
+          ),
+        ),
+      ).rejects.toThrow(/would store into `stampede\.`, which is reserved/);
+    });
+
+    it("accepts an empty `counters` without an `onResponse`", async () => {
+      // Nothing is declared, so nothing would publish a confident zero — the no-writer refusal is
+      // about declared keys, and a message about keys that do not exist is a message about nothing.
+      const config = await loadConfig(writeConfig(withScenario(`counters: {}`)));
+
+      expect(config.scenarios.reads?.counters).toEqual({});
+    });
+
+    it("refuses a counter name too long for its implicit `other` slot", async () => {
+      // 116 + ".other" is 122, over the 120-character limit — so every key loads fine and the
+      // bucket that proves the key space is closed gets silently refused at runtime.
+      const long = "c".repeat(116);
+      await expect(
+        loadConfig(
+          writeConfig(
+            withScenario(`counters: { "${long}": { keys: ["x"] } }, onResponse: () => undefined`),
+          ),
+        ),
+      ).rejects.toThrow(/is too long — a keyed counter's name may be at most 114 characters/);
+    });
+
+    it("refuses two declarations whose implicit `other` slots collide", async () => {
+      await expect(
+        loadConfig(
+          writeConfig(
+            withScenario(
+              `counters: { a: { keys: ["b.other"] }, "a.b": { keys: ["x"] } }, onResponse: () => undefined`,
+            ),
+          ),
+        ),
+      ).rejects.toThrow(/both store into "a\.b\.other"/);
+    });
+
+    it("refuses two declarations that would store into one slot", async () => {
+      // `{ a: { keys: ["b.c"] } }` and `{ "a.b": { keys: ["c"] } }` both name `a.b.c`, so ten
+      // increments would be published as twenty across two counters in the same report.
+      await expect(
+        loadConfig(
+          writeConfig(
+            withScenario(
+              `counters: { a: { keys: ["b.c"] }, "a.b": { keys: ["c"] } }, onResponse: () => undefined`,
+            ),
+          ),
+        ),
+      ).rejects.toThrow(/both store into "a\.b\.c"/);
+    });
+
+    it("refuses a declared `other`, because it is implicit", async () => {
+      await expect(
+        loadConfig(
+          writeConfig(
+            withScenario(
+              `counters: { byStatus: { keys: ["2xx", "other"] } }, onResponse: () => undefined`,
+            ),
+          ),
+        ),
+      ).rejects.toThrow(/declares "other" — it is implicit/);
+    });
+
+    it("refuses a duplicate key rather than silently reserving one slot", async () => {
+      await expect(
+        loadConfig(
+          writeConfig(
+            withScenario(
+              `counters: { byStatus: { keys: ["2xx", "2xx"] } }, onResponse: () => undefined`,
+            ),
+          ),
+        ),
+      ).rejects.toThrow(/declares "2xx" twice/);
+    });
+
+    it("refuses an empty key space, and says what to use instead", async () => {
+      await expect(
+        loadConfig(
+          writeConfig(
+            withScenario(`counters: { byStatus: { keys: [] } }, onResponse: () => undefined`),
+          ),
+        ),
+      ).rejects.toThrow(/declares no keys — use `record.count`/);
+    });
+
+    it("refuses a counter declared as something other than { keys: [...] }", async () => {
+      await expect(
+        loadConfig(
+          writeConfig(withScenario(`counters: { byStatus: ["2xx"] }, onResponse: () => undefined`)),
+        ),
+      ).rejects.toThrow(/must be declared as \{ keys: \[\.\.\.\] \}/);
+    });
+
+    it("accepts a declared key space", async () => {
+      const config = await loadConfig(
+        writeConfig(
+          withScenario(
+            `counters: { byStatus: { keys: ["2xx", "5xx"] } }, onResponse: () => undefined`,
+          ),
+        ),
+      );
+
+      expect(config.scenarios.reads?.counters?.byStatus?.keys).toEqual(["2xx", "5xx"]);
+    });
+
     it("accepts a plain synchronous check", async () => {
       const config = await loadConfig(
         writeConfig(withScenario(`checks: { created: (r) => r.status === 201 }`)),

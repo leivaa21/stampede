@@ -2,7 +2,13 @@ import { MetricsRegistry, type ScenarioMetrics } from "../metrics/index.ts";
 import { InFlight } from "./in-flight.ts";
 import { recordLatencies } from "./latency.ts";
 import { observeResponse, recorderFor, type ResponseObservers } from "./observe.ts";
-import { brokenCheckCounter, EngineMetric, ENGINE_COUNTERS } from "./metric-names.ts";
+import {
+  brokenCheckCounter,
+  EngineMetric,
+  ENGINE_COUNTERS,
+  keyedCounter,
+  OTHER_KEY,
+} from "./metric-names.ts";
 import type { Clock, Transport, TransportResponse } from "./ports.ts";
 import {
   assertRunSpec,
@@ -70,13 +76,19 @@ export interface RunOutcome {
   readonly progress: RunProgress;
 }
 
+/** Declared key spaces as sets, built once per scenario — `has` runs once per keyed increment. */
+const keySpacesOf = <TRequest>(scenario: Scenario<TRequest>): Map<string, ReadonlySet<string>> =>
+  new Map(
+    Object.entries(scenario.keyedCounters ?? {}).map(([name, keys]) => [name, new Set(keys)]),
+  );
+
 const observersFor = <TRequest>(
   scenarioMetrics: ScenarioMetrics,
   scenario: Scenario<TRequest>,
 ): ResponseObservers => ({
   checks: Object.entries(scenario.checks ?? {}),
   onResponse: scenario.onResponse,
-  recorder: recorderFor(scenarioMetrics),
+  recorder: recorderFor(scenarioMetrics, keySpacesOf(scenario)),
 });
 
 /**
@@ -100,6 +112,20 @@ const reserveEngineNames = <TRequest>(
   // exact moment it is earned.
   for (const checkName of Object.keys(scenario.checks ?? {})) {
     scenarioMetrics.counters.reserve(brokenCheckCounter(checkName));
+  }
+  // Every declared key, plus the implicit `other`. Reserving them is what makes a keyed counter
+  // bounded *before* the run rather than capped during it.
+  //
+  // `other` is reserved **first** within each counter: if the budget ever ran out mid-loop it is
+  // the slot that must survive, because it is where every undeclared key lands and losing it drops
+  // the very increments the bucket exists to catch. The load-time budget check makes that
+  // unreachable through the CLI — but `runDispatch` is exported, so the loader is not the only door.
+  // No reserved-namespace check here: `assertRunSpec` refuses the whole spec before this runs, so
+  // there is one place that says no rather than one per consumer.
+  for (const [name, keys] of Object.entries(scenario.keyedCounters ?? {})) {
+    for (const key of [OTHER_KEY, ...keys]) {
+      scenarioMetrics.counters.reserve(keyedCounter(name, key));
+    }
   }
 };
 
@@ -157,6 +183,9 @@ export const runDispatch = async <TRequest>(
     maxObservedInFlight: inFlight.maxObserved,
     scenarios: states.map((state) => ({
       name: state.name,
+      // Carried so `summariseRun` can project flat storage back into the declared shape — it runs
+      // on the main thread over merged inputs and never sees the config.
+      keyedCounters: state.keyedCounters ?? {},
       scheduledCount: state.profile.count,
       requestedDurationMs: state.profile.durationMs,
       lastDispatchElapsedMs: state.lastDispatchElapsedMs,

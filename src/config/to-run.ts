@@ -93,6 +93,11 @@ export const scenariosFrom = (
     // scenario named, rather than as a wall of counted build errors twenty minutes in.
     requestFor: eagerlyValidatedBuilder(scenario, setupState, name),
     checks: scenario.checks,
+    // `{ keys: [...] }` unwrapped: the config's shape exists so the declaration has somewhere to
+    // grow, and the engine has no use for the wrapper.
+    keyedCounters: Object.fromEntries(
+      Object.entries(scenario.counters ?? {}).map(([counter, { keys }]) => [counter, keys]),
+    ),
     onResponse: scenario.onResponse,
   }));
 
