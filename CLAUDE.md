@@ -8,8 +8,9 @@
 > security, docs, git) apply here in full; this file only adds what's specific to this project.
 > Read this file before every task and re-read the **Current state** line.
 
-> **Current state (2026-08-05):** **M2 is complete — stampede proves invariants, not just
-> percentiles.** 550+ tests, audit clean, every slice through the implementer → reviewer loop.
+> **Current state (2026-08-05):** **M2.5 is complete and 0.2.0 is prepared.** stampede proves
+> invariants, not just percentiles. 600+ tests, audit clean, every slice through the
+> implementer → reviewer loop.
 >
 > M1 built the instrument: HDR-style histograms whose merge is exact and order-independent, an
 > open-loop dispatcher behind clock and transport ports, a worker pool that splits the schedule by
@@ -48,11 +49,16 @@
 > rounding. The sample count is the load-bearing claim there — losing a whole worker's trend moves
 > the peak by under a millisecond, so a peak-only check would have passed at 150 of 200 samples.
 >
-> **Not done:** not published to npm (`@leivaa21/stampede` is reserved, `publishConfig` is set) —
-> leivaa's call, not a task to pick up. **M3 is SSE / long-lived streaming**, open-ticket's contract
-> run 5, which it said in writing it is not waiting on. Both debts M2 surfaced are paid: M2.5
-> landed declared key spaces (D25-01) and `request()` purity enforced by guarding the setup state
-> in each worker (D25-02). Keep this line current after every merged slice.
+> **M2.5 is complete and 0.2.0 is prepared.** Declared key spaces (D25-01), `request()` purity
+> enforced by guarding the setup state in each worker (D25-02), and gate two running nightly
+> without being able to redden a PR (D25-03). `pnpm check:package` packs, installs and runs the
+> published tarball — it exists because `dist/cli.js` had shipped with no shebang since M1, making
+> the binary unrunnable once installed while every gate in the repo stayed green, since `pnpm dev`
+> runs the source.
+>
+> **Not done:** `npm publish` itself — leivaa's call and leivaa's credentials, not a task to pick
+> up. **M3 is SSE / long-lived streaming**, open-ticket's contract run 5, which it said in writing
+> it is not waiting on. Keep this line current after every merged slice.
 
 ## Identity
 
@@ -106,6 +112,8 @@ pnpm dev        # node src/cli.ts — no build step, Node strips the types
 pnpm test
 pnpm lint && pnpm typecheck && pnpm build
 pnpm audit      # must stay clean (overrides in pnpm-workspace.yaml)
+pnpm gate:two      # the reality gate: 39 claims against a target that counts for itself
+pnpm check:package # packs, installs and runs the tarball npm would publish
 ```
 
 ## Non-goals

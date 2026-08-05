@@ -14,6 +14,8 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # The package check spawns a run; the platform default is six hours.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,6 +46,13 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      # Not the same thing as "it builds". This packs the tarball npm would publish, installs it
+      # into a scratch directory, and runs the binary against a real server — the check that would
+      # have caught `dist/cli.js` shipping with no shebang, which made the published binary
+      # unrunnable and survived every gate in this file for two milestones.
+      - name: Package check
+        run: pnpm check:package
 
       # Workspace rule: zero known vulnerabilities, including low/dev-only.
       - name: Audit

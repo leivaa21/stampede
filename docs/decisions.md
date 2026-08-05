@@ -594,6 +594,41 @@ message, because "a check or onResponse threw" is the wrong sentence for a confi
 README and `--help` already promise — the typed config _is_ the DSL — and no longer as a purity
 argument, which it turned out not to be.
 
+## 2026-08-05 — [D25-04] The published tarball is a CI gate, not a release-day discovery
+
+**Decision.** `pnpm check:package` packs the real tarball, installs it into a scratch directory, and
+runs the binary against a live server from a config that imports the package **by name**. It blocks
+pull requests, and `prepublishOnly` runs it too.
+
+**Why it exists.** `dist/cli.js` was built with no shebang, so the shell parsed the JavaScript as
+shell script and the binary was unrunnable once installed. It had been that way since M1, through
+every review and every gate, and was found by installing the tarball while preparing 0.2.0 — the
+first time anyone ran what this repo publishes. `pnpm dev` runs `node src/cli.ts`, which needs no
+shebang; `pnpm test` and `pnpm gate:two` run the source; `pnpm build` proves only that the bundle
+compiles. The gap was never "is it tested" but "is the artifact the artifact".
+
+**Why blocking, when gate two is not.** Gate two's claims are timing bands that a loaded shared
+runner fails for a correct change (D25-03). These are not: a tarball either installs and runs or it
+does not. Measured at ~4s including the build. A gate this cheap and this deterministic has no
+excuse to be advisory.
+
+**Why install the tarball rather than `npm link`.** Linking resolves through the repo's own
+`node_modules` and its source tree, so it proves nothing about `files`, `exports`, or whether
+`worker-entry.js` shipped next to the pool that spawns it by path. The claim is about the artifact.
+
+**Its own exit-code contract, for the same reason gate two has one.** `1` a claim did not hold, `2`
+the check could not be run. Both misclassification directions were live in the first draft: a
+missing `bin` threw out of `lstatSync` and reported a real packaging regression as "could not run",
+and a port already in use exited `1` with no banner and leaked the scratch directory. So every
+claim catches its own throw, `uncaughtException`/`unhandledRejection` are installed for the failures
+Node reports asynchronously, and the server binds port `0`.
+
+**What the claims are checked against.** The drive count comes from the reference server's own
+counter, not from stampede's summary — a claim that the tool drove the target, verified against the
+tool's report of driving the target, is not a claim. The config is a `.ts` file in a
+`"type": "module"` package because that is the layout the README's quickstart prescribes; a `.mts`
+file in a typeless package would have passed while the documented path was broken.
+
 ## 2026-08-03 — [D25-03] Gate two runs nightly, and cannot redden a pull request
 
 **Decision.** A scheduled workflow runs `pnpm gate:two` and opens an issue on failure, plus

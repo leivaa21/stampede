@@ -1,6 +1,6 @@
 {
   "name": "@leivaa21/stampede",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Load-testing CLI that proves invariants, not just percentiles — open-loop engine, live TUI, markdown reports.",
   "keywords": [
     "load-testing",
@@ -30,7 +30,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=24"
@@ -41,9 +42,10 @@
   },
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json",
-    "prepublishOnly": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "prepublishOnly": "pnpm lint && pnpm typecheck && pnpm test && pnpm check:package",
     "dev": "node src/cli.ts",
     "gate:two": "node scripts/reality-gate/run.ts",
+    "check:package": "pnpm build && node scripts/package-check.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
