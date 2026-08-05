@@ -3,7 +3,7 @@
 Notable changes per release. Dates are the release date; the reasoning behind each decision lives
 in [`docs/decisions.md`](docs/decisions.md).
 
-## 0.2.0 — 2026-08-05
+## 0.2.0 — unreleased
 
 The release that makes stampede an **assertion tool** rather than a benchmarker: it proves
 invariants, not just percentiles.

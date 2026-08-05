@@ -91,6 +91,22 @@ const version = execFileSync("node", ["-p", "require('./package.json').version"]
   encoding: "utf8",
 }).trim();
 
+/**
+ * The config the gate installs and runs — deliberately the README's own shape.
+ *
+ * `?? Infinity`, not `?? 0`. The first draft wrote `p99` (the field is `p99Ms`) with `?? 0`, so the
+ * threshold read `(undefined ?? 0) < 2000` and passed no matter what: a bundling regression that
+ * dropped `latencyMs` from the summary — exactly the "is the artifact the artifact" failure this
+ * gate exists for — would still have printed PASS. `metrics/summaries.ts` warns about that exact
+ * `?? 0` in prose, and this file is one a stranger will read as canonical usage. It escaped
+ * `pnpm typecheck` because it is a string literal written to a scratch file.
+ *
+ * The keyed counter and the plain counter are here because `onResponse` and declared key spaces are
+ * 0.2.0's headline additions and the surface most likely to break across a bundle boundary. Written
+ * against the real API: the first draft called `record.trend`, which does not exist, and the run
+ * reported ten broken observations — the three-state check design catching this file's own bug,
+ * which is a fair advertisement for it but not something to ship in a usage example.
+ */
 const configFor = (
   port: number,
 ): string => `import { defineConfig, constantRate } from "@leivaa21/stampede";
@@ -102,9 +118,18 @@ export default defineConfig({
       profile: constantRate({ ratePerSecond: 20, durationMs: 500 }),
       request: (s, ordinal) => ({ url: s.url + "?seat=" + s.seats[ordinal % s.seats.length] }),
       checks: { "answers 200": (r) => r.status === 200 },
+      counters: { byStatus: { keys: ["2xx", "5xx"] } },
+      onResponse: (r, record) => {
+        record.countKeyed("byStatus", r.status < 300 ? "2xx" : "5xx");
+        record.count("answered");
+      },
     },
   },
-  thresholds: [{ name: "p99 under 2s", assert: (r) => (r.scenarios[0]?.latencyMs?.p99 ?? 0) < 2000 }],
+  thresholds: [
+    { name: "p99 under 2s", assert: (r) => (r.scenarios[0]?.latencyMs?.p99Ms ?? Infinity) < 2000 },
+    { name: "every response was 2xx", assert: (r) => r.scenarios[0]?.keyedCounters.byStatus?.["2xx"] === 10 },
+    { name: "onResponse ran for each", assert: (r) => r.scenarios[0]?.counters.answered === 10 },
+  ],
 });
 `;
 
@@ -141,10 +166,23 @@ try {
     path.join(workspace, "package.json"),
     '{"name":"stampede-package-check","type":"module"}\n',
   );
-  execFileSync("npm", ["install", "--silent", "--no-audit", "--no-fund", packed], {
-    cwd: workspace,
-    encoding: "utf8",
-  });
+  let installFailure = "";
+  try {
+    execFileSync("npm", ["install", "--silent", "--no-audit", "--no-fund", packed], {
+      cwd: workspace,
+      encoding: "utf8",
+    });
+  } catch (error: unknown) {
+    installFailure = firstLine(error);
+  }
+  // Its own claim rather than a bare call: a tarball that will not install is an artifact defect,
+  // and letting the throw reach the outer handler would report it as "could not run". Today the
+  // package has no runtime dependencies, which is a fact about today and not about the gate.
+  claim(
+    "the tarball installs into an empty package",
+    installFailure === "",
+    installFailure === "" ? "npm install clean" : installFailure,
+  );
 
   // Every claim catches its own throw. `lstatSync` throws when the binary is absent, so leaving it
   // bare reported a missing `bin` — the exact regression this gate exists for — as "could not run".
@@ -201,8 +239,10 @@ try {
       output += describe(error);
       resolve(-1);
     });
-    run.on("close", (value) => {
-      resolve(value ?? 1);
+    run.on("close", (value, signal) => {
+      // `close` gives a null code on a signal, and `?? 1` would map a killed run onto the code that
+      // means "a threshold was violated".
+      resolve(signal === null ? (value ?? 1) : -2);
     });
   });
   clearTimeout(killer);
@@ -213,7 +253,7 @@ try {
   claim(
     "a config importing the package by name runs to a clean exit",
     code === 0,
-    `exit ${String(code)}`,
+    code === -2 ? "killed after 60s without finishing" : `exit ${String(code)}`,
   );
   // Counted by the server, not read out of stampede's own summary. A claim that the tool drove the
   // target, checked against the tool's own report of driving the target, is not a claim.
@@ -222,8 +262,14 @@ try {
     served === 10,
     `${String(served)} requests reached the server, of 10 scheduled`,
   );
-  const checked = output.includes("PASS  answers 200");
-  const graded = output.includes("PASS    p99 under 2s");
+  // Whitespace-tolerant on purpose: matching exact column widths would redden every PR on a
+  // cosmetic change in `cli/render.ts` — a false negative on a required check, which is how a gate
+  // earns being ignored. The claim is that they were reported, not how they were aligned.
+  const checked = /PASS\s+answers 200/.test(output) && !output.includes("broken observations");
+  const graded =
+    /PASS\s+p99 under 2s/.test(output) &&
+    /PASS\s+every response was 2xx/.test(output) &&
+    /PASS\s+onResponse ran for each/.test(output);
   claim(
     "checks and thresholds came through the bundle",
     checked && graded,
