@@ -16,6 +16,13 @@ import { readVersion } from "./version.ts";
  * to be able to tell "your system broke an invariant" (1) from "the tool could not run" (2). A
  * broken install reporting as a failed threshold would send someone hunting a race condition that
  * was never there.
+ *
+ * **Every writer of free text here goes through `plain`, with no exception.** Most carry only the
+ * operator's own argv or a resolved path — self-inflicted rather than target-controlled — and each
+ * could be argued out of individually. The point is that the argument does not have to be made: the
+ * rule is checkable by grepping `err(` and `out(`, rather than by tracing which strings a target can
+ * reach. The only writes without it are string constants (`HELP`, the version), a `String(<number>)`,
+ * and `cli/render.ts`'s output, which sanitises every name and message internally.
  */
 
 const out = (text: string): void => {
@@ -41,7 +48,7 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
     return ExitCode.Ok;
   }
   if (args.kind === "error") {
-    err(`stampede: ${args.message}`);
+    err(`stampede: ${plain(args.message)}`);
     err("");
     err(HELP);
     return ExitCode.RunFailed;
@@ -96,7 +103,9 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
   if (args.reportPath !== undefined && report.summary === undefined) {
     // Silence here is dangerous: a CI job that uploads out.md as an artifact would publish the
     // previous run's numbers as this run's.
-    err(`stampede: no report written to ${args.reportPath} — the run produced no measurements`);
+    err(
+      `stampede: no report written to ${plain(args.reportPath)} — the run produced no measurements`,
+    );
   }
   if (args.reportPath !== undefined && report.summary !== undefined) {
     try {
@@ -117,12 +126,12 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
           generatedAt: new Date(),
         }),
       );
-      out(`report written to ${target}`);
+      out(`report written to ${plain(target)}`);
     } catch (error: unknown) {
       // A report that could not be written must not turn a passing run into a failing one, but it
       // must not pass silently either — someone asked for it and is going to go looking.
       err(
-        `stampede: could not write the report: ${error instanceof Error ? error.message : String(error)}`,
+        `stampede: could not write the report: ${plain(error instanceof Error ? error.message : String(error))}`,
       );
     }
   }
@@ -169,9 +178,15 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
  * an `await`. These two handlers are what make the claim above true rather than aspirational.
  */
 const exitOnStrayFailure = (label: string) => (error: unknown) => {
-  err(
-    `stampede: ${label}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
-  );
+  // `plain` here as everywhere else that writes free text. This handler was the one door that
+  // skipped it, and a target can reach it: a config with a floating `Promise.reject(new
+  // Error(res.text))` in `onResponse` produces a stack whose first line is the target's own
+  // response body, printed with its escapes live. Newlines are kept — a stack without them is
+  // unreadable — by stripping each line rather than the whole string. What that accepts, stated: a
+  // message containing `\n` still injects *lines*, and a well-chosen one reads as a forged
+  // `    at …` frame. A flattened stack is the worse trade, so this is the one deliberately.
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  err(`stampede: ${label}: ${detail.split("\n").map(plain).join("\n")}`);
   process.exit(ExitCode.RunFailed);
 };
 process.on("unhandledRejection", exitOnStrayFailure("unhandled rejection"));
@@ -182,6 +197,6 @@ run(process.argv.slice(2))
     process.exitCode = code;
   })
   .catch((error: unknown) => {
-    err(`stampede: ${error instanceof Error ? error.message : String(error)}`);
+    err(`stampede: ${plain(error instanceof Error ? error.message : String(error))}`);
     process.exitCode = ExitCode.RunFailed;
   });
