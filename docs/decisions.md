@@ -629,12 +629,27 @@ infrastructure story. So the gate step records `failed=true/false` as an output 
 keys on that; infrastructure failures redden the run and email the owner, which is GitHub's job,
 not this file's.
 
-**The gate's exit codes are the CLI's own contract, and the workflow keys on `1`.** `1` is a claim
-that did not hold; `2` is "the gate could not be run" — a throw out of a run, an OOM-killed worker,
-a port that would not bind. Collapsing them into "non-zero" is what would let a shared runner
-running out of memory open an issue titled "the published numbers may no longer be true", and then,
-because there is one sticky issue, pin every real failure for the next week behind that
-infrastructure story. Verified all three ways against the real gate before writing this down.
+**The gate's exit codes are the CLI's own contract, and the workflow classifies positively.** `1` is
+a claim that did not hold; `2` is "the gate could not be run" — a throw out of a run, an
+OOM-killed worker, a port that would not bind, or zero claims made at all. Collapsing them into
+"non-zero" would let a shared runner running out of memory open an issue titled "the published
+numbers may no longer be true", and then, because there is one sticky issue, pin every real failure
+for the next week behind that infrastructure story.
+
+Two things make that contract hold rather than merely state it. `run.ts` installs
+`uncaughtException`/`unhandledRejection` handlers, exactly as `src/cli.ts` does and for the same
+reason — `harness.ts` spawns the target with no `"error"` listener, so a fork that fails under
+memory pressure surfaces there rather than at an await. And the workflow requires exit 1 **and** the
+gate's own `GATE TWO FAILED` line, because a non-erasable construct anywhere under
+`scripts/reality-gate/` fails at module load, before any handler exists, and `tee` filling the disk
+is a `pipefail` 1 too.
+
+A claim that already failed outranks a later crash: exit 2 means "no evidence either way", which is
+false the moment something has been shown not to hold, so the crash path reports 1 and prints the
+verdict line the workflow greps for.
+
+Verified against the real gate, all five ways: clean → 0/no issue; broken claim → 1/issue; crash →
+2/no issue; crash after a failed claim → 1/issue; zero claims → 2/no issue.
 
 **Known and accepted: GitHub disables a scheduled workflow after 60 days without repository
 activity.** For a showcase repo that goes quiet between milestones this is the likeliest way the

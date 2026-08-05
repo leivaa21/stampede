@@ -217,8 +217,18 @@ export const startTarget = async (args: readonly string[]): Promise<ChildProcess
 };
 
 let failures = 0;
+let claims = 0;
 
 export const failureCount = (): number => failures;
+
+/**
+ * How many claims were made at all.
+ *
+ * `failures === 0` is the wrong thing to publish on its own: a refactor that stopped calling
+ * `claim()` would turn this gate into a green light over an empty run, which is the same lie as a
+ * threshold reading a counter that was never written.
+ */
+export const claimCount = (): number => claims;
 
 export const ms = (value: number | undefined): string =>
   value === undefined ? "n/a" : `${value.toFixed(1)}ms`;
@@ -232,6 +242,7 @@ export const section = (title: string): void => {
 };
 
 export const claim = (label: string, holds: boolean, detail: string): void => {
+  claims += 1;
   if (!holds) {
     failures += 1;
   }

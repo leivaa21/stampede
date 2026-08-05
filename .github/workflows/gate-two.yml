@@ -74,7 +74,17 @@ jobs:
         run: |
           rc=0
           pnpm gate:two 2>&1 | tee gate-two.log || rc=$?
-          echo "failed=$([ "$rc" = "1" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          # Classified *positively*: exit 1 **and** the gate said so in its own words. Exit 1 alone
+          # is reachable without a failed claim — a non-erasable construct anywhere under
+          # `scripts/reality-gate/` fails at module load, before any handler is installed, and
+          # `tee` filling the disk is a `pipefail` 1 too. Either would otherwise open an issue
+          # titled "the published numbers may no longer be true" and, because there is one sticky
+          # issue, pin every real failure behind it for a week.
+          if [ "$rc" = "1" ] && grep -q '^GATE TWO FAILED' gate-two.log; then
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          fi
           exit "$rc"
 
       - name: Upload the run's output
