@@ -699,9 +699,9 @@ vulnerabilities, gate two green across seven runs and re-run nightly.
 surfaced were paid in M2.5: bounded-cardinality counters (declare a key space, use
 `record.countKeyed`) and `request()` purity, now enforced by guarding the setup state.
 
-**0.2.0 is prepared but not yet on npm.** `@leivaa21/stampede` is reserved and `pnpm check:package`
-proves the tarball installs and runs; publishing is a manual step. **Do not use 0.1.0 if it
-appears** — its binary shipped without a shebang and does not run once installed.
+**0.2.0 is prepared but not yet on npm** — it will be the first published release, and
+`pnpm check:package` proves the tarball installs and runs before it goes out. Publishing is a
+deliberate manual step. Until then, install from source.
 
 **Deferred on purpose:** SSE / long-lived streaming requests, distributed workers, protocols beyond
 HTTP(S), a cloud service, a scripting DSL. Say no on purpose.

@@ -27,9 +27,11 @@ invariants, not just percentiles.
 
 ### Fixed
 
-- **The published binary was unrunnable.** `dist/cli.js` shipped with no shebang, so the shell
-  parsed the JavaScript as shell script. Present since 0.1.0 and invisible to every gate, because
-  `pnpm dev` runs the source. This is why 0.1.0 should not be used.
+- **The binary would not have run once installed.** `dist/cli.js` was built with no shebang, so
+  the shell parsed the JavaScript as shell script. Present since M1 and invisible to every gate,
+  because `pnpm dev` runs the source and nothing installed the tarball. Caught while preparing this
+  release — the first time anyone ran what the repo publishes — and `pnpm check:package` now packs,
+  installs and runs it on every PR.
 - **Engine counters could be starved.** A user counter per seat filled the 512-name budget, and
   every engine counter that had not yet fired was refused — a run that dropped 350 requests
   reported zero drops. Counters are now reserved by registration, and refused recordings are a
@@ -41,16 +43,18 @@ invariants, not just percentiles.
 
 ### Changed
 
-- Exit codes are a contract: `0` thresholds held, `1` a threshold was violated, `2` the run itself
-  failed. Exit 2 outranks exit 1.
+- **Exit 2 outranks exit 1.** A run whose claims are broken cannot be trusted to have judged the
+  target at all, so "the run failed" is the honest verdict even when a threshold also fell. (The
+  `0`/`1`/`2` contract itself is from 0.1.0.)
 - The accounting identity is now four terms:
   `dispatched + dropped + requestErrors + impureRequests === scheduled`.
 
-## 0.1.0
+## 0.1.0 — never published
 
-The instrument. Open-loop dispatch timed from the _scheduled_ instant (so coordinated omission is
-structurally impossible), HDR-style histograms whose merge is exact and order-independent, a worker
-pool splitting the schedule by stride, TypeScript configs loaded by Node's own type-stripping, a
-live terminal dashboard, and a markdown report.
+The instrument, built as M1: open-loop dispatch timed from the _scheduled_ instant (so coordinated
+omission is structurally impossible), HDR-style histograms whose merge is exact and
+order-independent, a worker pool splitting the schedule by stride, TypeScript configs loaded by
+Node's own type-stripping, a live terminal dashboard, and a markdown report.
 
-**Superseded by 0.2.0** — its binary does not run once installed. See above.
+The version existed in the repo but was never pushed to npm, which is just as well — its binary
+would not have run once installed. **0.2.0 is the first release.**
