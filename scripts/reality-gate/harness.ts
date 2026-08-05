@@ -217,8 +217,45 @@ export const startTarget = async (args: readonly string[]): Promise<ChildProcess
 };
 
 let failures = 0;
+let claims = 0;
 
 export const failureCount = (): number => failures;
+
+/**
+ * How many claims were made at all.
+ *
+ * `failures === 0` is the wrong thing to publish on its own: a refactor that stopped calling
+ * `claim()` would turn this gate into a green light over an empty run, which is the same lie as a
+ * threshold reading a counter that was never written.
+ */
+export const claimCount = (): number => claims;
+
+export interface Verdict {
+  readonly line: string;
+  readonly exitCode: 0 | 1 | 2;
+}
+
+/**
+ * The gate's whole contract in one pure function: how many claims ran, how many failed, and what
+ * that means for the exit code the nightly workflow classifies on.
+ *
+ * Pure and exported so it can be tested as a table. `1` is a claim that did not hold; `2` is "the
+ * gate could not be run", **including zero claims** — a refactor that stopped calling `claim()`
+ * would otherwise turn the gate into a green light over an empty run, which is the same lie as a
+ * percentile drawn from an empty histogram.
+ */
+export const verdict = (failures: number, total: number): Verdict => {
+  if (total === 0) {
+    return { line: "GATE TWO COULD NOT RUN — no claims were made", exitCode: 2 };
+  }
+  if (failures > 0) {
+    return { line: `GATE TWO FAILED — ${String(failures)} claim(s) did not hold`, exitCode: 1 };
+  }
+  return {
+    line: `GATE TWO PASSED — ${String(total)} claims, the numbers are true against a target that knows better`,
+    exitCode: 0,
+  };
+};
 
 export const ms = (value: number | undefined): string =>
   value === undefined ? "n/a" : `${value.toFixed(1)}ms`;
@@ -232,6 +269,7 @@ export const section = (title: string): void => {
 };
 
 export const claim = (label: string, holds: boolean, detail: string): void => {
+  claims += 1;
   if (!holds) {
     failures += 1;
   }

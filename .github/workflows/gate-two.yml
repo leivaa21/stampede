@@ -1,0 +1,158 @@
+name: Gate two
+
+# The reality gate, nightly (D25-03).
+#
+# **Deliberately not a pull-request check.** Its claims are timing bands — run 1 asserts a p50
+# inside 48–65 ms, run 2 a rate within 5 % — and a shared runner under load fails them for a
+# *correct* change. A gate that cries wolf is one people learn to ignore, and this one is the
+# repo's evidence.
+#
+# **But not never, either.** M2's review found the README publishing an achieved rate from a build
+# two milestones old: the response-body read M2 added cost real per-response time and nothing
+# re-measured it. Evidence that never re-runs rots silently, and by the time a human notices, the
+# showcase has been lying for a milestone.
+on:
+  schedule:
+    # 03:00-ish UTC, off-peak for shared runners. Deliberately not on the hour: GitHub's own docs
+    # warn that jobs scheduled at :00 are the most delayed, since everyone picks it.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+# Declared per job, not here, because workflow-level `permissions` would hand `issues: write` to
+# every step of the gate job — including `pnpm install`, which runs dependency lifecycle scripts.
+# The notify job is a separate job precisely so that sentence is true rather than aspirational.
+permissions: {}
+
+concurrency:
+  # A run takes ~90s and a manual dispatch during a scheduled one would fight for port 5999.
+  group: gate-two
+  cancel-in-progress: false
+
+jobs:
+  gate-two:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # ~90s in practice. The platform default is six hours, and a wedged pooled run holding the
+    # concurrency group that long would silently drop a night — which is this file's worst failure
+    # mode, since a watchdog that watches nothing looks exactly like one that found nothing.
+    timeout-minutes: 10
+    # The whole point of this output: it distinguishes "a claim did not hold" from "npm was having
+    # a bad morning". Only the first should open an issue asserting the published numbers are
+    # suspect — and only the first should own the one sticky issue, because a watchdog pinned to an
+    # infrastructure incident stops reporting the thing it exists to report.
+    outputs:
+      claim-failed: ${{ steps.gate.outputs.failed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install (frozen)
+        run: pnpm install --frozen-lockfile
+
+      - name: Gate two
+        id: gate
+        # `shell: bash` for `pipefail`, and it is load-bearing rather than stylistic. The runner's
+        # default shell is `bash -e` *without* it, so the pipe into `tee` would report tee's exit
+        # code — a failing gate would go green and this whole file would watch nothing.
+        shell: bash
+        # The log is the artefact: a failure that only says "exit 1" would send someone to re-run
+        # it locally to find out which of the 39 claims broke.
+        #
+        # Keyed on exit **1** specifically, which the gate reserves for "a claim did not hold". Exit
+        # 2 — a throw, an OOM-killed worker, a port that would not bind — reddens the run without
+        # opening an issue asserting the published numbers are false, because it is not evidence
+        # about them either way. `|| rc=$?` because `-e` would abort the step before we could look.
+        run: |
+          rc=0
+          pnpm gate:two 2>&1 | tee gate-two.log || rc=$?
+          # Classified *positively*: exit 1 **and** the gate said so in its own words. Exit 1 alone
+          # is reachable without a failed claim — a non-erasable construct anywhere under
+          # `scripts/reality-gate/` fails at module load, before any handler is installed, and
+          # `tee` filling the disk is a `pipefail` 1 too. Either would otherwise open an issue
+          # titled "the published numbers may no longer be true" and, because there is one sticky
+          # issue, pin every real failure behind it for a week.
+          if [ "$rc" = "1" ] && grep -q '^GATE TWO FAILED' gate-two.log; then
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$rc"
+
+      - name: Upload the run's output
+        # Not on the install-failure path, where there is no log and the action warns about it.
+        if: always() && steps.gate.conclusion != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-two-log
+          path: gate-two.log
+          # Longer than the artifact default, because the sticky issue outlives a fortnight and its
+          # body sends the reader here.
+          retention-days: 90
+
+  # A separate job so that `issues: write` never covers `pnpm install` or the user config the gate
+  # executes. It is also what makes the failure *specific*: `if: failure()` on a step is job-scoped,
+  # so a registry blip during install would otherwise open an issue asserting that a claim did not
+  # hold — and then, because the dedup keys on the open issue, every real failure for the next week
+  # would only comment "still failing" on that infrastructure story. A watchdog pinned to the wrong
+  # incident is worse than no watchdog.
+  notify:
+    needs: gate-two
+    if: always() && needs.gate-two.outputs.claim-failed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const run = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            // One open issue, not one per night. A gate that fails for a week should be one
+            // conversation, and a tracker with seven identical issues is a tracker nobody reads.
+            //
+            // `listForRepo` returns pull requests too — they are issues to the API — so a PR
+            // carrying this label would otherwise swallow every comment.
+            const open = await github.rest.issues.listForRepo({
+              owner, repo, state: "open", labels: "gate-two",
+            });
+            const existing = open.data.find((issue) => issue.pull_request === undefined);
+            if (existing !== undefined) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: existing.number,
+                body: `Still failing — [run ${context.runId}](${run}).`,
+              });
+              return;
+            }
+
+            // The label is created implicitly if it does not exist yet, so night one needs no
+            // seeding. Nothing in this body is interpolated from anything a contributor controls.
+            await github.rest.issues.create({
+              owner, repo, labels: ["gate-two"],
+              title: "Gate two failed — the published numbers may no longer be true",
+              body: [
+                `A claim in the reality gate did not hold: [run ${context.runId}](${run}).`,
+                "",
+                "The gate drives the shipped engine against a reference target whose behaviour is",
+                "known in advance, and the README and `CLAUDE.md` publish its numbers. A failure",
+                "means either the tool changed or the numbers on those pages are now false — and",
+                "the second is the one this schedule exists to catch.",
+                "",
+                "The `gate-two-log` artifact on that run has the full output, including which of",
+                "the claims failed and what it measured instead.",
+                "",
+                "Reproduce locally with `pnpm gate:two`. Note the run's own caveat: the absolute",
+                "throughput of run 4 is the least reproducible number in the gate — read the",
+                "relationships, not the digits. If a claim fails only on the shared runner and not",
+                "on a dev box, the band is the thing to fix, not the tool.",
+              ].join("\n"),
+            });

@@ -589,10 +589,12 @@ twice. So there is a second gate:
 pnpm gate:two
 ```
 
-**A manual milestone gate, not a CI job** — it spawns servers and leans on real timing, which a
-shared runner would make flaky, and a flaky gate is one people learn to ignore. It is run before a
-milestone is called done, and the numbers below are from a 16-core dev box; a smaller machine will
-report different throughput and the same _relationships_, which are what the claims are about.
+**A milestone gate, and never a required check** — it spawns servers and leans on real timing,
+which a shared runner would make flaky, and a flaky gate is one people learn to ignore. It is run
+by hand before a milestone is called done, and [nightly](.github/workflows/gate-two.yml) so that
+published numbers cannot rot unnoticed — a nightly failure opens an issue, it does not redden
+anyone's pull request. The numbers below are from a 16-core dev box; a smaller machine will report
+different throughput and the same _relationships_, which are what the claims are about.
 
 It starts a reference server — fixed delay, bounded concurrency, queueing the rest, **selling seats
 at most once each** and keeping its own count of everything — then drives seven runs against it
