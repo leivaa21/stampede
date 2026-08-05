@@ -13,15 +13,15 @@ name: Gate two
 # showcase has been lying for a milestone.
 on:
   schedule:
-    # 03:00 UTC. Nothing depends on the hour; it is off-peak for the shared runners.
-    - cron: "0 3 * * *"
+    # 03:00-ish UTC, off-peak for shared runners. Deliberately not on the hour: GitHub's own docs
+    # warn that jobs scheduled at :00 are the most delayed, since everyone picks it.
+    - cron: "17 3 * * *"
   workflow_dispatch:
 
-# `issues: write` is the whole reason this file needs more than `contents: read`. Nothing else here
-# writes anything, and the job that opens the issue is the only step that gets the token.
-permissions:
-  contents: read
-  issues: write
+# Declared per job, not here, because workflow-level `permissions` would hand `issues: write` to
+# every step of the gate job — including `pnpm install`, which runs dependency lifecycle scripts.
+# The notify job is a separate job precisely so that sentence is true rather than aspirational.
+permissions: {}
 
 concurrency:
   # A run takes ~90s and a manual dispatch during a scheduled one would fight for port 5999.
@@ -31,6 +31,18 @@ concurrency:
 jobs:
   gate-two:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # ~90s in practice. The platform default is six hours, and a wedged pooled run holding the
+    # concurrency group that long would silently drop a night — which is this file's worst failure
+    # mode, since a watchdog that watches nothing looks exactly like one that found nothing.
+    timeout-minutes: 10
+    # The whole point of this output: it distinguishes "a claim did not hold" from "npm was having
+    # a bad morning". Only the first should open an issue asserting the published numbers are
+    # suspect — and only the first should own the one sticky issue, because a watchdog pinned to an
+    # infrastructure incident stops reporting the thing it exists to report.
+    outputs:
+      claim-failed: ${{ steps.gate.outputs.failed }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,13 +59,22 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Gate two
+        id: gate
         # `shell: bash` for `pipefail`, and it is load-bearing rather than stylistic. The runner's
         # default shell is `bash -e` *without* it, so the pipe into `tee` would report tee's exit
         # code — a failing gate would go green and this whole file would watch nothing.
         shell: bash
+        # Does not fail the job here, so the log still uploads and the output below is still set.
+        # The last step turns a failed claim back into a red job.
+        continue-on-error: true
         # The log is the artefact: a failure that only says "exit 1" would send someone to re-run
         # it locally to find out which of the 39 claims broke.
-        run: pnpm gate:two 2>&1 | tee gate-two.log
+        run: |
+          if pnpm gate:two 2>&1 | tee gate-two.log; then
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload the run's output
         if: always()
@@ -63,9 +84,26 @@ jobs:
           path: gate-two.log
           retention-days: 30
 
-      - name: Open an issue when a claim fails
-        if: failure()
-        uses: actions/github-script@v7
+      - name: Fail if a claim did not hold
+        if: steps.gate.outputs.failed == 'true'
+        run: |
+          echo "::error::A claim in the reality gate did not hold — see the gate-two-log artifact."
+          exit 1
+
+  # A separate job so that `issues: write` never covers `pnpm install` or the user config the gate
+  # executes. It is also what makes the failure *specific*: `if: failure()` on a step is job-scoped,
+  # so a registry blip during install would otherwise open an issue asserting that a claim did not
+  # hold — and then, because the dedup keys on the open issue, every real failure for the next week
+  # would only comment "still failing" on that infrastructure story. A watchdog pinned to the wrong
+  # incident is worse than no watchdog.
+  notify:
+    needs: gate-two
+    if: always() && needs.gate-two.outputs.claim-failed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v8
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -73,17 +111,23 @@ jobs:
 
             // One open issue, not one per night. A gate that fails for a week should be one
             // conversation, and a tracker with seven identical issues is a tracker nobody reads.
+            //
+            // `listForRepo` returns pull requests too — they are issues to the API — so a PR
+            // carrying this label would otherwise swallow every comment.
             const open = await github.rest.issues.listForRepo({
               owner, repo, state: "open", labels: "gate-two",
             });
-            if (open.data.length > 0) {
+            const existing = open.data.find((issue) => issue.pull_request === undefined);
+            if (existing !== undefined) {
               await github.rest.issues.createComment({
-                owner, repo, issue_number: open.data[0].number,
+                owner, repo, issue_number: existing.number,
                 body: `Still failing — [run ${context.runId}](${run}).`,
               });
               return;
             }
 
+            // The label is created implicitly if it does not exist yet, so night one needs no
+            // seeding. Nothing in this body is interpolated from anything a contributor controls.
             await github.rest.issues.create({
               owner, repo, labels: ["gate-two"],
               title: "Gate two failed — the published numbers may no longer be true",
@@ -100,6 +144,7 @@ jobs:
                 "",
                 "Reproduce locally with `pnpm gate:two`. Note the run's own caveat: the absolute",
                 "throughput of run 4 is the least reproducible number in the gate — read the",
-                "relationships, not the digits.",
+                "relationships, not the digits. If a claim fails only on the shared runner and not",
+                "on a dev box, the band is the thing to fix, not the tool.",
               ].join("\n"),
             });

@@ -608,12 +608,34 @@ milestone gate; making it blocking would make that sentence false.
 milestones old: the response-body read M2 added cost real per-response time, and nothing
 re-measured it. Evidence that never re-runs rots silently.
 
-**The pipe into `tee` is why the step sets `shell: bash`.** The runner's default shell is `bash -e`
+**Amended 2026-08-05 — the pipe into `tee` is why the step sets `shell: bash`.** The runner's default shell is `bash -e`
 _without_ `pipefail`, so `pnpm gate:two | tee gate-two.log` would report `tee`'s exit code — a
 failing gate would go green and the whole workflow would watch nothing. The log itself is the
 artefact: a failure that only said "exit 1" would send someone to re-run 39 claims locally to find
 out which one broke.
 
 **One open issue, not one per night.** A gate failing for a week is one conversation; a tracker with
-seven identical issues is a tracker nobody reads. The job comments on the existing `gate-two` issue
-when there is one, and `issues: write` is the only permission this file adds over `contents: read`.
+seven identical issues is a tracker nobody reads. The notify job comments on the existing `gate-two`
+issue when there is one — skipping pull requests, which `listForRepo` also returns.
+
+**Notifying is its own job, and it only fires for a failed _claim_.** Two reasons. `issues: write`
+declared at workflow level would cover `pnpm install` and the gate run itself, which execute
+third-party lifecycle scripts and the config under test; a separate job keeps the write scope on
+the one step that needs it. And `if: failure()` is job-scoped, so a registry blip during install
+would otherwise open an issue asserting a published number is now false — and then, because the
+dedup keys on the open issue, every real failure for the next week would only comment on that
+infrastructure story. So the gate step records `failed=true/false` as an output and the notify job
+keys on that; infrastructure failures redden the run and email the owner, which is GitHub's job,
+not this file's.
+
+**Known and accepted: GitHub disables a scheduled workflow after 60 days without repository
+activity.** For a showcase repo that goes quiet between milestones this is the likeliest way the
+watchdog silently stops watching. It emails the owner with a re-enable link when it happens; taking
+that link is part of the contract, and `workflow_dispatch` is there to confirm the gate still passes
+after a gap. Defeating it with a scheduled no-op commit would be worse than the problem.
+
+**If the bands do not hold on a shared runner, widen the bands.** The gate is calibrated on a
+16-core box, and run 5 spawns four worker threads plus the reference target on the same host; run 4's
+absolute throughput is already documented as the least reproducible number in it. A nightly that is
+red most mornings gets muted inside a week, which lands in the same place as a disabled cron. The
+issue body says this, so the first person to read one is told which end to fix.

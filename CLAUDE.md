@@ -31,7 +31,8 @@
 > confident 0.
 >
 > **Gate two (`pnpm gate:two`) is the proof, and it runs the shipped code.** A manual milestone
-> gate rather than a CI job — it spawns servers and leans on real timing. Numbers below are from a
+> gate, run by hand and nightly but never a required check — it spawns servers and leans on real
+> timing. Numbers below are from a
 > 16-core dev box; the _relationships_ are what the claims assert, not the absolute throughput.
 > Seven runs, 39 claims: a 50 ms
 > target reads 52 ms; a target slower than the load offered reports p99 5910 ms against its 200 ms
