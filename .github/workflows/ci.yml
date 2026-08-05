@@ -45,6 +45,13 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # Not the same thing as "it builds". This packs the tarball npm would publish, installs it
+      # into a scratch directory, and runs the binary against a real server — the check that would
+      # have caught `dist/cli.js` shipping with no shebang, which made the published binary
+      # unrunnable and survived every gate in this file for two milestones.
+      - name: Package check
+        run: node scripts/package-check.ts
+
       # Workspace rule: zero known vulnerabilities, including low/dev-only.
       - name: Audit
         run: pnpm audit

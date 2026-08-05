@@ -48,11 +48,16 @@
 > rounding. The sample count is the load-bearing claim there — losing a whole worker's trend moves
 > the peak by under a millisecond, so a peak-only check would have passed at 150 of 200 samples.
 >
-> **Not done:** not published to npm (`@leivaa21/stampede` is reserved, `publishConfig` is set) —
-> leivaa's call, not a task to pick up. **M3 is SSE / long-lived streaming**, open-ticket's contract
-> run 5, which it said in writing it is not waiting on. Both debts M2 surfaced are paid: M2.5
-> landed declared key spaces (D25-01) and `request()` purity enforced by guarding the setup state
-> in each worker (D25-02). Keep this line current after every merged slice.
+> **M2.5 is complete and 0.2.0 is prepared.** Declared key spaces (D25-01), `request()` purity
+> enforced by guarding the setup state in each worker (D25-02), and gate two running nightly
+> without being able to redden a PR (D25-03). `pnpm check:package` packs, installs and runs the
+> published tarball — it exists because `dist/cli.js` had shipped with no shebang since M1, making
+> the binary unrunnable once installed while every gate in the repo stayed green, since `pnpm dev`
+> runs the source.
+>
+> **Not done:** `npm publish` itself — leivaa's call and leivaa's credentials, not a task to pick
+> up. **M3 is SSE / long-lived streaming**, open-ticket's contract run 5, which it said in writing
+> it is not waiting on. Keep this line current after every merged slice.
 
 ## Identity
 

@@ -688,17 +688,20 @@ millisecond and would sail past a peak-only check. It does not sail past this on
 
 ## Status
 
-**M1 and M2 are complete.** Mergeable metrics core · open-loop engine · worker pool · TS config
-loading · real HTTP transport · `stampede run` with setup/teardown, thresholds and exit codes ·
-markdown report · live dashboard — and, from M2, named per-response **checks** counted three ways,
-**custom counters and trends** merged across worker threads, and **per-request variation** keyed on
-the run's ordinal. **550+ tests**, zero known vulnerabilities, gate two green across seven runs.
+**M1, M2 and M2.5 are complete** — see the [changelog](CHANGELOG.md). Mergeable metrics core ·
+open-loop engine · worker pool · TS config loading · real HTTP transport · `stampede run` with
+setup/teardown, thresholds and exit codes · markdown report · live dashboard — and, from M2, named
+per-response **checks** counted three ways, **custom counters and trends** merged across worker
+threads, and **per-request variation** keyed on the run's ordinal. **600+ tests**, zero known
+vulnerabilities, gate two green across seven runs and re-run nightly.
 
 **Next (M3): SSE / long-lived streaming requests** — open-ticket's contract run 5. Both debts M2
 surfaced were paid in M2.5: bounded-cardinality counters (declare a key space, use
 `record.countKeyed`) and `request()` purity, now enforced by guarding the setup state.
 
-**Not published to npm yet.** Install from source; `@leivaa21/stampede` is reserved.
+**0.2.0 is prepared but not yet on npm.** `@leivaa21/stampede` is reserved and `pnpm check:package`
+proves the tarball installs and runs; publishing is a manual step. **Do not use 0.1.0 if it
+appears** — its binary shipped without a shebang and does not run once installed.
 
 **Deferred on purpose:** SSE / long-lived streaming requests, distributed workers, protocols beyond
 HTTP(S), a cloud service, a scripting DSL. Say no on purpose.
