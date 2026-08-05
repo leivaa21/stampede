@@ -34,14 +34,23 @@ export interface ScenarioConfig<TSetup> {
    *
    * Keep it cheap: it runs on the dispatch path, once per request, and time spent here is time the
    * generator is not dispatching. If it throws, that request is counted as a build failure and the
-   * run continues — reported as `not built`, never as the target refusing.
+   * run continues — reported as `not built`, never as the target refusing. The one exception is
+   * mutating the setup state, which fails the run; see below.
    *
    * **It must be a pure function of `(setupState, ordinal)`.** Every worker gets its own structured
    * clone of the setup state, so a builder that consumes shared state — `state.seats.pop()`, an
    * incrementing nonce — hands four threads the same four values rather than sixteen distinct ones.
-   * The ordinal exists precisely so variation can be derived rather than accumulated. stampede also
-   * calls this once at ordinal 0 per worker before the run starts, to fail a malformed request at
-   * startup instead of twenty minutes in, which an impure builder would notice.
+   * The ordinal exists precisely so variation can be derived rather than accumulated, and this is
+   * **enforced**: the state is guarded in each worker, so mutating it throws and the run fails
+   * naming this contract. `structuredClone` cannot copy the guard, so to copy something out of the
+   * state use `JSON.parse(JSON.stringify(...))` when it is JSON-shaped — that turns a `Date` into a
+   * string and a `Buffer` into `{type,data}` — or a spread (`{ ...state.x }`, `[...state.list]`)
+   * when it is not, remembering nested values are still guarded.
+   *
+   * Plain objects and arrays are guarded; a `Map`, `Set`, `Date` or `Buffer`
+   * is left as it arrived, so mutating one of those is not caught. stampede also calls this once
+   * at ordinal 0 per worker before the run starts, to fail a malformed request at startup instead
+   * of twenty minutes in.
    */
   readonly request: (setupState: TSetup, ordinal: number) => HttpRequestSpec;
   /**

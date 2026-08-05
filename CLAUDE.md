@@ -8,7 +8,7 @@
 > security, docs, git) apply here in full; this file only adds what's specific to this project.
 > Read this file before every task and re-read the **Current state** line.
 
-> **Current state (2026-08-03):** **M2 is complete — stampede proves invariants, not just
+> **Current state (2026-08-05):** **M2 is complete — stampede proves invariants, not just
 > percentiles.** 550+ tests, audit clean, every slice through the implementer → reviewer loop.
 >
 > M1 built the instrument: HDR-style histograms whose merge is exact and order-independent, an
@@ -49,10 +49,9 @@
 >
 > **Not done:** not published to npm (`@leivaa21/stampede` is reserved, `publishConfig` is set) —
 > leivaa's call, not a task to pick up. **M3 is SSE / long-lived streaming**, open-ticket's contract
-> run 5, which it said in writing it is not waiting on. Of the two debts M2 surfaced, one is paid:
-> M2.5 landed declared key spaces (D25-01), so a bounded-cardinality counter is now expressible.
-> `request()` is still documented as pure and not enforced — next slice. Keep this line current
-> after every merged slice.
+> run 5, which it said in writing it is not waiting on. Both debts M2 surfaced are paid: M2.5
+> landed declared key spaces (D25-01) and `request()` purity enforced by guarding the setup state
+> in each worker (D25-02). Keep this line current after every merged slice.
 
 ## Identity
 

@@ -1,6 +1,7 @@
 import { availableParallelism } from "node:os";
 import type { HttpRequestSpec } from "../engine/http-transport.ts";
-import { DEFAULT_DRAIN_TIMEOUT_MS, type Scenario } from "../engine/run-spec.ts";
+import { DEFAULT_DRAIN_TIMEOUT_MS, ImpureRequestError, type Scenario } from "../engine/run-spec.ts";
+import { StateMutationError } from "./guard-state.ts";
 import type { StampedeConfig } from "./types.ts";
 
 /**
@@ -72,13 +73,76 @@ const assertRequestShape = (built: unknown, name: string): HttpRequestSpec => {
   return built as HttpRequestSpec;
 };
 
+/**
+ * Turns the guard's `StateMutationError` into the contract it violates.
+ *
+ * Without this the user sees "Cannot delete property '2' of [object Array]" from inside
+ * `Array.prototype.pop`, which names neither the scenario, nor `request()`, nor the rule. The
+ * throw is the enforcement; this is the part that makes it a diagnosis.
+ */
+const purityErrorFor = (error: StateMutationError, name: string): ImpureRequestError =>
+  new ImpureRequestError(
+    // The path is the whole gain over matching V8's message: `state.seats.0` says which field the
+    // builder consumed, in a config that may read a dozen.
+    `scenario "${name}": request() mutated the setup state at \`${error.path}\`, so it is not a ` +
+      `pure function of (state, ordinal). Every worker gets its own structured clone, so a builder ` +
+      `that consumes shared state — \`state.seats.pop()\` — hands each thread the same values ` +
+      `instead of distinct ones. Derive from the ordinal instead: \`seats[ordinal % seats.length]\`.`,
+  );
+
+/**
+ * A `structuredClone` that failed — almost always the state, and almost always a *pure* builder.
+ *
+ * Copy-then-edit is the idiomatic way to obey D25-02, and `structuredClone` cannot copy a proxy, so
+ * the guard breaks the very pattern it asks for. Untranslated this reaches the user as
+ * `worker-0: #<Object> could not be cloned.` — naming neither the scenario, nor `request()`, nor
+ * the guard, nor a way out.
+ *
+ * Counted as an ordinary build failure rather than an impure one: the builder did nothing wrong,
+ * and calling it impure would be the wrong accusation on the wrong exit code.
+ */
+const cloneErrorFor = (error: DOMException, name: string): Error =>
+  new Error(
+    // The exception carries no reference to the offending value, so the guard is a hypothesis, not
+    // a diagnosis — it goes second. Leading with it told a builder cloning a function of its own
+    // two sentences about a guard it never touched.
+    `scenario "${name}": request() could not clone a value — ${error.message} Functions, class ` +
+      `instances and proxies cannot be structured-cloned. If it was the setup state, that is the ` +
+      `guard: it is behind a proxy so that mutating it fails loudly (D25-02). Copy it with ` +
+      `\`JSON.parse(JSON.stringify(state.thing))\` if it is JSON-shaped — that turns a Date into a ` +
+      `string and a Buffer into \`{type,data}\`, so for those use a shallow copy instead: ` +
+      `\`{ ...state.thing }\` for an object, \`[...state.list]\` for an array, remembering nested ` +
+      `values are still guarded.`,
+  );
+
+const isDataCloneError = (error: unknown): error is DOMException =>
+  error instanceof DOMException && error.name === "DataCloneError";
+
 const eagerlyValidatedBuilder = (
   scenario: StampedeConfig<unknown>["scenarios"][string],
   setupState: unknown,
   name: string,
 ): ((ordinal: number) => HttpRequestSpec) => {
-  assertRequestShape(scenario.request(setupState, 0), name);
-  return (ordinal) => assertRequestShape(scenario.request(setupState, ordinal), name);
+  const build = (ordinal: number): HttpRequestSpec => {
+    try {
+      return assertRequestShape(scenario.request(setupState, ordinal), name);
+    } catch (error: unknown) {
+      // Only the guard's own error is translated. Anything else the builder throws is the build
+      // failure the dispatcher already counts, and rewriting it as a purity error would send a
+      // reader to the wrong contract. Matched on the *type* the guard threw rather than on a
+      // message, so a builder that throws its own `TypeError` about a read-only property is not
+      // accused of something it did not do.
+      if (error instanceof StateMutationError) {
+        throw purityErrorFor(error, name);
+      }
+      if (isDataCloneError(error)) {
+        throw cloneErrorFor(error, name);
+      }
+      throw error;
+    }
+  };
+  build(0);
+  return build;
 };
 
 export const scenariosFrom = (

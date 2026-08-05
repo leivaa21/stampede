@@ -26,6 +26,9 @@ const TYPE_STRIPPING_HELP = [
   "  • `namespace Foo {}`       → a module, or a plain object",
 ].join("\n");
 
+/** The two extensions Node strips types from. Whether either *loads as ESM* is a separate question. */
+const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".mts"]);
+
 /**
  * Resolves a user-supplied path to a `file:` URL, and refuses anything that is not a path.
  *
@@ -42,6 +45,16 @@ export const configUrlFor = (configPath: string): URL => {
   const absolute = path.resolve(configPath);
   if (!existsSync(absolute)) {
     throw new ConfigLoadError(`No config file at ${absolute}`);
+  }
+  // TypeScript-only is already what the README, `--help` and D1-04 promise — this makes the promise
+  // enforced rather than assumed.
+  if (!TYPESCRIPT_EXTENSIONS.has(path.extname(absolute))) {
+    throw new ConfigLoadError(
+      `${absolute} is not a config stampede loads — it takes \`.ts\` and \`.mts\`, whose types Node ` +
+        `strips itself (D1-04). The typed config *is* the DSL, which is the one packaging opinion ` +
+        `the tool holds. A \`.cts\` config is TypeScript too, but CommonJS — port it to ` +
+        `\`export default\` and rename it \`.mts\`.`,
+    );
   }
   return pathToFileURL(absolute);
 };

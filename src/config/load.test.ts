@@ -42,6 +42,17 @@ describe("loadConfig", () => {
     expect(Object.keys(config.scenarios)).toEqual(["reads"]);
   });
 
+  it("refuses a config that is not TypeScript, because the typed config is the DSL", async () => {
+    // Not a purity argument any more. D25-02 is enforced by a proxy, which throws in sloppy mode
+    // too, so the module system no longer decides whether the guard works — see `guard-state.ts`.
+    // This is the plain D1-04 promise: `.ts` and `.mts`, whose types Node strips itself.
+    const dir = mkdtempSync(join(tmpdir(), "stampede-cjs-"));
+    const file = join(dir, "scenarios.cjs");
+    writeFileSync(file, "module.exports = {};");
+
+    await expect(loadConfig(file)).rejects.toThrow(/is not a config stampede loads/);
+  });
+
   it("names the file when there is nothing to load", async () => {
     await expect(loadConfig("/nowhere/scenarios.ts")).rejects.toThrow(/No config file at/);
   });

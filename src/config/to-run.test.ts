@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { burst } from "../engine/arrival-profiles.ts";
+import { ImpureRequestError } from "../engine/run-spec.ts";
+import { guardState } from "./guard-state.ts";
 import type { StampedeConfig } from "./types.ts";
 import {
   DEFAULT_MAX_IN_FLIGHT,
@@ -60,7 +62,7 @@ describe("scenariosFrom", () => {
         configWith(() => "http://x/"),
         undefined,
       ),
-    ).toThrow(/scenario "reads": request\(\) must return an object/);
+    ).toThrow(/^scenario "reads": request\(\) must return an object/);
   });
 
   it("refuses a request() that returned an object with no url", () => {
@@ -127,5 +129,72 @@ describe("run settings", () => {
   it("always leaves at least one worker, even on a single-core machine", () => {
     // Floored at 1, not 0: a machine reporting one core should still run the test.
     expect(defaultWorkerCount()).toBeGreaterThanOrEqual(1);
+  });
+
+  describe("purity enforcement at the seam", () => {
+    it("passes an ordinary builder throw through unchanged", () => {
+      // The guard's whole point. Translating every throw would tell someone whose builder hit
+      // `Cannot read properties of undefined` that they mutated the setup state — the wrong
+      // contract, and a remedy that has nothing to do with their bug.
+      expect(() =>
+        scenariosFrom(
+          {
+            scenarios: {
+              reads: {
+                profile: burst({ count: 1 }),
+                // A builder reaching into state that is not there — the commonest real throw, and
+                // the one that must not be reported as a purity violation.
+                request: (state: { cfg?: { url: string } }) => ({
+                  url: (state.cfg as { url: string }).url,
+                }),
+              },
+            },
+          } as never,
+          {},
+        ),
+      ).toThrow(/^Cannot read properties of undefined/);
+    });
+
+    it("translates a guard violation into the contract it broke", () => {
+      expect(() =>
+        scenariosFrom(
+          {
+            scenarios: {
+              reads: {
+                profile: burst({ count: 1 }),
+                request: (state: { seats: string[]; url: string }) => ({
+                  url: `${state.url}?seat=${String(state.seats.pop())}`,
+                }),
+              },
+            },
+          } as never,
+          // Guarded by the caller, exactly as `worker-entry.ts` does — `scenariosFrom` converts, it
+          // does not guard its caller's argument.
+          guardState({ url: "http://localhost:1/", seats: ["a"] }),
+        ),
+      ).toThrow(/^scenario "reads": request\(\) mutated the setup state/);
+    });
+
+    it("throws the *type* the dispatcher branches on, not just the message", () => {
+      // `run-spec.ts` argues the class exists because this repo has been bitten twice by
+      // re-deriving that distinction from a string. Asserting only the message left the contract
+      // half-held: returning a plain `Error` with identical text passed the whole suite and folded
+      // every dispatch-time mutation back into `requestErrors` — "39 not built", exit 0.
+      expect(() =>
+        scenariosFrom(
+          {
+            scenarios: {
+              reads: {
+                profile: burst({ count: 1 }),
+                request: (state: { seats: string[]; url: string }) => ({
+                  url: `${state.url}?seat=${String(state.seats.pop())}`,
+                }),
+              },
+            },
+          } as never,
+          guardState({ url: "http://localhost:1/", seats: ["a"] }),
+        ),
+      ).toThrow(ImpureRequestError);
+    });
   });
 });

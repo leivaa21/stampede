@@ -1,6 +1,7 @@
 import type { LatencySummary, RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 import type { Verdict } from "../cli/thresholds.ts";
 import { cell, codeSpan, duration, ms, orderedKeys, rate } from "./format.ts";
+import { shortfallParts } from "./shortfall.ts";
 
 /**
  * The markdown report — the "prove your numbers" half of the pitch.
@@ -55,12 +56,7 @@ const percentileTable = (scenario: ScenarioRunSummary): string =>
   );
 
 const shortfallOf = (scenario: ScenarioRunSummary): string => {
-  const parts = [
-    scenario.droppedCount > 0 ? `${String(scenario.droppedCount)} dropped` : undefined,
-    scenario.requestErrorCount > 0 ? `${String(scenario.requestErrorCount)} not built` : undefined,
-    scenario.errorCount > 0 ? `${String(scenario.errorCount)} failed` : undefined,
-    scenario.abandonedCount > 0 ? `${String(scenario.abandonedCount)} abandoned` : undefined,
-  ].filter((part): part is string => part !== undefined);
+  const parts = shortfallParts(scenario);
   return parts.length === 0 ? "none" : parts.join(" · ");
 };
 

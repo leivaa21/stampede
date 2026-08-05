@@ -110,6 +110,16 @@ export const EngineMetric = {
    * a naming collision. Counted, because a refusal nobody counts is a silent hole.
    */
   collidingCounters: "stampede.collidingCounters",
+  /**
+   * Requests whose builder mutated the guarded setup state (D25-02).
+   *
+   * Counted apart from `requestErrors` because the consequence is different and worse: a builder
+   * that throws for its own reasons produced no request, while one that mutates shared state is
+   * *silently wrong across threads* — each worker consuming its own clone. Folded into
+   * `requestErrors` it read as "7 not built" and the run exited 0, which is the tool dropping most
+   * of its own load and reporting success.
+   */
+  impureRequests: "stampede.impureRequests",
 } as const;
 
 /**
@@ -136,6 +146,7 @@ const ENGINE_METRIC_KINDS: Readonly<Record<keyof typeof EngineMetric, "counter" 
     reservedNameRefusals: "counter",
     undeclaredCounters: "counter",
     collidingCounters: "counter",
+    impureRequests: "counter",
   };
 
 /**
@@ -149,8 +160,9 @@ const ENGINE_METRIC_KINDS: Readonly<Record<keyof typeof EngineMetric, "counter" 
  *
  * The counters that starve are exactly the ones that matter: `dropped` and `abandoned` are first
  * incremented when the target falls over, which is *after* a run's worth of user names exist. A
- * run that dropped 350 requests then reports zero drops, and `dispatched + dropped + notBuilt ===
- * scheduled` — the identity the README claims — stops holding with nothing on the page to say so.
+ * run that dropped 350 requests then reports zero drops, and `dispatched + dropped + notBuilt +
+ * impure === scheduled` — the identity the README claims — stops holding with nothing on the page
+ * to say so.
  *
  * Reserving a slot each makes `known.has(name)` permanently true, which is the only thing the
  * cardinality rule looks at. The count is deliberately not written here: hardcoding it made a test

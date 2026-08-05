@@ -77,11 +77,20 @@ export interface ScenarioRunSummary {
   /** Requests refused by the in-flight cap: dropped, and counted here so a report can annotate it. */
   readonly droppedCount: number;
   /**
+   * Requests whose builder mutated the guarded setup state (D25-02).
+   *
+   * Its own field rather than folded into `requestErrorCount`, because the consequence differs: a
+   * builder that threw produced no request, while one that mutated shared state is silently wrong
+   * across threads. Folded together it read as "7 not built" and the run exited 0.
+   */
+  readonly impureRequestCount: number;
+  /**
    * Requests the scenario's own builder could not produce, so they were never sent.
    *
    * A named field rather than a counter buried in the map, because without it
    * `dispatched + dropped === scheduled` — the identity the README claims — silently stopped
-   * holding, and a halved achieved rate had no cause anywhere on the page.
+   * holding, and a halved achieved rate had no cause anywhere on the page. `impureRequestCount`
+   * is part of the same identity, for the same reason.
    */
   readonly requestErrorCount: number;
   readonly responseCount: number;
@@ -342,6 +351,7 @@ const summariseScenario = (
     dispatchedCount,
     droppedCount: counted(EngineMetric.dropped),
     requestErrorCount: counted(EngineMetric.requestErrors),
+    impureRequestCount: counted(EngineMetric.impureRequests),
     responseCount: counted(EngineMetric.responses),
     errorCount: counted(EngineMetric.errors),
     abandonedCount: counted(EngineMetric.abandoned),

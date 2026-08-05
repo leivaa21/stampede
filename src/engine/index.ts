@@ -21,7 +21,12 @@ export { LiveProgress, runDispatch, type RunOutcome, type RunPorts } from "./dis
 export { httpTransport, type HttpRequestSpec } from "./http-transport.ts";
 export { EngineMetric } from "./metric-names.ts";
 export type { Clock, Transport, TransportResponse } from "./ports.ts";
-export { DEFAULT_DRAIN_TIMEOUT_MS, type RunSpec, type Scenario } from "./run-spec.ts";
+export {
+  DEFAULT_DRAIN_TIMEOUT_MS,
+  ImpureRequestError,
+  type RunSpec,
+  type Scenario,
+} from "./run-spec.ts";
 export type { RunSummary, ScenarioRunSummary } from "./run-summary.ts";
 export { mergedSchedule, type ScheduledDispatch, type ScheduledScenario } from "./schedule.ts";
 export { shardMaxInFlight, shardProfile, shardScenarios, type Shard } from "./schedule-split.ts";

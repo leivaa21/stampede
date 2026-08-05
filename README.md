@@ -173,9 +173,31 @@ scenarios: {
   expressible: `seatIds: [seats[ordinal % seats.length]]`. Ignore it and every request is identical,
   which is the namesake run.
 
-It must be a **pure function of `(state, ordinal)`** — every worker gets its own structured clone of
-the state, so a builder that consumes shared state (`state.seats.pop()`) hands four threads the same
-four values. If it throws, that request is counted as `not built` and the run continues.
+It must be a **pure function of `(state, ordinal)`**, and stampede enforces it: the setup state is
+guarded in each worker, so a builder that consumes shared state fails with the contract rather
+than with wrong numbers.
+
+```
+scenario "buyers": request() mutated the setup state at `state.seats.2`, so it is not a
+pure function of (state, ordinal). Every worker gets its own structured clone, so a builder
+that consumes shared state — `state.seats.pop()` — hands each thread the same values instead
+of distinct ones. Derive from the ordinal instead: `seats[ordinal % seats.length]`.
+```
+
+That is what the ordinal is for: variation is _derived_, not accumulated. Plain objects and arrays
+are guarded; a `Map`, `Set`, `Date` or `Buffer` in your state is left alone, so mutating one of
+those is not caught. **`structuredClone` cannot copy the guard**, so to build a payload from a
+template, copy it with `JSON.parse(JSON.stringify(state.template))` if it is JSON-shaped — that
+turns a `Date` into a string and a `Buffer` into `{type,data}`, so for those use a spread
+(`{ ...state.template }`, `[...state.list]`), remembering nested values are still guarded. The guard
+works whichever module system your config loads under — that is why
+it is a proxy and not `Object.freeze`, which fails silently in sloppy mode. Both failures are
+counted separately and printed on the shortfall line —
+`not built (request() threw)` and `not built (impure request())` — because the remedies have
+nothing in common. A mutation fails the run outright on exit `2`, since a request that was never
+built cannot be evidence. A throw leaves the run to continue and be judged on its thresholds —
+unless the failed builds outnumber the requests that went out, in which case the percentiles
+describe a minority of the schedule and the run fails on exit `2` too.
 
 What it returns:
 
@@ -318,9 +340,9 @@ Thresholds read them nested, in the shape you declared:
 Every declared key is present even if it never fired, so `["5xx"] === 0` means _none happened_
 rather than _the key is missing_.
 
-**Limits.** 64 keys per counter. Across a scenario, declarations compete with stampede's own 11
+**Limits.** 64 keys per counter. Across a scenario, declarations compete with stampede's own 12
 counters and one per check for a 512-name budget, of which **128 stay free** for your plain
-`record.count` — so declarations get up to **373 slots, minus one per check**. Exceeding that is a
+`record.count` — so declarations get up to **372 slots, minus one per check**. Exceeding that is a
 **startup** error with the arithmetic shown and the largest declaration named, not a surprise at
 the end of the run.
 
@@ -349,7 +371,7 @@ summary.elapsedMs
 summary.maxObservedInFlight
 summary.scenarios[i].{
   name,
-  scheduledCount, dispatchedCount, droppedCount, requestErrorCount,
+  scheduledCount, dispatchedCount, droppedCount, requestErrorCount, impureRequestCount,
   responseCount, errorCount, abandonedCount,
   requestedRatePerSecond, achievedRatePerSecond,
   latencyMs, scheduledLatencyMs, scheduleLagMs,
@@ -447,15 +469,17 @@ thresholds
 
 Lines you only see when they are non-zero, and what each one tells you:
 
-| Line                               | Meaning                                                                    |
-| ---------------------------------- | -------------------------------------------------------------------------- |
-| `shortfall … N dropped`            | The in-flight cap refused them. Raise `maxInFlight`.                       |
-| `shortfall … N not built`          | Your `request()` threw. The target was never asked — fix the config.       |
-| `shortfall … N failed`             | Transport-level failures: refused, DNS, timeout. Counted, never timed.     |
-| `shortfall … N abandoned`          | Still outstanding at the drain deadline. Left out of the percentiles.      |
-| `check BROKEN n <name>`            | That predicate threw or returned a non-boolean. Exit `2`.                  |
-| `⚠ N recordings refused`           | More distinct metric names than the caps allow. Some are missing entirely. |
-| `⚠ … percentiles are lower bounds` | Samples exceeded the histogram ceiling (67s). The numbers understate.      |
+| Line                                         | Meaning                                                                                            |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `shortfall … N dropped`                      | The in-flight cap refused them. Raise `maxInFlight`.                                               |
+| `shortfall … N not built (request() threw)`  | Your `request()` threw. The target was never asked — fix the config.                               |
+| `shortfall … N not built (impure request())` | Your `request()` mutated the setup state. Exit `2` — see **Purity** above.                         |
+| `shortfall … N failed`                       | Transport-level failures: refused, DNS, timeout. Counted, never timed.                             |
+| `shortfall … N abandoned`                    | Still outstanding at the drain deadline. Left out of the percentiles.                              |
+| `never built N of its M requests`            | More builds failed than requests went out. The latencies describe a minority of the run. Exit `2`. |
+| `check BROKEN n <name>`                      | That predicate threw or returned a non-boolean. Exit `2`.                                          |
+| `⚠ N recordings refused`                     | More distinct metric names than the caps allow. Some are missing entirely.                         |
+| `⚠ … percentiles are lower bounds`           | Samples exceeded the histogram ceiling (67s). The numbers understate.                              |
 
 Every rounding errs **away** from flattering your target: percentiles report the top of their
 bucket, a clamped value is a labelled lower bound rather than a bare number, and a scenario that
@@ -668,9 +692,9 @@ markdown report · live dashboard — and, from M2, named per-response **checks*
 **custom counters and trends** merged across worker threads, and **per-request variation** keyed on
 the run's ordinal. **550+ tests**, zero known vulnerabilities, gate two green across seven runs.
 
-**Next (M3): SSE / long-lived streaming requests** — open-ticket's contract run 5. One debt M2
-surfaced is still open: `request()` is documented as pure but not enforced. Bounded-cardinality
-counters landed in M2.5 — declare a key space and use `record.countKeyed`.
+**Next (M3): SSE / long-lived streaming requests** — open-ticket's contract run 5. Both debts M2
+surfaced were paid in M2.5: bounded-cardinality counters (declare a key space, use
+`record.countKeyed`) and `request()` purity, now enforced by guarding the setup state.
 
 **Not published to npm yet.** Install from source; `@leivaa21/stampede` is reserved.
 

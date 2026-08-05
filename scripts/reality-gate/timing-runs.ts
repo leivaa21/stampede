@@ -118,8 +118,12 @@ const gateRun = async ({
     );
     claim(
       "the loop consumed the whole schedule, and every instant landed in exactly one bucket",
-      summary.dispatchedCount + summary.droppedCount + summary.requestErrorCount === expectedCount,
-      `${String(expectedCount)} = ${String(summary.dispatchedCount)} sent + ${String(summary.droppedCount)} dropped + ${String(summary.requestErrorCount)} not built`,
+      summary.dispatchedCount +
+        summary.droppedCount +
+        summary.requestErrorCount +
+        summary.impureRequestCount ===
+        expectedCount,
+      `${String(expectedCount)} = ${String(summary.dispatchedCount)} sent + ${String(summary.droppedCount)} dropped + ${String(summary.requestErrorCount)} not built + ${String(summary.impureRequestCount)} impure`,
     );
 
     check(summary, stats, expectedCount);
@@ -211,8 +215,8 @@ export const timingRuns = async (): Promise<void> => {
       // promising otherwise would be contradicted by its own detail four words later.
       claim(
         "every request was built",
-        summary.requestErrorCount === 0,
-        `${String(summary.requestErrorCount)} not built, ${String(summary.droppedCount)} dropped`,
+        summary.requestErrorCount === 0 && summary.impureRequestCount === 0,
+        `${String(summary.requestErrorCount)} not built, ${String(summary.impureRequestCount)} impure, ${String(summary.droppedCount)} dropped`,
       );
     },
   });

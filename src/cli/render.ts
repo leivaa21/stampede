@@ -1,4 +1,5 @@
 import { duration, ms, orderedKeys, plain, rate } from "../report/format.ts";
+import { shortfallParts } from "../report/shortfall.ts";
 import type { LatencySummary, RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 import type { Verdict } from "./thresholds.ts";
 
@@ -37,17 +38,10 @@ const scenarioLines = (scenario: ScenarioRunSummary): readonly string[] => {
 
   // Only shown when non-zero, so a clean run reads clean — but never summarised away, because the
   // achieved rate below is only interpretable next to what did not happen.
-  const shortfalls = [
-    scenario.droppedCount > 0 ? `${String(scenario.droppedCount)} dropped` : undefined,
-    // `dispatched + dropped + notBuilt === scheduled` is the identity this line has to keep true.
-    // Without it a config whose `request()` threw showed a halved achieved rate with no cause
-    // anywhere on the page — the shortfall said "none".
-    scenario.requestErrorCount > 0
-      ? `${String(scenario.requestErrorCount)} not built (request() threw)`
-      : undefined,
-    scenario.errorCount > 0 ? `${String(scenario.errorCount)} failed` : undefined,
-    scenario.abandonedCount > 0 ? `${String(scenario.abandonedCount)} abandoned` : undefined,
-  ].filter((part): part is string => part !== undefined);
+  // `dispatched + dropped + notBuilt + impure === scheduled` is the identity this line keeps true.
+  // Without it a config whose `request()` threw showed a halved achieved rate with no cause
+  // anywhere on the page — the shortfall said "none".
+  const shortfalls = shortfallParts(scenario);
   if (shortfalls.length > 0) {
     lines.push(`    shortfall   ${shortfalls.join(" · ")}`);
   }

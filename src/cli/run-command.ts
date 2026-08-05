@@ -1,15 +1,16 @@
+import {
+  findBrokenObservations,
+  findImpureRequests,
+  findRefusedRecordings,
+  findUnbuiltMajority,
+  findUnmeasuredScenario,
+} from "./run-failures.ts";
 import path from "node:path";
 import { loadConfig } from "../config/load.ts";
 import { drainTimeoutMsFor, maxInFlightFor, workerCountFor } from "../config/to-run.ts";
 import type { RunSummary } from "../engine/run-summary.ts";
 import { runPool } from "../engine/worker-pool.ts";
-import {
-  evaluateThresholds,
-  findBrokenObservations,
-  findRefusedRecordings,
-  findUnmeasuredScenario,
-  type Verdict,
-} from "./thresholds.ts";
+import { evaluateThresholds, type Verdict } from "./thresholds.ts";
 
 /**
  * One `stampede run`, from a config path to a verdict.
@@ -133,9 +134,12 @@ export const runFromConfig = async (options: RunOptions): Promise<RunReport> => 
   // *measurements* are real and whose *claims* are not, so unlike an unmeasured scenario there is a
   // percentile table worth printing — and returning early would cost the reader the specific half
   // of the story, the same trade the teardown path below already refuses.
-  const runFailures = [findBrokenObservations(summary), findRefusedRecordings(summary)].filter(
-    (failure): failure is string => failure !== undefined,
-  );
+  const runFailures = [
+    findBrokenObservations(summary),
+    findRefusedRecordings(summary),
+    findImpureRequests(summary),
+    findUnbuiltMajority(summary),
+  ].filter((failure): failure is string => failure !== undefined);
 
   // The invariant is proven *after* the storm — this is the line D1-06 exists for. A throw here is
   // a violated claim, not a crashed tool, so it lands on exit 1 with the rest of them.

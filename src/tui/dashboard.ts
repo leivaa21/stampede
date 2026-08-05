@@ -1,4 +1,5 @@
 import { duration, ms, plain, rate } from "../report/format.ts";
+import { shortfallParts } from "../report/shortfall.ts";
 import type { RunSummary, ScenarioRunSummary } from "../engine/run-summary.ts";
 
 /**
@@ -41,7 +42,10 @@ const truncate = (line: string, width: number): string => {
   return [...printable].slice(0, Math.max(1, width)).join("");
 };
 
-/** A fixed-width bar over instants dealt with — dispatched plus dropped — against scheduled. */
+/**
+ * A fixed-width bar over instants dealt with — dispatched plus dropped plus the two kinds of
+ * unbuilt — against scheduled.
+ */
 const bar = (fraction: number, width = 24): string => {
   const filled = Math.max(0, Math.min(width, Math.round(fraction * width)));
   return `${"█".repeat(filled)}${"░".repeat(width - filled)}`;
@@ -61,9 +65,13 @@ const achievedSoFar = (dispatched: number, elapsedMs: number): number | undefine
   elapsedMs <= 0 ? undefined : (dispatched * 1000) / elapsedMs;
 
 const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonly string[] => {
-  // `dropped` and `not built` count too: both are schedule instants that have been dealt with, and
-  // a bar that ignored them would crawl while the run was in fact racing to its end.
-  const done = scenario.dispatchedCount + scenario.droppedCount + scenario.requestErrorCount;
+  // `dropped` and both kinds of `not built` count too: all are schedule instants that have been
+  // dealt with, and a bar that ignored them would crawl while the run was in fact racing to its end.
+  const done =
+    scenario.dispatchedCount +
+    scenario.droppedCount +
+    scenario.requestErrorCount +
+    scenario.impureRequestCount;
   const fraction = scenario.scheduledCount === 0 ? 0 : done / scenario.scheduledCount;
 
   const lines = [
@@ -73,11 +81,7 @@ const scenarioLines = (scenario: ScenarioRunSummary, elapsedMs: number): readonl
 
   // Shown the instant it is non-zero. A dashboard that only reveals drops at the end lets someone
   // watch a run they think is healthy for twenty minutes.
-  const shortfalls = [
-    scenario.droppedCount > 0 ? `${String(scenario.droppedCount)} dropped` : undefined,
-    scenario.requestErrorCount > 0 ? `${String(scenario.requestErrorCount)} not built` : undefined,
-    scenario.errorCount > 0 ? `${String(scenario.errorCount)} failed` : undefined,
-  ].filter((part): part is string => part !== undefined);
+  const shortfalls = shortfallParts(scenario);
   if (shortfalls.length > 0) {
     lines.push(`    ⚠ ${shortfalls.join(" · ")}`);
   }

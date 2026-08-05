@@ -361,7 +361,8 @@ difference between a proven run and an unasserted one.
 ## 2026-08-02 — Requests that could not be built are their own count, in the accounting identity
 
 **Decision.** `request()` throwing is counted as `requestErrorCount`, a named field on the scenario
-summary, and the run's identity becomes `dispatched + dropped + requestErrors === scheduled`. It is
+summary, and the run's identity becomes `dispatched + dropped + requestErrors === scheduled`
+(D25-02 adds a fourth term, `impureRequests`, for the same reason). It is
 kept apart from `errorCount` (transport failures) and from `droppedCount` (the in-flight cap).
 
 **Why.** All three are "a scheduled request that produced no response", and collapsing them loses
@@ -516,21 +517,82 @@ bites — the exact failure this decision removes.
 would be the silent hole `metrics/validate.ts` refuses. Implicit means a config cannot forget it,
 and a non-zero `other` is itself the signal that the declared key space is wrong.
 
-## 2026-08-03 — [D25-02] The setup state is deep-frozen, in the worker
+## 2026-08-03 — [D25-02] The setup state refuses mutation, at the worker's door
 
-**Decision.** `scenariosFrom` deep-freezes the setup state before building the request builder. A
-`request()` that mutates it throws, and the eager ordinal-0 call turns that into a
-`ConfigLoadError` naming the purity contract.
+**Decision.** `worker-entry.ts` wraps the setup state in a **proxy** whose write traps throw, before
+handing it to `scenariosFrom`. A `request()` that mutates it throws `StateMutationError` carrying
+the path that was written; the eager ordinal-0 call turns that into a message naming the purity
+contract and the field, and a mutation on a later ordinal is counted as `impureRequestCount` and
+fails the run.
 
-**Why in the worker.** `structuredClone` does not preserve frozenness, so freezing on the main
-thread would protect nothing. The worker's copy is the one a builder can reach.
+**Why in the worker, and at that door.** `structuredClone` carries neither frozenness nor a proxy,
+so doing this on the main thread would protect nothing — the worker's copy is the one a builder can
+reach. And at the _door_ rather than inside `scenariosFrom`, because that function is exported and a
+converter that guarded its caller's argument would be a side effect its name and signature do not disclose.
 
-**Why freeze rather than compare two calls.** Calling `request(state, 0)` twice and comparing would
+**Why a proxy rather than `Object.freeze`.** This decision originally said deep-freeze, and it was
+wrong: a frozen object only _throws_ in strict mode. In sloppy mode the write is discarded in
+silence — measured on Node 24, `state.nonce += 1` against frozen state does nothing at all — which
+is this guard switched off, and worse than off, since the user's own mutation is dropped too.
+
+Whether a config is sloppy depends on the module system Node picks for it, and two attempts to
+settle that up front were both wrong. The first gated on the file extension, which misses that a
+`.ts` file's module system comes from the nearest `package.json`. The second read that
+`package.json` and treated a missing `"type"` as CommonJS — which would have refused the majority of
+Node projects, because Node's syntax detection reparses a typeless `.ts` as an ES module. Neither
+could have been exact anyway: the format is a function of the package _and_ the file's own syntax, so
+a `module.exports`-shaped config runs sloppy even with no `package.json` at all.
+
+A proxy trap has no such dependency. The throw comes from the trap rather than from assignment
+semantics, so it fires in sloppy mode too and the question stops needing an answer — the module-format detection an
+earlier attempt needed, and the CommonJS refusal in `configUrlFor`, were both deleted. The trap also _knows what was written_,
+so the error carries `state.seats.0` instead of leaving the caller to recognise one of three V8
+message wordings by regex. The claim is asserted end to end in `run-command.test.ts`, against a
+config Node genuinely loads as CommonJS; swapping the proxy back for a freeze reddens it.
+
+**Why enforce rather than compare two calls.** Calling `request(state, 0)` twice and comparing would
 also catch a nonce — but it false-positives on a builder that legitimately varies on something
-external, and it doubles a call the author was told runs once per dispatch. Freezing catches the
-violation that actually happens, `state.seats.pop()`, at the first dispatch and with a message. A
-config doing that was already broken across four threads, each holding its own clone; this makes it
-fail loudly rather than publish wrong numbers.
+external, and it doubles a call the author was told runs once per dispatch. This catches the
+violation that actually happens, `state.seats.pop()`, with a message.
+
+**Only plain objects and arrays are wrapped**, and that is a correctness constraint rather than a
+simplification. A `Map` or `Set` behind a proxy _throws_ on its own methods — they reach for internal
+slots the proxy does not have — so wrapping them would break working configs, and it would catch
+nothing anyway, since `map.set(k, v)` fires no `set` trap either way. A `Buffer` in the setup state
+is the canonical shape for load-testing an authed API and has to keep working. **Consequence,
+stated:** a `Map`, `Set`, `Date` or typed array in the state can still be mutated and this will not
+catch it. Children are wrapped in place _before the proxy is handed out_, so no `get` trap is
+needed: a read finds an already-wrapped child sitting on the target. Reads are still proxy reads —
+measured on Node 24, a build against guarded state costs ~106 ns against ~2 ns plain — but a
+memoised `get` trap costs ~306 ns for the same shape, so this is the cheaper of the two guards by
+3x, and neither is visible next to a network round trip. The real argument for this shape is that a
+`get` trap would have to re-derive child identity on every read, and `state.left === state.right`
+has to keep holding.
+
+**Consequence, translated rather than left raw:** `structuredClone` cannot copy a proxy, so
+copy-then-edit — the idiomatic way to _obey_ this contract — breaks against the guard. Untranslated
+it reaches the user as `worker-0: #<Object> could not be cloned.`, naming nothing. `to-run.ts`
+catches `DataCloneError` out of a builder and answers it with the scenario, the cause and the
+remedy (`JSON.parse(JSON.stringify(...))`), and both the failure and the remedy are asserted end to
+end. This is the guard's one real cost over the freeze, which was cloneable.
+
+**Amended 2026-08-05 — a run that lost most of its schedule to the builder now fails.** The clone
+failure above exposed a gap that predates it: a `request()` throwing on ordinals 1..9 of 10 printed
+`9 not built`, published a p99 from the single sample, and exited **0** with a green threshold. A
+build error is deliberately not fatal — that is right at three ordinals in ten thousand — but when
+the failed builds outnumber the dispatches, the percentiles describe a minority of the run, and
+grading a target on them is the "refused most of its own load and reported success" failure this
+same decision calls disqualifying. `findUnbuiltMajority` fails those on exit 2.
+
+**A later-ordinal mutation gets its own count, not `requestErrors`.** Folded together it read as
+"9 not built" and the run exited 0 — stampede refusing 90 % of its own load and reporting success,
+which is worse than the impurity it was policing. `impureRequestCount` is a term of the dispatch
+identity (`dispatched + dropped + requestErrors + impure === scheduled`) and has its own run-failure
+message, because "a check or onResponse threw" is the wrong sentence for a config with neither.
+
+**`configUrlFor` still refuses anything that is not `.ts` or `.mts`**, but on the D1-04 grounds the
+README and `--help` already promise — the typed config _is_ the DSL — and no longer as a purity
+argument, which it turned out not to be.
 
 ## 2026-08-03 — [D25-03] Gate two runs nightly, and cannot redden a pull request
 

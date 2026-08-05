@@ -32,6 +32,7 @@ const scenario = (over: Partial<ScenarioRunSummary> = {}): ScenarioRunSummary =>
   dispatchedCount: 40,
   droppedCount: 0,
   requestErrorCount: 0,
+  impureRequestCount: 0,
   responseCount: 38,
   errorCount: 0,
   abandonedCount: 0,
@@ -71,6 +72,20 @@ describe("frameFor", () => {
     const frame = frameFor(summaryOf(scenario({ droppedCount: 5, errorCount: 2 }))).join("\n");
 
     expect(frame).toContain("⚠ 5 dropped · 2 failed");
+  });
+
+  it("shows an impure builder while the run is still going", () => {
+    // The bar counts them as dealt with from the start; without this the shortfall stayed silent,
+    // so it raced to 10/10 with one answered and no ⚠ explaining the nine — the twenty-minute
+    // silence this file refuses for drops.
+    const frame = frameFor(
+      summaryOf(scenario({ scheduledCount: 10, dispatchedCount: 1, impureRequestCount: 9 })),
+    ).join("\n");
+
+    expect(frame).toContain("9 not built (impure request())");
+    // The bar's own term, which the comment above argues for and nothing asserted: without it a
+    // run that is in fact finished stalls at 1/10 on screen for as long as the user watches.
+    expect(frame).toContain("10/10");
   });
 
   it("says nothing about shortfalls when there are none", () => {
