@@ -122,7 +122,7 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
       // A report that could not be written must not turn a passing run into a failing one, but it
       // must not pass silently either — someone asked for it and is going to go looking.
       err(
-        `stampede: could not write the report: ${error instanceof Error ? error.message : String(error)}`,
+        `stampede: could not write the report: ${plain(error instanceof Error ? error.message : String(error))}`,
       );
     }
   }
@@ -169,9 +169,13 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
  * an `await`. These two handlers are what make the claim above true rather than aspirational.
  */
 const exitOnStrayFailure = (label: string) => (error: unknown) => {
-  err(
-    `stampede: ${label}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
-  );
+  // `plain` here as everywhere else that writes free text. This handler was the one door that
+  // skipped it, and a target can reach it: a config with a floating `Promise.reject(new
+  // Error(res.text))` in `onResponse` produces a stack whose first line is the target's own
+  // response body, printed with its escapes live. Newlines are kept — a stack without them is
+  // unreadable — by stripping each line rather than the whole string.
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  err(`stampede: ${label}: ${detail.split("\n").map(plain).join("\n")}`);
   process.exit(ExitCode.RunFailed);
 };
 process.on("unhandledRejection", exitOnStrayFailure("unhandled rejection"));
