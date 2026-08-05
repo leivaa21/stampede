@@ -233,4 +233,53 @@ export default defineConfig({
     expect(result.stderr).not.toContain("\u001b");
     expect(result.stderr).not.toContain("\r");
   }, 30_000);
+
+  it("strips escapes out of a stray rejection's stack, the one door that skipped it", async () => {
+    // `setup` and `teardown` run on the *main thread*, where a floating rejection reaches
+    // `exitOnStrayFailure` — the one writer in the CLI that printed free text without `plain`.
+    // Reachable with target-controlled text: a teardown that asserts against a response body and
+    // forgets an `await` puts that body on the first line of a stack printed raw, with its escapes
+    // live, in a CI log, by a tool whose argument is that its output is evidence.
+    const configPath = writeConfig(`export default defineConfig({
+  setup: () => {
+    void Promise.reject(new Error("\\u001b[2Jstampede: ALL CHECKS PASSED"));
+    return { url: ${JSON.stringify(target.url)} };
+  },
+  scenarios: {
+    reads: { profile: burst({ count: 1 }), request: (s) => ({ url: s.url }) },
+  },
+  workers: 1,
+  maxInFlight: 4,
+  drainTimeoutMs: 2000,
+});`);
+
+    const result = await runCli(["run", configPath]);
+
+    expect(result.stderr).toContain("unhandled rejection");
+    // The text survives; the escape that would clear the reader's screen does not.
+    expect(result.stderr).toContain("stampede: ALL CHECKS PASSED");
+    expect(result.stderr).not.toContain("\u001b");
+    // Newlines are kept — a stack stripped of them is unreadable.
+    expect(result.stderr.split("\n").length).toBeGreaterThan(2);
+  }, 30_000);
+
+  it("strips escapes from a failed report write, whose message carries the user's path", async () => {
+    // The third writer this change touched. The fs error embeds `--report` verbatim, and a path
+    // may contain a carriage return — enough on its own to overwrite the line printed above it.
+    const result = await runCli([
+      "run",
+      writeConfig(`export default defineConfig({
+  setup: () => ({ url: ${JSON.stringify(target.url)} }),
+  scenarios: { reads: { profile: burst({ count: 1 }), request: (s) => ({ url: s.url }) } },
+  workers: 1,
+  maxInFlight: 4,
+  drainTimeoutMs: 2000,
+});`),
+      "--report",
+      "/proc/version/\u001b[2Jsub/nope.md",
+    ]);
+
+    expect(result.stderr).toContain("could not write the report");
+    expect(result.stderr).not.toContain("\u001b");
+  }, 30_000);
 });

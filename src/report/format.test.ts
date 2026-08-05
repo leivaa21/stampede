@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cell, orderedKeys, plain } from "./format.ts";
+import { cell, codeSpan, orderedKeys, plain } from "./format.ts";
 
 /**
  * The two functions that stand between a target's bytes and a published document.
@@ -74,5 +74,19 @@ describe("orderedKeys", () => {
 
   it("omits `other` when it is not there", () => {
     expect(orderedKeys({ b: 1, a: 2 })).toEqual(["a", "b"]);
+  });
+});
+
+describe("codeSpan", () => {
+  it("strips control characters, like its sibling does", () => {
+    // Its one non-constant caller is the config path in the report's provenance block. A filename
+    // may contain a newline, which ends the code span and lets the rest be read as markdown — a
+    // fake heading inside an artifact whose purpose is being pasted into a PR.
+    expect(codeSpan("scenarios\n## PASSED\n.ts")).not.toContain("\n");
+    expect(codeSpan("a\u001b[31mb")).toBe("`a [31mb`");
+  });
+
+  it("still neutralises the backtick that would break the span", () => {
+    expect(codeSpan("a`b")).toBe("`a'b`");
   });
 });

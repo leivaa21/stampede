@@ -80,5 +80,14 @@ export const orderedKeys = (keys: Readonly<Record<string, number>>): readonly st
  */
 export const cell = (text: string): string => plain(text).replace(/\|/g, "\\|").trim();
 
-/** The same, for a value going inside an inline code span, where a backtick would break out. */
-export const codeSpan = (text: string): string => `\`${text.replace(/`/g, "'")}\``;
+/**
+ * The same, for a value going inside an inline code span, where a backtick would break out.
+ *
+ * `plain` for the same reason `cell` uses it, and it was missing here: its one non-constant caller
+ * is the config path in the report's provenance block, and a filename on Linux may contain a
+ * newline. That ends the code span and lets the rest of the path be read as markdown — a fake
+ * heading, or a bogus **PASSED**, inside the artifact whose whole purpose is being pasted into a
+ * PR. Self-inflicted rather than target-controlled, but it was the one asymmetry in this module's
+ * escaping story, and an escaping story with an exception is one nobody can rely on.
+ */
+export const codeSpan = (text: string): string => `\`${plain(text).replace(/`/g, "'")}\``;
