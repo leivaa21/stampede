@@ -601,14 +601,15 @@ argument, which it turned out not to be.
 
 **Why not blocking.** The gate's claims are timing bands — a p50 inside 48–65 ms, a rate within
 5 % — and a shared runner under load fails them for a _correct_ change. A gate that cries wolf is
-one people learn to ignore, and this one is the repo's evidence. The README calls it a manual
-milestone gate; making it blocking would make that sentence false.
+one people learn to ignore, and this one is the repo's evidence. The README calls it a milestone
+gate and never a required check; making it blocking would make that sentence false.
 
 **Why not never.** M2's review found the README publishing an achieved rate from a build two
 milestones old: the response-body read M2 added cost real per-response time, and nothing
 re-measured it. Evidence that never re-runs rots silently.
 
-**Amended 2026-08-05 — the pipe into `tee` is why the step sets `shell: bash`.** The runner's default shell is `bash -e`
+**Amended 2026-08-05 — the pipe into `tee` is why the step sets `shell: bash`.** The runner's
+default shell is `bash -e`
 _without_ `pipefail`, so `pnpm gate:two | tee gate-two.log` would report `tee`'s exit code — a
 failing gate would go green and the whole workflow would watch nothing. The log itself is the
 artefact: a failure that only said "exit 1" would send someone to re-run 39 claims locally to find
@@ -627,6 +628,13 @@ dedup keys on the open issue, every real failure for the next week would only co
 infrastructure story. So the gate step records `failed=true/false` as an output and the notify job
 keys on that; infrastructure failures redden the run and email the owner, which is GitHub's job,
 not this file's.
+
+**The gate's exit codes are the CLI's own contract, and the workflow keys on `1`.** `1` is a claim
+that did not hold; `2` is "the gate could not be run" — a throw out of a run, an OOM-killed worker,
+a port that would not bind. Collapsing them into "non-zero" is what would let a shared runner
+running out of memory open an issue titled "the published numbers may no longer be true", and then,
+because there is one sticky issue, pin every real failure for the next week behind that
+infrastructure story. Verified all three ways against the real gate before writing this down.
 
 **Known and accepted: GitHub disables a scheduled workflow after 60 days without repository
 activity.** For a showcase repo that goes quiet between milestones this is the likeliest way the

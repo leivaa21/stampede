@@ -19,13 +19,28 @@ import { timingRuns } from "./timing-runs.ts";
  * **invariant** survives checks, counters, a worker pool and a summary, and comes out agreeing with
  * a referee that counted independently.
  *
- * Exits non-zero if any claim fails, so it can gate a release the same way a threshold gates a run.
+ * **The exit codes are the CLI's own contract, for the same reason.** `1` means a claim did not
+ * hold — the numbers this repo publishes are no longer true. `2` means the gate could not be run at
+ * all: a throw out of a run, an OOM-killed worker, a port that would not bind. Collapsing them into
+ * "non-zero" is what would let the nightly workflow open an issue titled "the published numbers may
+ * no longer be true" because a shared runner ran out of memory — and then, because it keeps one
+ * sticky issue, pin every real failure for the next week behind that infrastructure story.
  */
 
-await timingRuns();
-await workerPoolRun();
-await theStampede();
-await hotShowManySeats();
+try {
+  await timingRuns();
+  await workerPoolRun();
+  await theStampede();
+  await hotShowManySeats();
+} catch (error: unknown) {
+  process.stderr.write(
+    `\n${"═".repeat(76)}\nGATE TWO COULD NOT RUN — this is not a failed claim\n${"═".repeat(76)}\n`,
+  );
+  process.stderr.write(
+    `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+  );
+  process.exit(2);
+}
 
 const failures = failureCount();
 process.stdout.write(`\n${"═".repeat(76)}\n`);

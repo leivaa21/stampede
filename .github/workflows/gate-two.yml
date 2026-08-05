@@ -64,31 +64,29 @@ jobs:
         # default shell is `bash -e` *without* it, so the pipe into `tee` would report tee's exit
         # code — a failing gate would go green and this whole file would watch nothing.
         shell: bash
-        # Does not fail the job here, so the log still uploads and the output below is still set.
-        # The last step turns a failed claim back into a red job.
-        continue-on-error: true
         # The log is the artefact: a failure that only says "exit 1" would send someone to re-run
         # it locally to find out which of the 39 claims broke.
+        #
+        # Keyed on exit **1** specifically, which the gate reserves for "a claim did not hold". Exit
+        # 2 — a throw, an OOM-killed worker, a port that would not bind — reddens the run without
+        # opening an issue asserting the published numbers are false, because it is not evidence
+        # about them either way. `|| rc=$?` because `-e` would abort the step before we could look.
         run: |
-          if pnpm gate:two 2>&1 | tee gate-two.log; then
-            echo "failed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "failed=true" >> "$GITHUB_OUTPUT"
-          fi
+          rc=0
+          pnpm gate:two 2>&1 | tee gate-two.log || rc=$?
+          echo "failed=$([ "$rc" = "1" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          exit "$rc"
 
       - name: Upload the run's output
-        if: always()
+        # Not on the install-failure path, where there is no log and the action warns about it.
+        if: always() && steps.gate.conclusion != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: gate-two-log
           path: gate-two.log
-          retention-days: 30
-
-      - name: Fail if a claim did not hold
-        if: steps.gate.outputs.failed == 'true'
-        run: |
-          echo "::error::A claim in the reality gate did not hold — see the gate-two-log artifact."
-          exit 1
+          # Longer than the artifact default, because the sticky issue outlives a fortnight and its
+          # body sends the reader here.
+          retention-days: 90
 
   # A separate job so that `issues: write` never covers `pnpm install` or the user config the gate
   # executes. It is also what makes the failure *specific*: `if: failure()` on a step is job-scoped,

@@ -30,10 +30,10 @@
 > published number that fails the run, because a threshold reading a refused counter reads a
 > confident 0.
 >
-> **Gate two (`pnpm gate:two`) is the proof, and it runs the shipped code.** A manual milestone
-> gate, run by hand and nightly but never a required check — it spawns servers and leans on real
-> timing. Numbers below are from a
-> 16-core dev box; the _relationships_ are what the claims assert, not the absolute throughput.
+> **Gate two (`pnpm gate:two`) is the proof, and it runs the shipped code.** A milestone gate, run
+> by hand before a milestone is called done and nightly by a workflow, but never a required check —
+> it spawns servers and leans on real timing. Numbers below are from a 16-core dev box; the
+> _relationships_ are what the claims assert, not the absolute throughput.
 > Seven runs, 39 claims: a 50 ms
 > target reads 52 ms; a target slower than the load offered reports p99 5910 ms against its 200 ms
 > service time without throttling itself; asked for 50,000 rps on one thread it admits about a
