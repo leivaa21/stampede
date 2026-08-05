@@ -1,0 +1,105 @@
+name: Gate two
+
+# The reality gate, nightly (D25-03).
+#
+# **Deliberately not a pull-request check.** Its claims are timing bands — run 1 asserts a p50
+# inside 48–65 ms, run 2 a rate within 5 % — and a shared runner under load fails them for a
+# *correct* change. A gate that cries wolf is one people learn to ignore, and this one is the
+# repo's evidence.
+#
+# **But not never, either.** M2's review found the README publishing an achieved rate from a build
+# two milestones old: the response-body read M2 added cost real per-response time and nothing
+# re-measured it. Evidence that never re-runs rots silently, and by the time a human notices, the
+# showcase has been lying for a milestone.
+on:
+  schedule:
+    # 03:00 UTC. Nothing depends on the hour; it is off-peak for the shared runners.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+# `issues: write` is the whole reason this file needs more than `contents: read`. Nothing else here
+# writes anything, and the job that opens the issue is the only step that gets the token.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  # A run takes ~90s and a manual dispatch during a scheduled one would fight for port 5999.
+  group: gate-two
+  cancel-in-progress: false
+
+jobs:
+  gate-two:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install (frozen)
+        run: pnpm install --frozen-lockfile
+
+      - name: Gate two
+        # `shell: bash` for `pipefail`, and it is load-bearing rather than stylistic. The runner's
+        # default shell is `bash -e` *without* it, so the pipe into `tee` would report tee's exit
+        # code — a failing gate would go green and this whole file would watch nothing.
+        shell: bash
+        # The log is the artefact: a failure that only says "exit 1" would send someone to re-run
+        # it locally to find out which of the 39 claims broke.
+        run: pnpm gate:two 2>&1 | tee gate-two.log
+
+      - name: Upload the run's output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-two-log
+          path: gate-two.log
+          retention-days: 30
+
+      - name: Open an issue when a claim fails
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const run = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            // One open issue, not one per night. A gate that fails for a week should be one
+            // conversation, and a tracker with seven identical issues is a tracker nobody reads.
+            const open = await github.rest.issues.listForRepo({
+              owner, repo, state: "open", labels: "gate-two",
+            });
+            if (open.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: open.data[0].number,
+                body: `Still failing — [run ${context.runId}](${run}).`,
+              });
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner, repo, labels: ["gate-two"],
+              title: "Gate two failed — the published numbers may no longer be true",
+              body: [
+                `A claim in the reality gate did not hold: [run ${context.runId}](${run}).`,
+                "",
+                "The gate drives the shipped engine against a reference target whose behaviour is",
+                "known in advance, and the README and `CLAUDE.md` publish its numbers. A failure",
+                "means either the tool changed or the numbers on those pages are now false — and",
+                "the second is the one this schedule exists to catch.",
+                "",
+                "The `gate-two-log` artifact on that run has the full output, including which of",
+                "the claims failed and what it measured instead.",
+                "",
+                "Reproduce locally with `pnpm gate:two`. Note the run's own caveat: the absolute",
+                "throughput of run 4 is the least reproducible number in the gate — read the",
+                "relationships, not the digits.",
+              ].join("\n"),
+            });

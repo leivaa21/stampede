@@ -607,3 +607,13 @@ milestone gate; making it blocking would make that sentence false.
 **Why not never.** M2's review found the README publishing an achieved rate from a build two
 milestones old: the response-body read M2 added cost real per-response time, and nothing
 re-measured it. Evidence that never re-runs rots silently.
+
+**The pipe into `tee` is why the step sets `shell: bash`.** The runner's default shell is `bash -e`
+_without_ `pipefail`, so `pnpm gate:two | tee gate-two.log` would report `tee`'s exit code — a
+failing gate would go green and the whole workflow would watch nothing. The log itself is the
+artefact: a failure that only said "exit 1" would send someone to re-run 39 claims locally to find
+out which one broke.
+
+**One open issue, not one per night.** A gate failing for a week is one conversation; a tracker with
+seven identical issues is a tracker nobody reads. The job comments on the existing `gate-two` issue
+when there is one, and `issues: write` is the only permission this file adds over `contents: read`.
