@@ -230,6 +230,33 @@ export const failureCount = (): number => failures;
  */
 export const claimCount = (): number => claims;
 
+export interface Verdict {
+  readonly line: string;
+  readonly exitCode: 0 | 1 | 2;
+}
+
+/**
+ * The gate's whole contract in one pure function: how many claims ran, how many failed, and what
+ * that means for the exit code the nightly workflow classifies on.
+ *
+ * Pure and exported so it can be tested as a table. `1` is a claim that did not hold; `2` is "the
+ * gate could not be run", **including zero claims** — a refactor that stopped calling `claim()`
+ * would otherwise turn the gate into a green light over an empty run, which is the same lie as a
+ * percentile drawn from an empty histogram.
+ */
+export const verdict = (failures: number, total: number): Verdict => {
+  if (total === 0) {
+    return { line: "GATE TWO COULD NOT RUN — no claims were made", exitCode: 2 };
+  }
+  if (failures > 0) {
+    return { line: `GATE TWO FAILED — ${String(failures)} claim(s) did not hold`, exitCode: 1 };
+  }
+  return {
+    line: `GATE TWO PASSED — ${String(total)} claims, the numbers are true against a target that knows better`,
+    exitCode: 0,
+  };
+};
+
 export const ms = (value: number | undefined): string =>
   value === undefined ? "n/a" : `${value.toFixed(1)}ms`;
 
