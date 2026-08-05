@@ -258,9 +258,28 @@ export default defineConfig({
     expect(result.stderr).toContain("unhandled rejection");
     // The text survives; the escape that would clear the reader's screen does not.
     expect(result.stderr).toContain("stampede: ALL CHECKS PASSED");
-    // eslint-disable-next-line no-control-regex
-    expect(result.stderr).not.toMatch(/\u001b\[2J/);
+    expect(result.stderr).not.toContain("\u001b");
     // Newlines are kept — a stack stripped of them is unreadable.
     expect(result.stderr.split("\n").length).toBeGreaterThan(2);
+  }, 30_000);
+
+  it("strips escapes from a failed report write, whose message carries the user's path", async () => {
+    // The third writer this change touched. The fs error embeds `--report` verbatim, and a path
+    // may contain a carriage return — enough on its own to overwrite the line printed above it.
+    const result = await runCli([
+      "run",
+      writeConfig(`export default defineConfig({
+  setup: () => ({ url: ${JSON.stringify(target.url)} }),
+  scenarios: { reads: { profile: burst({ count: 1 }), request: (s) => ({ url: s.url }) } },
+  workers: 1,
+  maxInFlight: 4,
+  drainTimeoutMs: 2000,
+});`),
+      "--report",
+      "/proc/version/\u001b[2Jsub/nope.md",
+    ]);
+
+    expect(result.stderr).toContain("could not write the report");
+    expect(result.stderr).not.toContain("\u001b");
   }, 30_000);
 });

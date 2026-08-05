@@ -41,7 +41,7 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
     return ExitCode.Ok;
   }
   if (args.kind === "error") {
-    err(`stampede: ${args.message}`);
+    err(`stampede: ${plain(args.message)}`);
     err("");
     err(HELP);
     return ExitCode.RunFailed;
@@ -96,7 +96,9 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
   if (args.reportPath !== undefined && report.summary === undefined) {
     // Silence here is dangerous: a CI job that uploads out.md as an artifact would publish the
     // previous run's numbers as this run's.
-    err(`stampede: no report written to ${args.reportPath} — the run produced no measurements`);
+    err(
+      `stampede: no report written to ${plain(args.reportPath)} — the run produced no measurements`,
+    );
   }
   if (args.reportPath !== undefined && report.summary !== undefined) {
     try {
@@ -117,7 +119,7 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
           generatedAt: new Date(),
         }),
       );
-      out(`report written to ${target}`);
+      out(`report written to ${plain(target)}`);
     } catch (error: unknown) {
       // A report that could not be written must not turn a passing run into a failing one, but it
       // must not pass silently either — someone asked for it and is going to go looking.
@@ -160,6 +162,13 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
 };
 
 /**
+ * **Every writer of free text in this file goes through `plain`, with no exception.** Most carry
+ * only the operator's own argv or a resolved path — self-inflicted rather than target-controlled —
+ * and each could be argued out of individually. The point is that the argument does not have to be
+ * made: a reader auditing this file should be able to check the rule holds by grepping for `err(`
+ * and `out(`, not by tracing which strings a target can reach.
+ */
+/**
  * Every failure lands on a deliberate code — never on Node's default uncaught-exception exit of 1,
  * which is the code reserved for "your system violated an invariant".
  *
@@ -173,7 +182,9 @@ const exitOnStrayFailure = (label: string) => (error: unknown) => {
   // skipped it, and a target can reach it: a config with a floating `Promise.reject(new
   // Error(res.text))` in `onResponse` produces a stack whose first line is the target's own
   // response body, printed with its escapes live. Newlines are kept — a stack without them is
-  // unreadable — by stripping each line rather than the whole string.
+  // unreadable — by stripping each line rather than the whole string. What that accepts, stated: a
+  // message containing `\n` still injects *lines*, and a well-chosen one reads as a forged
+  // `    at …` frame. A flattened stack is the worse trade, so this is the one deliberately.
   const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
   err(`stampede: ${label}: ${detail.split("\n").map(plain).join("\n")}`);
   process.exit(ExitCode.RunFailed);
@@ -186,6 +197,6 @@ run(process.argv.slice(2))
     process.exitCode = code;
   })
   .catch((error: unknown) => {
-    err(`stampede: ${error instanceof Error ? error.message : String(error)}`);
+    err(`stampede: ${plain(error instanceof Error ? error.message : String(error))}`);
     process.exitCode = ExitCode.RunFailed;
   });
