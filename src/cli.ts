@@ -16,6 +16,13 @@ import { readVersion } from "./version.ts";
  * to be able to tell "your system broke an invariant" (1) from "the tool could not run" (2). A
  * broken install reporting as a failed threshold would send someone hunting a race condition that
  * was never there.
+ *
+ * **Every writer of free text here goes through `plain`, with no exception.** Most carry only the
+ * operator's own argv or a resolved path — self-inflicted rather than target-controlled — and each
+ * could be argued out of individually. The point is that the argument does not have to be made: the
+ * rule is checkable by grepping `err(` and `out(`, rather than by tracing which strings a target can
+ * reach. The only writes without it are string constants (`HELP`, the version), a `String(<number>)`,
+ * and `cli/render.ts`'s output, which sanitises every name and message internally.
  */
 
 const out = (text: string): void => {
@@ -161,13 +168,6 @@ const run = async (argv: readonly string[]): Promise<ExitCodeValue> => {
   return report.exitCode;
 };
 
-/**
- * **Every writer of free text in this file goes through `plain`, with no exception.** Most carry
- * only the operator's own argv or a resolved path — self-inflicted rather than target-controlled —
- * and each could be argued out of individually. The point is that the argument does not have to be
- * made: a reader auditing this file should be able to check the rule holds by grepping for `err(`
- * and `out(`, not by tracing which strings a target can reach.
- */
 /**
  * Every failure lands on a deliberate code — never on Node's default uncaught-exception exit of 1,
  * which is the code reserved for "your system violated an invariant".
