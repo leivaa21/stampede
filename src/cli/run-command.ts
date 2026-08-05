@@ -1,17 +1,16 @@
+import {
+  findBrokenObservations,
+  findImpureRequests,
+  findRefusedRecordings,
+  findUnbuiltMajority,
+  findUnmeasuredScenario,
+} from "./run-failures.ts";
 import path from "node:path";
 import { loadConfig } from "../config/load.ts";
 import { drainTimeoutMsFor, maxInFlightFor, workerCountFor } from "../config/to-run.ts";
 import type { RunSummary } from "../engine/run-summary.ts";
 import { runPool } from "../engine/worker-pool.ts";
-import {
-  evaluateThresholds,
-  findBrokenObservations,
-  findImpureRequests,
-  findUnbuiltMajority,
-  findRefusedRecordings,
-  findUnmeasuredScenario,
-  type Verdict,
-} from "./thresholds.ts";
+import { evaluateThresholds, type Verdict } from "./thresholds.ts";
 
 /**
  * One `stampede run`, from a config path to a verdict.

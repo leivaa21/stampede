@@ -544,8 +544,8 @@ could have been exact anyway: the format is a function of the package _and_ the 
 a `module.exports`-shaped config runs sloppy even with no `package.json` at all.
 
 A proxy trap has no such dependency. The throw comes from the trap rather than from assignment
-semantics, so it fires in sloppy mode too and the question stops needing an answer — `module-format.ts`
-and the CommonJS refusal in `configUrlFor` were both deleted. The trap also _knows what was written_,
+semantics, so it fires in sloppy mode too and the question stops needing an answer — the module-format detection an
+earlier attempt needed, and the CommonJS refusal in `configUrlFor`, were both deleted. The trap also _knows what was written_,
 so the error carries `state.seats.0` instead of leaving the caller to recognise one of three V8
 message wordings by regex. The claim is asserted end to end in `run-command.test.ts`, against a
 config Node genuinely loads as CommonJS; swapping the proxy back for a freeze reddens it.

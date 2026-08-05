@@ -70,7 +70,7 @@ export const workerPoolRun = async (): Promise<void> => {
       summary.droppedCount === 0 &&
         summary.requestErrorCount === 0 &&
         summary.impureRequestCount === 0,
-      `${String(summary.droppedCount)} dropped, ${String(summary.requestErrorCount)} not built + ${String(summary.impureRequestCount)} impure`,
+      `${String(summary.droppedCount)} dropped + ${String(summary.requestErrorCount)} not built + ${String(summary.impureRequestCount)} impure`,
     );
     claim(
       "the merged accounting adds up",

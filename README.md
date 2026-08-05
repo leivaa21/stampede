@@ -189,7 +189,8 @@ are guarded; a `Map`, `Set`, `Date` or `Buffer` in your state is left alone, so 
 those is not caught. **`structuredClone` cannot copy the guard**, so to build a payload from a
 template, copy it with `JSON.parse(JSON.stringify(state.template))` if it is JSON-shaped — that
 turns a `Date` into a string and a `Buffer` into `{type,data}`, so for those use a spread
-(`{ ...state.template }`, `[...state.list]`), remembering nested values are still guarded. The guard works whichever module system your config loads under — that is why
+(`{ ...state.template }`, `[...state.list]`), remembering nested values are still guarded. The guard
+works whichever module system your config loads under — that is why
 it is a proxy and not `Object.freeze`, which fails silently in sloppy mode. Both failures are
 counted separately and printed on the shortfall line —
 `not built (request() threw)` and `not built (impure request())` — because the remedies have
